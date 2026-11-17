@@ -139,7 +139,19 @@ shell-check: shell-ui-test
     cargo clippy --locked --manifest-path crates/bir-shell/Cargo.toml --features mas_build --all-targets -- -D warnings
     {{ if os_family() == "windows" { "$env:EBIR_TEST_ENV='1'; $env:BIR_AUTH_BYPASS='1'; $env:BIR_SFTP_DRY_RUN='1'; cargo test --locked --manifest-path crates/bir-shell/Cargo.toml" } else { "EBIR_TEST_ENV=1 BIR_AUTH_BYPASS=1 BIR_SFTP_DRY_RUN=1 cargo test --locked --manifest-path crates/bir-shell/Cargo.toml" } }}
     cargo test --locked --manifest-path crates/bir-shell/Cargo.toml --features agent --lib agent::
+    {{ if os_family() == "windows" { "$env:EBIR_TEST_ENV='1'; $env:BIR_AUTH_BYPASS='1'; $env:BIR_SFTP_DRY_RUN='1'; $env:BUWIZ_NO_KEYCHAIN='1'; cargo test --locked -p bir-app-api --features headless --lib agent::" } else { "EBIR_TEST_ENV=1 BIR_AUTH_BYPASS=1 BIR_SFTP_DRY_RUN=1 BUWIZ_NO_KEYCHAIN=1 cargo test --locked -p bir-app-api --features headless --lib agent::" } }}
     cargo test --locked --manifest-path crates/bir-shell/Cargo.toml --features agent --test headless_detach
+
+# bir-core and bir-app-api tests in the plain-SQLite build the NSH app ships (no sqlcipher), with the four safety variables:
+# nothing reaches the keychain, a real database or the BIR.
+[unix]
+core-plain-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export EBIR_TEST_ENV=1 BIR_AUTH_BYPASS=1 BIR_SFTP_DRY_RUN=1 BUWIZ_NO_KEYCHAIN=1
+    unset BIR_SFTP_LIVE BIR_DATABASE_PATH
+    cargo test -p bir-core --no-default-features
+    cargo test -p bir-app-api --no-default-features
 
 # Run code formatting, linting, and type checking
 [unix]
@@ -913,3 +925,220 @@ _package-linux: build-frozen-html-identity
         trap - EXIT
         echo "✅ Tarball: $TARBALL"
     fi
+
+# ---------------------------------------------------------------------------
+# NSH (TSX) app in nsh/. Read nsh/AGENTS.md first.
+# The CLI is ~/BuwizNsh/tools/bin/nsh (NSH 0.5.1 built from the NSH checkout that
+# sits beside this repo's checkout, ../nsh); never the obsolete one in ~/.nsh.
+# Every recipe puts that CLI first on PATH and sets CARGO_TARGET_DIR. Extra
+# arguments pass through: `just nsh-test --filter ping`.
+# ---------------------------------------------------------------------------
+
+# NSH: cargo check of nsh/'s crate, then tsc over the TSX against the generated types.
+[unix]
+nsh-check *args="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="$HOME/BuwizNsh/tools/bin:$PATH" CARGO_TARGET_DIR="$HOME/BuwizNsh/target-nsh"
+    cd nsh
+    exec nsh check {{args}}
+
+# NSH: bundle and compile the app; every warning it prints is a finding.
+[unix]
+nsh-build *args="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="$HOME/BuwizNsh/tools/bin:$PATH" CARGO_TARGET_DIR="$HOME/BuwizNsh/target-nsh"
+    cd nsh
+    exec nsh build {{args}}
+
+# nsh-test also sets the dev environment, so a test that reaches the door can never read the keychain or send. It never sets BIR_DATABASE_PATH.
+
+# NSH: Rust tests, then every *.test.tsx and *.test.ts, headless (390x844 phone viewport unless a test opens another).
+# With no path: nsh/verify/ (git-ignored real-window verifier scripts that need the owner's data copy, so they always fail headless)
+# is left out. `nsh test` has no exclude option and a folder path must hold the app's App.tsx, so the Rust tests run once with
+# cargo and every other test file gets its own `nsh test <file>` run; the recipe fails if any of them did. A path in the
+# arguments (`just nsh-test shell/frame.test.tsx`, `just nsh-test verify`) runs exactly that, as before.
+[unix]
+nsh-test *args="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="$HOME/BuwizNsh/tools/bin:$PATH" CARGO_TARGET_DIR="$HOME/BuwizNsh/target-nsh"
+    export BUWIZ_NO_KEYCHAIN=1 EBIR_TEST_ENV=1 BIR_AUTH_BYPASS=1 BIR_SFTP_DRY_RUN=1
+    unset BIR_SFTP_LIVE BIR_DATABASE_PATH
+    cd nsh
+    args=({{args}})
+    has_path=0 skip=0 filter=()
+    for a in ${args[@]+"${args[@]}"}; do
+        if [ "$skip" = 1 ]; then skip=0; continue; fi
+        case "$a" in
+            --filter) skip=1 ;;
+            --filter=*) filter=("${a#--filter=}") ;;
+            --junit|--target|--browser|--web-host|--display) skip=1 ;;
+            -*) ;;
+            *) has_path=1 ;;
+        esac
+    done
+    for ((i = 0; i < ${#args[@]}; i++)); do
+        if [ "${args[$i]}" = "--filter" ] && [ $((i + 1)) -lt ${#args[@]} ]; then filter=("${args[$((i + 1))]}"); fi
+    done
+    if [ "$has_path" = 1 ]; then exec nsh test ${args[@]+"${args[@]}"}; fi
+    failed=()
+    cargo test --manifest-path Cargo.toml --no-fail-fast ${filter[@]+"${filter[@]}"} || failed+=("rust crate")
+    while IFS= read -r file; do
+        nsh test "$file" ${args[@]+"${args[@]}"} || failed+=("$file")
+    done < <(find . -mindepth 1 \( -path ./verify -o -name node_modules -o -name target -o -name '.*' \) -prune -o \( -name '*.test.ts' -o -name '*.test.tsx' \) -print | sort)
+    if [ ${#failed[@]} -gt 0 ]; then
+        echo "nsh-test: failed in:"
+        printf '  %s\n' "${failed[@]}"
+        exit 1
+    fi
+    echo "nsh-test: every test file passed (nsh/verify left out)"
+
+# Refuses a database path inside the owner's live data, the migrated copy or the migration folder (Hard rules 2 and 3).
+# The same checks as the door's guard (nsh/src/guards.rs, which a test compares with this script): the home folder
+# is the account's own from the password database, never $HOME; the path is resolved through symlinks and ".."; and
+# it is refused by name, by device+inode (macOS reaches one folder as /Users/u/x and as /System/Volumes/Data/Users/u/x,
+# and a volume may ignore case: an ancestor that IS a protected folder is refused), and as a hard link to a file
+# directly inside a protected folder.
+[private]
+[unix]
+_nsh-db-guard db:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ -n {{quote(db)}} ] || exit 0
+    python3 -I - {{quote(db)}} <<'PY'
+    import os
+    import pwd
+    import sys
+
+    home = pwd.getpwuid(os.getuid()).pw_dir
+    protected = [
+        home + "/Library/Group Containers/group.dev.goldcoders.bir",
+        home + "/BuwizNsh/data",
+        home + "/BuwizNsh/migration",
+    ]
+    candidate = os.path.realpath(sys.argv[1])
+
+
+    def identity(path):
+        try:
+            info = os.stat(path)
+        except OSError:
+            return None
+        return (info.st_dev, info.st_ino)
+
+
+    def lower(path):
+        return path.lower() if sys.platform in ("darwin", "win32") else path
+
+
+    def refuse(why):
+        print("refusing %s: %s, the owner's data. cp a copy to ~/BuwizNsh/agents/<track>.db and use that" % (candidate, why), file=sys.stderr)
+        sys.exit(1)
+
+
+    folders = [os.path.realpath(path) for path in protected]
+    for folder in folders:
+        if lower(candidate) == lower(folder) or lower(candidate).startswith(lower(folder).rstrip(os.sep) + os.sep):
+            refuse("it is inside " + folder)
+
+    known = {}
+    for folder in folders:
+        found = identity(folder) if os.path.isdir(folder) else None
+        if found is not None:
+            known[found] = folder
+
+    path = candidate
+    while True:
+        found = identity(path)
+        if found is not None and found in known:
+            refuse("it is inside %s (the same folder by device and inode, under another name)" % known[found])
+        parent = os.path.dirname(path)
+        if parent == path:
+            break
+        path = parent
+
+    if os.path.isfile(candidate):
+        info = os.stat(candidate)
+        if info.st_nlink > 1:
+            for folder in known.values():
+                for name in os.listdir(folder):
+                    if identity(os.path.join(folder, name)) == (info.st_dev, info.st_ino):
+                        refuse("it is a hard link to a file in " + folder)
+    PY
+
+# The database comes from the caller: just nsh-run ~/BuwizNsh/agents/<track>.db, or BIR_DATABASE_PATH in the environment.
+# A path inside the owner's data, ~/BuwizNsh/data or ~/BuwizNsh/migration is refused.
+
+# NSH: open the app in a macOS window (hot TSX edits) in dry-run dev mode: no keychain, no sign-in gate, nothing sent.
+[macos]
+nsh-run db=env_var_or_default("BIR_DATABASE_PATH", "") *args="": (_nsh-db-guard db)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="$HOME/BuwizNsh/tools/bin:$PATH" CARGO_TARGET_DIR="$HOME/BuwizNsh/target-nsh"
+    export BUWIZ_NO_KEYCHAIN=1 EBIR_TEST_ENV=1 BIR_AUTH_BYPASS=1 BIR_SFTP_DRY_RUN=1
+    unset BIR_SFTP_LIVE
+    if [ -n "{{db}}" ]; then export BIR_DATABASE_PATH="{{db}}"; else unset BIR_DATABASE_PATH; fi
+    cd nsh
+    exec nsh run --target macos {{args}}
+
+# Opens real macOS windows for a minute or so. BIR_DATABASE_PATH, if set in the environment, is passed on (and guarded).
+
+# Starts the app in a real window with the `agent` feature built into its host (a scratch database, dry run, no keychain; the token is made here and
+# never printed), then runs nsh/tests/window_plane.rs against both control planes: the window's (tree, press, type, screenshot) and the data plane's
+# (app.info, profile.*, form.*). Nothing is sent anywhere. See crates/bir-shell/docs/AGENT.md. nsh's CLI builds its hosts without app features;
+# nsh/agent/cargo-with-agent.sh, set as $CARGO for that one command, adds the feature to the host build.
+
+# NSH: an external agent against the real app window (cargo feature `agent`, both control planes).
+[macos]
+nsh-agent-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="$(pwd -P)"
+    export PATH="$HOME/BuwizNsh/tools/bin:$PATH" CARGO_TARGET_DIR="$HOME/BuwizNsh/target-nsh"
+    export BUWIZ_NO_KEYCHAIN=1 EBIR_TEST_ENV=1 BIR_AUTH_BYPASS=1 BIR_SFTP_DRY_RUN=1
+    unset BIR_SFTP_LIVE BIR_DATABASE_PATH
+    work="$(mktemp -d)"
+    out="$HOME/BuwizNsh/evidence/agent"
+    mkdir -p "$out"
+    port="$(python3 -I -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
+    export GPUI_AGENT=1 GPUI_AGENT_TOKEN="$(openssl rand -hex 16)" GPUI_AGENT_ADDR="127.0.0.1:$port" GPUI_AGENT_RUNTIME_DIR="$work/runtime"
+    cargo test --manifest-path nsh/Cargo.toml --features agent --test window_plane --no-run
+    holder=""
+    trap 'kill -INT "$holder" 2>/dev/null || true; wait "$holder" 2>/dev/null || true; rm -rf "$work"' EXIT
+    # A host binary that was just linked can take longer than nsh's 60 s to start the first time (the system checks it); the next launch is quick.
+    up=0
+    for attempt in 1 2 3; do
+        (cd "$out" && CARGO="$root/nsh/agent/cargo-with-agent.sh" exec nsh test "$root/nsh/shots/agent.test.tsx" --target macos) &
+        holder=$!
+        for _ in $(seq 1 90); do
+            if nc -z 127.0.0.1 "$port" 2>/dev/null; then up=1; break; fi
+            kill -0 "$holder" 2>/dev/null || break
+            sleep 2
+        done
+        [ "$up" = 1 ] && break
+        wait "$holder" 2>/dev/null || true
+        echo "attempt $attempt: the app did not come up"
+    done
+    [ "$up" = 1 ] || { echo "the window's control plane never came up on port $port"; exit 1; }
+    sleep 3
+    cargo test --manifest-path nsh/Cargo.toml --features agent --test window_plane -- --ignored --nocapture
+
+# NSH: real-window screenshots from nsh/shots/<name>.test.tsx into ~/BuwizNsh/evidence/<name>/ (never the worktree).
+[macos]
+nsh-shots name="base" *args="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="$HOME/BuwizNsh/tools/bin:$PATH" CARGO_TARGET_DIR="$HOME/BuwizNsh/target-nsh"
+    export BUWIZ_NO_KEYCHAIN=1 EBIR_TEST_ENV=1 BIR_AUTH_BYPASS=1 BIR_SFTP_DRY_RUN=1
+    unset BIR_SFTP_LIVE
+    {{just_executable()}} _nsh-db-guard "${BIR_DATABASE_PATH:-}"
+    test_file="$(pwd -P)/nsh/shots/{{name}}.test.tsx"
+    [ -f "$test_file" ] || { echo "no $test_file: shots tests live in nsh/shots/<name>.test.tsx"; exit 1; }
+    out="$HOME/BuwizNsh/evidence/{{name}}"
+    mkdir -p "$out"
+    # The PNGs are written relative to the current directory, so run from the evidence folder (never the worktree).
+    cd "$out"
+    nsh test "$test_file" --target macos {{args}}
+    echo "screenshots in $out"

@@ -35,7 +35,10 @@ pub mod import;
 pub mod integration;
 pub mod ipc;
 pub mod job_display;
+// Its master-key half (`resolve_master_key`, `KeyMode`, add-only writes) is
+// used only by the SQLCipher build; Google Calendar uses the rest in both.
 #[cfg(target_os = "macos")]
+#[cfg_attr(not(feature = "sqlcipher"), allow(dead_code))]
 mod keychain;
 pub mod legacy_migration;
 pub mod lock_timing;
@@ -49,6 +52,7 @@ pub mod official_import;
 pub mod official_xml;
 pub mod penalties;
 pub mod platform;
+mod private_temp;
 pub mod profile;
 pub mod receipt;
 pub mod reference;
