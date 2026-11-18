@@ -85,23 +85,12 @@ impl Hooks for NshHooks {
     }
 
     fn prompt_for_open_path(&self, prompt: &str, answer: PathAnswer) -> bool {
-        // Only a task on the engine thread can show a panel; anywhere else there is no UI to ask.
-        if try_os().is_none() {
-            return false;
-        }
-        let panel = pick_paths(OpenDialog::files().button_label(prompt));
-        keep(async move {
-            let choice = match panel.await {
-                Ok(Some(paths)) => paths
-                    .into_iter()
-                    .next()
-                    .map_or(PathChoice::Cancelled, PathChoice::Picked),
-                Ok(None) => PathChoice::Cancelled,
-                Err(error) => PathChoice::Failed(error),
-            };
-            answer(choice);
-        });
-        true
+        pick_one(OpenDialog::files().button_label(prompt), answer)
+    }
+
+    fn prompt_for_folder(&self, prompt: &str, answer: PathAnswer) -> bool {
+        // NSH's open panel in folder mode (nsh-core file_dialog.rs `OpenDialog::folders`), one folder.
+        pick_one(OpenDialog::folders().button_label(prompt), answer)
     }
 
     fn prompt_for_save_path(&self, directory: &Path, file_name: &str, answer: PathAnswer) -> bool {
@@ -129,6 +118,33 @@ impl Hooks for NshHooks {
     fn os_authenticate(&self, reason: &str) -> bool {
         crate::auth::os_authenticate(reason)
     }
+
+    // The global hotkey: this app's listener registers more keys than the old shell's (space, the arrows, punctuation,
+    // F13 to F20) and refuses a combo with no Control, Alt or Command. `set_global_hotkey` stores what this accepts.
+    fn global_hotkey_registrable(&self, combo: &str) -> bool {
+        crate::desktop::hotkey_shortcut(combo).is_some()
+    }
+}
+
+/// Shows the open panel `dialog` and answers with the first path picked. False when there is no UI to ask:
+/// only a task on the engine thread can show a panel.
+fn pick_one(dialog: OpenDialog, answer: PathAnswer) -> bool {
+    if try_os().is_none() {
+        return false;
+    }
+    let panel = pick_paths(dialog);
+    keep(async move {
+        let choice = match panel.await {
+            Ok(Some(paths)) => paths
+                .into_iter()
+                .next()
+                .map_or(PathChoice::Cancelled, PathChoice::Picked),
+            Ok(None) => PathChoice::Cancelled,
+            Err(error) => PathChoice::Failed(error),
+        };
+        answer(choice);
+    });
+    true
 }
 
 /// A task waiting on a panel, and whether it has answered.
