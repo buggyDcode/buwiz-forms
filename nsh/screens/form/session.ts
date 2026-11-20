@@ -18,6 +18,7 @@
 //   need attention" and the pill's red count take every message, shown or not (the old page's todo() and partErrors).
 import { batch, signal, untracked, type Accessor, type Signal } from "nsh";
 import { isAvailable as hasSecondWindow } from "nsh/desktop";
+import { Print } from "../print/native";
 import {
   bir,
   type IncomeTaxElectionReadiness,
@@ -276,6 +277,8 @@ interface St {
   submittedAt: string | null;
   /** The send `submittedAt` names was a dry run (the host's `submitted_dry_run`): nothing reached BIR. */
   submittedDryRun: boolean;
+  /** That send went to the local mock relay, as the worker recorded it (the host's `submitted_via_relay`), not to BIR. */
+  submittedViaRelay: boolean;
   confirmedAt: string | null;
   amends: ScreenFormStatus | null;
   filedOriginal: { id: number; status: string; filed_on: string | null } | null;
@@ -347,7 +350,7 @@ function freshState(target: FormTarget): St {
     blank: new Set(), needs: {}, whys: {}, waits: {}, off: {}, penalties: [], penaltyOpen: new Set(), poolTexts: {},
     typed: new Set(), typedEdits: {}, periodParts: new Map(), periodSet: false, periodValues: {}, periodAsked: null,
     periodAnswered: null, periodComplete: false, periodSeq: 0, periodToken: 0, periodInFlight: null, opens: null,
-    existing: null, saveAfterAnswer: null, submittedAt: null, submittedDryRun: false, confirmedAt: null, amends: null, filedOriginal: null,
+    existing: null, saveAfterAnswer: null, submittedAt: null, submittedDryRun: false, submittedViaRelay: false, confirmedAt: null, amends: null, filedOriginal: null,
     filedOriginalView: null, profileUpdates: [], profileDiffers: [], notes: [], saved: false, quiet: null, kept: {},
     autoStops: [], stopEdits: {}, stopKeys: new Set(), stoppable: new Set(), passed: new Set(), stepAt: null,
     stepFromTop: false, asks: [], askAt: new Map(), askPick: {}, askText: {}, askSavedAt: new Map(), factErrors: [],
@@ -711,6 +714,7 @@ export class FormSession {
     s.periodSet = Boolean(r.period_set);
     s.submittedAt = r.submitted_at || null;
     s.submittedDryRun = Boolean(r.submitted_dry_run);
+    s.submittedViaRelay = Boolean(r.submitted_via_relay);
     s.confirmedAt = r.confirmed_at || null;
     s.amends = r.amends || null;
     s.filedOriginal = r.filed_original || null;
@@ -2458,12 +2462,12 @@ export class FormSession {
   print() {
     const s = this.st;
     if (!s.draft) return;
-    if (!hasSecondWindow) return void this.toast(NO_PREVIEW, "printer");
+    if (!hasSecondWindow && !Print.previewsNatively()) return void this.toast(NO_PREVIEW, "printer");
     if (s.sample) {
       try {
         bir.screen_form_print_sample(s.target.formCode, s.draft, s.pending, this.unlockedFor(s.pending));
         s.previewOpen = true;
-        this.toast("Print preview opened. It follows your edits live.", "printer");
+        if (hasSecondWindow) this.toast("Print preview opened. It follows your edits live.", "printer");
       } catch (e) {
         this.toast(errorText(e), "triangle-alert");
       }
@@ -2474,7 +2478,7 @@ export class FormSession {
     try {
       bir.screen_form_print(s.target.formCode, s.draft!);
       s.previewOpen = true;
-      this.toast("Print preview opened. It follows your edits live.", "printer");
+      if (hasSecondWindow) this.toast("Print preview opened. It follows your edits live.", "printer");
     } catch (e) {
       this.toast(errorText(e), "triangle-alert");
     }
@@ -2895,7 +2899,7 @@ export class FormSession {
       this.sAllOpen.set(this.schema.parts.every((_p, i) => s.openParts.has(i)));
     }
     const sent: string[] = [];
-    if (s.submittedAt) sent.push(sentWords(s.submittedAt, s.submittedDryRun));
+    if (s.submittedAt) sent.push(sentWords(s.submittedAt, s.submittedDryRun, s.submittedViaRelay));
     if (s.confirmedAt) sent.push(`confirmed ${shortIsoDate(s.confirmedAt)}`);
     this.sHeader.set({
       loading: s.loading,
