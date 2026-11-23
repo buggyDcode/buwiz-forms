@@ -166,3 +166,97 @@ test("B19/F7-1: a box the host refuses keeps what was typed, with the reason on 
   expect(s.boxMessageOf(K)).toContain("type an amount");
   s.dispose();
 });
+
+test("an agent's fill that dropped a choice: the page drops it from its own draft, and its save does not store it again", async () => {
+  const METHOD = "frm1701q:optMethodOfDeduction";
+  const target = at("1701Q", 2025, 3);
+  const s = await opened(target);
+  s.choose({ "frm1701q:optType_1": "true", "frm1701q:optATC_1": "true", [METHOD + ":_2"]: "true" });
+  await s.idle();
+  s.saveNow();
+  await s.idle();
+  expect(s.valueOf(METHOD + ":_2")).toBe("true");
+  // The agent's `choose`: one edit, and the answer its fill left unanswered.
+  s.choose({ "frm1701q:txtSheets": "3" }, [METHOD]);
+  await s.idle();
+  expect(s.valueOf(METHOD + ":_2")).toBe("false");
+  s.saveNow();
+  await s.idle();
+  s.dispose();
+  const again = await opened(target);
+  expect(again.valueOf("frm1701q:txtSheets")).toBe("3");
+  expect(again.valueOf(METHOD + ":_1")).toBe("false");
+  expect(again.valueOf(METHOD + ":_2")).toBe("false");
+  // A clear alone is saved too.
+  again.choose({ [METHOD + ":_2"]: "true" });
+  await again.idle();
+  again.choose({}, [METHOD]);
+  await again.idle();
+  again.saveNow();
+  await again.idle();
+  again.dispose();
+  const last = await opened(target);
+  expect(last.valueOf(METHOD + ":_2")).toBe("false");
+  last.dispose();
+});
+
+test("an agent's fill that dropped the ATC and the rate beside a pick of Estate: one fill, and the graduated income stays", async () => {
+  const INCOME = "frm1701q:txt36A";
+  const target = at("1701Q", 2025, 1);
+  const s = await opened(target);
+  s.choose({ "frm1701q:optType_2": "true", "frm1701q:optATC_1": "true", "frm1701q:optTaxRate_1": "true", "frm1701q:optMethodOfDeduction:_2": "true" });
+  await s.idle();
+  s.edit(INCOME, "250000");
+  await s.idle();
+  s.saveNow();
+  await s.idle();
+  expect(s.valueOf(INCOME)).toBe("250,000.00");
+  // Estate brings the graduated rate back; dropped in a fill of their own, the ATC and the rate would zero the income first.
+  s.choose({ "frm1701q:optType_3": "true" }, ["frm1701q:optATC", "frm1701q:optTaxRate"]);
+  await s.idle();
+  expect(s.valueOf("frm1701q:optType_3")).toBe("true");
+  expect(s.valueOf(INCOME)).toBe("250,000.00");
+  s.saveNow();
+  await s.idle();
+  s.dispose();
+  const again = await opened(target);
+  expect(again.valueOf("frm1701q:optType_3")).toBe("true");
+  expect(again.valueOf(INCOME)).toBe("250,000.00");
+  again.dispose();
+});
+
+test("an agent's fill that dropped the ATC and the rate alone asks first: Cancel, or leaving with the question open, keeps the income", async () => {
+  const INCOME = "frm1701q:txt36A";
+  const DROPPED = ["frm1701q:optATC", "frm1701q:optTaxRate"];
+  const target = at("1701Q", 2025, 2);
+  const s = await opened(target);
+  s.choose({ "frm1701q:optType_2": "true", "frm1701q:optATC_1": "true", "frm1701q:optTaxRate_1": "true", "frm1701q:optMethodOfDeduction:_2": "true" });
+  await s.idle();
+  s.edit(INCOME, "250000");
+  await s.idle();
+  s.saveNow();
+  await s.idle();
+  // The removal goes through the page's normal question, and nothing is stored while it is open.
+  s.choose({}, DROPPED);
+  expect(s.overlay()?.kind).toBe("removal");
+  expect(s.valueOf(INCOME)).toBe("250,000.00");
+  s.dispose();
+  const left = await opened(target);
+  expect(left.valueOf(INCOME)).toBe("250,000.00");
+  expect(left.valueOf("frm1701q:optATC_1")).toBe("true");
+  left.choose({}, DROPPED);
+  expect(left.overlay()?.kind).toBe("removal");
+  left.cancelRemoval();
+  await left.idle();
+  expect(left.valueOf(INCOME)).toBe("250,000.00");
+  // Cancel dropped the question with its answers: a later edit does not drop them after all.
+  left.choose({ "frm1701q:txtSheets": "2" });
+  await left.idle();
+  expect(left.overlay()).toBe(null);
+  expect(left.valueOf("frm1701q:optATC_1")).toBe("true");
+  left.choose({}, DROPPED);
+  left.confirmRemoval();
+  await left.idle();
+  expect(left.valueOf("frm1701q:optATC_1")).not.toBe("true");
+  left.dispose();
+});

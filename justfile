@@ -953,6 +953,17 @@ nsh-check *args="":
     cd nsh
     exec nsh check {{args}}
 
+# Windows: the same command in PowerShell.
+[windows]
+nsh-check *args="":
+    #!pwsh -NoProfile
+    $ErrorActionPreference = 'Stop'
+    $env:PATH = "$HOME\BuwizNsh\tools\bin;$env:PATH"
+    $env:CARGO_TARGET_DIR = "$HOME\BuwizNsh\target-nsh"
+    Set-Location nsh
+    nsh check {{args}}
+    exit $LASTEXITCODE
+
 # NSH: bundle and compile the app; every warning it prints is a finding.
 [unix]
 nsh-build *args="":
@@ -961,6 +972,17 @@ nsh-build *args="":
     export PATH="$HOME/BuwizNsh/tools/bin:$PATH" CARGO_TARGET_DIR="$HOME/BuwizNsh/target-nsh"
     cd nsh
     exec nsh build {{args}}
+
+# Windows: the same command in PowerShell.
+[windows]
+nsh-build *args="":
+    #!pwsh -NoProfile
+    $ErrorActionPreference = 'Stop'
+    $env:PATH = "$HOME\BuwizNsh\tools\bin;$env:PATH"
+    $env:CARGO_TARGET_DIR = "$HOME\BuwizNsh\target-nsh"
+    Set-Location nsh
+    nsh build {{args}}
+    exit $LASTEXITCODE
 
 # nsh-test also sets the dev environment, so a test that reaches the door can never read the keychain or send. It never sets BIR_DATABASE_PATH.
 
@@ -1004,6 +1026,48 @@ nsh-test *args="":
         exit 1
     fi
     echo "nsh-test: every test file passed (nsh/verify left out)"
+
+# Windows: as the Unix recipe and CI's Windows job (.github/workflows/nsh.yml): with a path in the arguments, exactly `nsh test <arguments>`;
+# with none, the Rust tests once (those a --filter names), then every tracked *.test.ts and *.test.tsx outside nsh/verify, one headless run per file.
+[windows]
+nsh-test *args="":
+    #!pwsh -NoProfile
+    $ErrorActionPreference = 'Stop'
+    $env:PATH = "$HOME\BuwizNsh\tools\bin;$env:PATH"
+    $env:CARGO_TARGET_DIR = "$HOME\BuwizNsh\target-nsh"
+    $env:BUWIZ_NO_KEYCHAIN = '1'; $env:EBIR_TEST_ENV = '1'; $env:BIR_AUTH_BYPASS = '1'; $env:BIR_SFTP_DRY_RUN = '1'
+    Remove-Item Env:BIR_SFTP_LIVE -ErrorAction SilentlyContinue
+    Remove-Item Env:BIR_DATABASE_PATH -ErrorAction SilentlyContinue
+    Set-Location nsh
+    $given = @'
+    {{args}}
+    '@
+    $hasPath = $false; $skip = $false; $filter = @()
+    $words = @($given -split '\s+' | Where-Object { $_ })
+    for ($i = 0; $i -lt $words.Count; $i++) {
+        $word = $words[$i]
+        if ($skip) { $skip = $false; continue }
+        if ($word -eq '--filter') { $skip = $true; if ($i + 1 -lt $words.Count) { $filter = @($words[$i + 1].Trim('"', "'")) } }
+        elseif ($word -like '--filter=*') { $filter = @($word.Substring(9).Trim('"', "'")) }
+        elseif ($word -in '--junit', '--target', '--browser', '--web-host', '--display') { $skip = $true }
+        elseif ($word -notlike '-*') { $hasPath = $true }
+    }
+    if ($hasPath) { nsh test {{args}}; exit $LASTEXITCODE }
+    $failed = @()
+    cargo test --manifest-path Cargo.toml --no-fail-fast @filter
+    if ($LASTEXITCODE -ne 0) { $failed += 'rust crate' }
+    [string[]]$files = git ls-files -- '*.test.ts' '*.test.tsx' | Where-Object { $_ -notlike 'verify/*' }
+    [Array]::Sort($files, [StringComparer]::Ordinal)
+    foreach ($file in $files) {
+        nsh test "./$file" {{args}}
+        if ($LASTEXITCODE -ne 0) { $failed += $file }
+    }
+    if ($failed.Count -gt 0) {
+        "nsh-test: failed in:"
+        $failed | ForEach-Object { "  $_" }
+        exit 1
+    }
+    "nsh-test: every test file passed (nsh/verify left out)"
 
 # Refuses a database path inside the owner's live data, the migrated copy or the migration folder (Hard rules 2 and 3).
 # The same checks as the door's guard (nsh/src/guards.rs, which a test compares with this script): the home folder
@@ -1078,6 +1142,93 @@ _nsh-db-guard db:
                         refuse("it is a hard link to a file in " + folder)
     PY
 
+# Windows: the same refusals as the Unix recipe and the door's guard (nsh/src/guards.rs): the profile folder is the account's own from
+# its token (GetUserProfileDirectoryW), never USERPROFILE; names compare without case; a folder or file is known by volume and file index.
+# In these dev recipes the app's own data folder (AppData\Local\<app id>, and under LOCALAPPDATA) is protected too, as the door does
+# in a test environment.
+[private]
+[windows]
+_nsh-db-guard $db:
+    #!pwsh -NoProfile
+    $ErrorActionPreference = 'Stop'
+    $db = $env:db
+    if (-not $db) { exit 0 }
+    $script = @'
+    import ctypes
+    import os
+    import sys
+    from ctypes import wintypes
+
+    advapi32, userenv, kernel32 = ctypes.WinDLL("advapi32"), ctypes.WinDLL("userenv"), ctypes.WinDLL("kernel32")
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+    userenv.GetUserProfileDirectoryW.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+    token = wintypes.HANDLE()
+    if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):
+        sys.exit("refusing: the account's profile folder cannot be found")
+    size = wintypes.DWORD(32768)
+    buffer = ctypes.create_unicode_buffer(size.value)
+    if not userenv.GetUserProfileDirectoryW(token, buffer, ctypes.byref(size)):
+        sys.exit("refusing: the account's profile folder cannot be found")
+    home = buffer.value
+    app_id = sys.argv[2]
+    protected = [
+        os.path.join(home, "Library", "Group Containers", "group.dev.goldcoders.bir"),
+        os.path.join(home, "BuwizNsh", "data"),
+        os.path.join(home, "BuwizNsh", "migration"),
+        os.path.join(home, "AppData", "Local", app_id),
+    ]
+    moved = os.environ.get("LOCALAPPDATA", "")
+    if os.path.isabs(moved):
+        protected.append(os.path.join(moved, app_id))
+    candidate = os.path.realpath(sys.argv[1])
+
+
+    def identity(path):
+        try:
+            info = os.stat(path)
+        except OSError:
+            return None
+        return (info.st_dev, info.st_ino)
+
+
+    def refuse(why):
+        print("refusing %s: %s, the owner's data. Copy it to %s\\BuwizNsh\\agents\\<track>.db and use that" % (candidate, why, home), file=sys.stderr)
+        sys.exit(1)
+
+
+    folders = [os.path.realpath(path) for path in protected]
+    for folder in folders:
+        if candidate.lower() == folder.lower() or candidate.lower().startswith(folder.lower().rstrip(os.sep) + os.sep):
+            refuse("it is inside " + folder)
+
+    known = {}
+    for folder in folders:
+        found = identity(folder) if os.path.isdir(folder) else None
+        if found is not None:
+            known[found] = folder
+
+    path = candidate
+    while True:
+        found = identity(path)
+        if found is not None and found in known:
+            refuse("it is inside %s (the same folder by volume and file index, under another name)" % known[found])
+        parent = os.path.dirname(path)
+        if parent == path:
+            break
+        path = parent
+
+    if os.path.isfile(candidate):
+        info = os.stat(candidate)
+        if info.st_nlink > 1:
+            for folder in known.values():
+                for name in os.listdir(folder):
+                    if identity(os.path.join(folder, name)) == (info.st_dev, info.st_ino):
+                        refuse("it is a hard link to a file in " + folder)
+    '@
+    $script | & "{{PYTHON}}" -I - $db "dev.goldcoders.bir.nsh"
+    exit $LASTEXITCODE
+
 # The database comes from the caller: just nsh-run ~/BuwizNsh/agents/<track>.db, or BIR_DATABASE_PATH in the environment.
 # A path inside the owner's data, ~/BuwizNsh/data or ~/BuwizNsh/migration is refused.
 
@@ -1092,6 +1243,165 @@ nsh-run db=env_var_or_default("BIR_DATABASE_PATH", "") *args="": (_nsh-db-guard 
     if [ -n "{{db}}" ]; then export BIR_DATABASE_PATH="{{db}}"; else unset BIR_DATABASE_PATH; fi
     cd nsh
     exec nsh run --target macos {{args}}
+
+# NSH: the app in a real window with the agent control planes on, for gpui-agent recipes: the window's own (NSH's development host:
+# tree, press, type, screenshot) on GPUI_AGENT_ADDR, and the app's data plane (app.info, profile.*, form.*) on the port it reports.
+# target is macos, linux, windows, ios (Simulator) or android (emulator; then `adb forward tcp:<port> tcp:<port>`).
+# GPUI_AGENT_TOKEN must be set by the caller (never printed, never compiled into the app). Dry-run dev mode as nsh-run: nothing is sent anywhere.
+[unix]
+nsh-run-agent target db=env_var_or_default("BIR_DATABASE_PATH", "") *args="": (_nsh-db-guard db)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ -n "${GPUI_AGENT_TOKEN:-}" ] || { echo "nsh-run-agent: set GPUI_AGENT_TOKEN first"; exit 1; }
+    root="$(pwd -P)"
+    export PATH="$HOME/BuwizNsh/tools/bin:$PATH" CARGO_TARGET_DIR="$HOME/BuwizNsh/target-nsh"
+    export BUWIZ_NO_KEYCHAIN=1 EBIR_TEST_ENV=1 BIR_AUTH_BYPASS=1 BIR_SFTP_DRY_RUN=1
+    export GPUI_AGENT=1 GPUI_AGENT_ADDR="${GPUI_AGENT_ADDR:-127.0.0.1:17421}"
+    unset BIR_SFTP_LIVE
+    # The guard read a relative path from here, and the app starts in nsh/: hand it the same file, as an absolute path.
+    db={{quote(db)}}
+    if [ -n "$db" ]; then
+        case "$db" in /*) ;; *) db="$root/$db" ;; esac
+        export BIR_DATABASE_PATH="$db"
+    else
+        unset BIR_DATABASE_PATH
+    fi
+    if [ "{{target}}" = android ]; then
+        # An Android app process has no launch environment: the dry-run settings and the data plane's switch and address are
+        # baked into this development build (nsh/src/dev_env.rs). The token is not (a baked one is readable in the built library):
+        # it is written into the host's private files with `run-as`, over standard input so it is in no process's arguments, as
+        # nsh does for the window plane. On a clean device the host is installed by `nsh run` below, so a background job waits
+        # for the package first; the app waits up to 10 s for the file, then reads and deletes it (src/agent.rs, take_token).
+        # The data plane listens on the port after the window's: forward both.
+        port="${GPUI_AGENT_ADDR##*:}"
+        export BUWIZ_ANDROID_DEV=1
+        export BUWIZ_ANDROID_DEV_ENV="EBIR_TEST_ENV=1;BIR_AUTH_BYPASS=1;BUWIZ_NO_KEYCHAIN=1;BIR_SFTP_DRY_RUN=1;GPUI_AGENT=1;GPUI_AGENT_ADDR=127.0.0.1:$((port + 1))"
+        # One adb and one device for the whole launch: the SDK's adb and the device nsh starts the app on, checked before
+        # anything is built (nsh/agent/android-handoff.sh). The writer ends with this launcher: a failed or cancelled launch
+        # writes no token afterwards.
+        { read -r adb; read -r serial; } < <("$root/nsh/agent/android-handoff.sh" device) || true
+        [ -n "${adb:-}" ] && [ -n "${serial:-}" ] || exit 1
+        "$root/nsh/agent/android-handoff.sh" token "$adb" "$serial" "$$" &
+        echo "nsh-run-agent: device $serial, window plane on 127.0.0.1:$port, data plane on 127.0.0.1:$((port + 1)); run: \"$adb\" -s $serial forward tcp:$port tcp:$port && \"$adb\" -s $serial forward tcp:$((port + 1)) tcp:$((port + 1))"
+    fi
+    if [ "{{target}}" = ios ]; then
+        # simctl gives the app only SIMCTL_CHILD_* variables, and nsh keeps GPUI_AGENT_TOKEN out of them (its window plane reads a
+        # private file): the dry-run switches and the database go by name, the data plane's token as BIR_AGENT_TOKEN (src/agent.rs).
+        unset SIMCTL_CHILD_BIR_SFTP_LIVE SIMCTL_CHILD_BIR_DATABASE_PATH
+        export SIMCTL_CHILD_BUWIZ_NO_KEYCHAIN=1 SIMCTL_CHILD_EBIR_TEST_ENV=1 SIMCTL_CHILD_BIR_AUTH_BYPASS=1 SIMCTL_CHILD_BIR_SFTP_DRY_RUN=1
+        export SIMCTL_CHILD_BIR_AGENT_TOKEN="$GPUI_AGENT_TOKEN"
+        if [ -n "$db" ]; then export SIMCTL_CHILD_BIR_DATABASE_PATH="$db"; fi
+    fi
+    cd nsh
+    CARGO="$root/nsh/agent/cargo-with-agent.sh" exec nsh run --target {{target}} {{args}}
+
+# Windows: the same in PowerShell (target windows, or android with the emulator and adb on this machine). $CARGO is
+# nsh/agent/cargo-with-agent.cmd, the counterpart of cargo-with-agent.sh.
+[windows]
+nsh-run-agent target $db=env_var_or_default("BIR_DATABASE_PATH", "") *args="": (_nsh-db-guard db)
+    #!pwsh -NoProfile
+    $ErrorActionPreference = 'Stop'
+    $env:PATH = "$HOME\BuwizNsh\tools\bin;$env:PATH"
+    $env:CARGO_TARGET_DIR = "$HOME\BuwizNsh\target-nsh"
+    if (-not $env:GPUI_AGENT_TOKEN) { "nsh-run-agent: set GPUI_AGENT_TOKEN first"; exit 1 }
+    $root = (Get-Location).ProviderPath
+    $env:BUWIZ_NO_KEYCHAIN = '1'; $env:EBIR_TEST_ENV = '1'; $env:BIR_AUTH_BYPASS = '1'; $env:BIR_SFTP_DRY_RUN = '1'
+    Remove-Item Env:BIR_SFTP_LIVE -ErrorAction SilentlyContinue
+    $env:GPUI_AGENT = '1'
+    if (-not $env:GPUI_AGENT_ADDR) { $env:GPUI_AGENT_ADDR = '127.0.0.1:17421' }
+    $writer = $null
+    # The parameter arrives as an environment variable (PowerShell cannot read just's quoting of an apostrophe); a relative
+    # path is the one the guard checked, from here, not from nsh/.
+    $db = $env:db
+    if ($db) { $env:BIR_DATABASE_PATH = [IO.Path]::GetFullPath($db, $root) } else { Remove-Item Env:BIR_DATABASE_PATH -ErrorAction SilentlyContinue }
+    if ('{{target}}' -eq 'android') {
+        # Same Android hand-off as the Unix recipe: the dry-run switches and the data plane's switch and address are baked
+        # into the development build (nsh/src/dev_env.rs); the token is not — it goes into the host's private files with
+        # `run-as` once `nsh run` installs it, over stdin so it is in no process's arguments (src/agent.rs, take_token).
+        $port = [int](($env:GPUI_AGENT_ADDR -split ':')[-1])
+        $env:BUWIZ_ANDROID_DEV = '1'
+        $env:BUWIZ_ANDROID_DEV_ENV = "EBIR_TEST_ENV=1;BIR_AUTH_BYPASS=1;BUWIZ_NO_KEYCHAIN=1;BIR_SFTP_DRY_RUN=1;GPUI_AGENT=1;GPUI_AGENT_ADDR=127.0.0.1:$($port + 1)"
+        # adb is the one nsh itself runs: in the SDK it finds (ANDROID_HOME, ANDROID_SDK_ROOT, then Android Studio's
+        # default place), not whichever is on PATH. Checked here, before anything is built or launched.
+        $sdkRoot = @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT) | Where-Object { $_ } | Select-Object -First 1
+        if (-not $sdkRoot -and $env:LOCALAPPDATA) { $sdkRoot = Join-Path $env:LOCALAPPDATA 'Android\Sdk' }
+        if (-not $sdkRoot -or -not (Test-Path -LiteralPath $sdkRoot -PathType Container)) {
+            [Console]::Error.WriteLine('nsh-run-agent: Android SDK not found: install it and set ANDROID_HOME')
+            exit 1
+        }
+        $adb = Join-Path $sdkRoot 'platform-tools\adb.exe'
+        if (-not (Test-Path -LiteralPath $adb -PathType Leaf)) {
+            [Console]::Error.WriteLine("nsh-run-agent: no adb in $sdkRoot\platform-tools: install it with ``sdkmanager platform-tools``")
+            exit 1
+        }
+        # nsh launches the first device `adb devices` lists as online and names it to every adb command (`-s`); it does not
+        # read ANDROID_SERIAL. The token goes to that same device, by name: with two devices online an unnamed
+        # `adb shell` is refused as ambiguous, and one named by ANDROID_SERIAL could be another than the one launched.
+        $listed = & $adb devices
+        if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine("nsh-run-agent: ``$adb devices`` failed"); exit 1 }
+        $serial = $listed | Select-Object -Skip 1 | ForEach-Object {
+            $serialAndState = $_ -split "`t", 2
+            if ($serialAndState.Count -eq 2 -and $serialAndState[1] -eq 'device') { $serialAndState[0] }
+        } | Select-Object -First 1
+        if (-not $serial) { [Console]::Error.WriteLine('nsh-run-agent: no Android device or emulator connected (see `adb devices`)'); exit 1 }
+        if ($env:ANDROID_SERIAL -and $env:ANDROID_SERIAL -ne $serial) {
+            [Console]::Error.WriteLine("nsh-run-agent: ANDROID_SERIAL is $($env:ANDROID_SERIAL), but nsh launches the first online device, $serial. Disconnect the other devices, or unset ANDROID_SERIAL to use $serial.")
+            exit 1
+        }
+        # The writer lives no longer than the launch: it is stopped when `nsh run` returns or is interrupted (below), and
+        # stops itself when this shell is gone (a closed window, a killed process). It keeps the token in memory and
+        # writes it to adb's standard input itself, so no file on this machine holds it.
+        $agentHost = 'com.longbridge.nsh.host'
+        $tokenDir = 'files/nsh/dev.goldcoders.bir.nsh'
+        $writer = Start-Job -ScriptBlock {
+            param($adb, $serial, $token, $pkg, $dir, $launcher, $launcherStarted)
+            for ($i = 0; $i -lt 1800; $i++) {
+                $alive = Get-Process -Id $launcher -ErrorAction SilentlyContinue
+                if (-not $alive -or $alive.StartTime.Ticks -ne $launcherStarted) { return }
+                & $adb -s $serial shell run-as $pkg true 2>$null | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    $start = [Diagnostics.ProcessStartInfo]::new($adb)
+                    foreach ($argument in '-s', $serial, 'shell', '-T', "run-as $pkg sh -c 'umask 077 && mkdir -p $dir && cat > $dir/agent-token.new && mv $dir/agent-token.new $dir/agent-token'") {
+                        $start.ArgumentList.Add($argument)
+                    }
+                    $start.UseShellExecute = $false
+                    $start.RedirectStandardInput = $true
+                    $start.StandardInputEncoding = [Text.UTF8Encoding]::new($false)
+                    $write = [Diagnostics.Process]::Start($start)
+                    $write.StandardInput.Write($token)
+                    $write.StandardInput.Close()
+                    $write.WaitForExit()
+                    if ($write.ExitCode -eq 0) { return }
+                }
+                Start-Sleep -Milliseconds 500
+            }
+            "nsh-run-agent: the data plane's token was not stored (is the host installed?)"
+        } -ArgumentList $adb, $serial, $env:GPUI_AGENT_TOKEN, $agentHost, $tokenDir, $PID, (Get-Process -Id $PID).StartTime.Ticks
+        "nsh-run-agent: window plane on 127.0.0.1:$port, data plane on 127.0.0.1:$($port + 1) on $serial; run: adb -s $serial forward tcp:$port tcp:$port && adb -s $serial forward tcp:$($port + 1) tcp:$($port + 1)"
+    }
+    $env:CARGO = "$root\nsh\agent\cargo-with-agent.cmd"
+    Set-Location nsh
+    $code = 1
+    try {
+        nsh run --target {{target}} {{args}}
+        $code = $LASTEXITCODE
+    } finally {
+        if ($writer) {
+            # The launch is over, however it ended (a failed build, a failed install, Ctrl+C): the writer must not go on
+            # polling the device, and a token the app never read must not stay in the host's files (nsh removes the
+            # window plane's the same way).
+            Stop-Job $writer
+            Receive-Job $writer | ForEach-Object { [Console]::Error.WriteLine($_) }
+            Remove-Job $writer -Force
+            & $adb -s $serial shell "run-as $agentHost rm -f $tokenDir/agent-token $tokenDir/agent-token.new" 2>$null | Out-Null
+        }
+    }
+    exit $code
+
+# NSH: the Android device choice and token hand-off of nsh-run-agent, against a stand-in adb (no device needed).
+[unix]
+nsh-agent-handoff-test:
+    bash nsh/agent/android-handoff.test.sh
 
 # Opens real macOS windows for a minute or so. BIR_DATABASE_PATH, if set in the environment, is passed on (and guarded).
 

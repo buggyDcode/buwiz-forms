@@ -179,7 +179,7 @@ fn drain() -> bool {
 }
 
 #[cfg(feature = "agent")]
-pub use live::{Listener, listen};
+pub use live::{LaunchToken, Listener, TOKEN_FILE, listen, settings_config, take_token};
 
 #[cfg(feature = "agent")]
 fn status() -> AgentStatus {
@@ -205,7 +205,7 @@ mod live {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use bir_app_api::agent::{
-        APP, Session, UiQueue, drain_gated, resolve_addr, tree_from_debug, try_start_with,
+        APP, Session, UiQueue, drain_gated, resolve_addr, tree_from_debug,
     };
     use gpui_agent::discovery::{self, HostRecord, PublishedHost};
     use gpui_agent::mailbox::AgentMailbox;
@@ -261,25 +261,139 @@ mod live {
         }
     }
 
-    /// The address to bind for the one the environment asked for. Loopback only. Where the window's own control plane
-    /// (NSH's, the same `GPUI_AGENT_ADDR`) is in this process, it binds first and this takes another port.
+    /// The address to bind for the one the environment asked for. Loopback only. The window's own control plane
+    /// (NSH's development host on every platform, the same `GPUI_AGENT_ADDR`) binds first, and this takes another port.
     fn choose(requested: SocketAddr) -> Result<SocketAddr, String> {
         if !is_loopback_addr(requested) {
             return Err(format!(
                 "the NSH app's agent listens on loopback only; GPUI_AGENT_ADDR {requested} is not loopback"
             ));
         }
-        if cfg!(target_os = "macos") && std::net::TcpListener::bind(requested).is_err() {
+        if std::net::TcpListener::bind(requested).is_err() {
             return Ok(SocketAddr::new(requested.ip(), 0));
         }
         Ok(resolve_addr(requested))
+    }
+
+    /// The opt-in on Android, where the app process has no launch environment: the switch and the address are read from
+    /// the development settings (`dev_env`: baked by `just nsh-run-agent android`, or the private `dev.env`), the token
+    /// is handed in (never a setting, so never compiled into the app: [`LaunchToken`]). Only a build with those settings
+    /// on (`enabled`) can opt in; a token is required. Without `GPUI_AGENT_ADDR` it is the port after NSH's default,
+    /// which the window's control plane holds. `var` reads one setting; `token` is asked only once the switch is on.
+    pub fn settings_config(
+        enabled: bool,
+        var: impl Fn(&str) -> Option<String>,
+        token: impl FnOnce() -> Option<String>,
+    ) -> Result<Option<gpui_agent::security::AgentConfig>, String> {
+        let var = |name: &str| var(name).filter(|value| !value.is_empty());
+        if !enabled || !matches!(var("GPUI_AGENT").as_deref(), Some("1" | "true")) {
+            return Ok(None);
+        }
+        let addr = var("GPUI_AGENT_ADDR").unwrap_or_else(|| "127.0.0.1:17422".to_owned());
+        let addr: SocketAddr =
+            addr.parse().map_err(|_| format!("GPUI_AGENT_ADDR {addr} is not a socket address"))?;
+        let token = token()
+            .filter(|token| !token.is_empty())
+            .ok_or_else(|| format!("GPUI_AGENT=1 needs the token in the private file {TOKEN_FILE}"))?;
+        Ok(Some(gpui_agent::security::AgentConfig { addr, token: Some(token) }))
+    }
+
+    /// The data plane's token file on Android, in the app's private data directory (beside `dev.env`).
+    pub const TOKEN_FILE: &str = "agent-token";
+
+    /// Reads the token from [`TOKEN_FILE`] in `dir` and deletes the file, as NSH's window plane does with its own: the
+    /// launcher (`just nsh-run-agent android`) writes it with `adb shell run-as` once the host is installed, which on
+    /// a clean device is while the app starts, so a missing file is waited for up to `wait`. The bytes are the token
+    /// (compared byte for byte, nothing trimmed). `None`: no file in time, unreadable, empty or over 4 KiB.
+    pub fn take_token(dir: &std::path::Path, wait: std::time::Duration) -> Option<String> {
+        use std::io::Read;
+        let path = dir.join(TOKEN_FILE);
+        let until = std::time::Instant::now() + wait;
+        loop {
+            match std::fs::File::open(&path) {
+                Ok(file) => {
+                    let mut token = String::new();
+                    let read = file.take(4097).read_to_string(&mut token);
+                    // Not the launchers': both write `agent-token.new` and rename it into place, so theirs is never
+                    // seen half-written. An empty file is some other writer (a hand-made `cat >`) between creating it
+                    // and writing it, and is waited for like a missing one.
+                    if matches!(read, Ok(0)) && std::time::Instant::now() < until {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        continue;
+                    }
+                    if let Err(error) = std::fs::remove_file(&path) {
+                        tracing::warn!(%error, "agent token file not deleted");
+                    }
+                    return read.ok().filter(|_| !token.is_empty() && token.len() <= 4096).map(|_| token);
+                }
+                Err(_) if std::time::Instant::now() < until => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(_) => return None,
+            }
+        }
+    }
+
+    /// The token of one authorized development launch, kept in the process and outside the engine thread, which a full
+    /// reload replaces: the launcher writes the file once and [`take_token`] deletes it, so the replacement listener is
+    /// authorized with the token this launch already read. A process holds one, so it ends with the launch; a token
+    /// file that arrives later (the launcher ran again against the live process) replaces it.
+    #[derive(Debug, Default)]
+    pub struct LaunchToken(std::sync::Mutex<Option<String>>);
+
+    impl LaunchToken {
+        /// A launch that has read no token yet.
+        pub const fn new() -> Self {
+            Self(std::sync::Mutex::new(None))
+        }
+
+        /// The token: the one in [`TOKEN_FILE`] in `dir`, read and deleted as [`take_token`] does and waited for up to
+        /// `wait` only while the launch holds none; otherwise the one held.
+        pub fn take(&self, dir: &std::path::Path, wait: std::time::Duration) -> Option<String> {
+            let mut held = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let wait = if held.is_some() { std::time::Duration::ZERO } else { wait };
+            if let Some(token) = take_token(dir, wait) {
+                *held = Some(token);
+            }
+            held.clone()
+        }
+    }
+
+    /// This process's launch.
+    #[cfg(target_os = "android")]
+    static LAUNCH: LaunchToken = LaunchToken::new();
+
+    /// The data plane's token on a phone host. NSH hands the window plane's token to its iOS and Android hosts as a
+    /// private file that the window plane reads and deletes before the app starts, and keeps `GPUI_AGENT_TOKEN` out of
+    /// the app's environment, so this listener would be refused for want of one. `just nsh-run-agent` passes the same
+    /// token as `BIR_AGENT_TOKEN` there. Read only where the environment has no `GPUI_AGENT_TOKEN`; never on a desktop.
+    /// Android reads its opt-in from the development settings and its token from a private file instead
+    /// ([`settings_config`], [`LaunchToken`]).
+    #[cfg(not(target_os = "android"))]
+    fn phone_token() -> Option<String> {
+        if cfg!(target_os = "ios") {
+            std::env::var("BIR_AGENT_TOKEN").ok()
+        } else {
+            None
+        }
     }
 
     /// Starts the listener when `GPUI_AGENT=1`, on the calling thread's database: the door boots first (the database
     /// guard and the send guard run before the first request is answered). `Ok(None)`: off. `Err`: refused, why.
     pub fn listen() -> Result<Option<Listener>, String> {
         crate::door::call("system_info", Vec::new())?;
-        let Some(started) = try_start_with(choose)? else {
+        #[cfg(not(target_os = "android"))]
+        let started = bir_app_api::agent::try_start_with_token(phone_token(), choose)?;
+        #[cfg(target_os = "android")]
+        let started = match settings_config(
+            crate::dev_env::ENABLED,
+            |name| bir_core::config::var(name).ok(),
+            || LAUNCH.take(&bir_core::platform::data_dir(), std::time::Duration::from_secs(10)),
+        )? {
+            Some(config) => bir_app_api::agent::try_start_config(config, choose)?,
+            None => None,
+        };
+        let Some(started) = started else {
             return Ok(None);
         };
         // The record names the executable `bir`: see RECORD_EXECUTABLE.
@@ -359,6 +473,20 @@ mod live {
 
     pub(super) fn drain() -> bool {
         RUNNING.with(|slot| slot.borrow().as_ref().is_some_and(Listener::drain))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn a_taken_address_gives_another_loopback_port_and_a_remote_one_is_refused() {
+            let held = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+            let taken = held.local_addr().expect("its address");
+            let chosen = choose(taken).expect("loopback is accepted");
+            assert_eq!((chosen.ip(), chosen.port()), (taken.ip(), 0), "the system picks a free port");
+            assert!(choose("192.0.2.1:17421".parse().expect("an address")).is_err());
+        }
     }
 }
 

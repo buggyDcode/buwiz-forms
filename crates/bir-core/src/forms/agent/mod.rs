@@ -20,6 +20,7 @@
 pub mod carry;
 pub mod draft_locks;
 pub mod probe;
+pub mod recipe;
 
 pub use draft_locks::{draft_locks, live_locks};
 
@@ -1294,6 +1295,43 @@ pub fn fill(
     fill_box(kind, draft, key, value, &[], from_profile, false)
 }
 
+/// The option of choice box `key` that a fill of `value` selects, spelled as
+/// the binding spells it: the same matching of labels, aliases and radio
+/// keys the write uses. `None` when `key` is not a choice or nothing matches.
+pub fn chosen_option(kind: AgentFormKind, key: &str, value: &Value) -> Option<String> {
+    let def = kind.definition();
+    let Some(Binding::Choice { options }) = def.bindings.get(key).map(|bound| &bound.binding)
+    else {
+        return None;
+    };
+    choose(def, key, options, &value_text(value)).map(|option| option.value.clone())
+}
+
+/// Drop the answer of choice box `key`, so the form asks for it again where
+/// it applies: a stopped box's stored answer is not reused. A box that is
+/// not one choice over one draft field is left as it is. So is a refused
+/// one (a choice the return cannot hold unanswered): `draft` is unchanged
+/// and the caller may go on with it.
+pub fn forget(kind: AgentFormKind, draft: &mut Value, key: &str) -> Result<(), String> {
+    let def = kind.definition();
+    let Some(Binding::Choice { options }) = def.bindings.get(key).map(|bound| &bound.binding)
+    else {
+        return Ok(());
+    };
+    let Some(path) = single_choice_path(options) else {
+        return Ok(());
+    };
+    if draft.pointer(path).is_none_or(Value::is_null) {
+        return Ok(());
+    }
+    let mut dropped = draft.clone();
+    set_path(&mut dropped, path, Value::Null, &def.rows)?;
+    with_agent_kind!(kind, F => parse::<F>(kind, &dropped).map(|_| ()))
+        .map_err(|error| format!("`{key}` cannot be left unanswered: {error}"))?;
+    *draft = dropped;
+    Ok(())
+}
+
 /// [`fill`] for the user's own form page. Two differences: an income-tax
 /// election ([`Lock::Election`]) is the user's to answer, and a bound box
 /// the host writes through its own editors writes — the page's edit
@@ -1445,6 +1483,21 @@ fn fill_box(
         return Err(gate.fill_reason(def, key));
     }
     write_bound_box(kind, def, draft, key, value)
+}
+
+/// Why [`fill`] refuses `key` on a new return, or `None` when it may write
+/// it: the same gate, so host-written boxes, aliases and group locks count,
+/// and the computed penalty boxes, locked until Edit opens them in the app.
+pub fn fill_refusal(kind: AgentFormKind, key: &str) -> Option<String> {
+    let def = kind.definition();
+    gate(def, key, None)
+        .map(|verdict| verdict.fill_reason(def, key))
+        .or_else(|| {
+            draft_locks::penalties::computed_groups(kind)
+                .iter()
+                .any(|group| group.keys.iter().any(|k| k == key))
+                .then(|| format!("`{key}` is {}", draft_locks::penalties::LOCK))
+        })
 }
 
 /// The page's draft-dependent lock on `key` ([`draft_locks::draft_lock`]
@@ -2351,6 +2404,33 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A choice the return cannot hold unanswered is refused, and the
+    /// refusal leaves the draft as it was: the page goes on with that draft.
+    #[test]
+    fn a_refused_forget_leaves_the_draft_as_it_was() {
+        let kind = AgentFormKind::Form2551Q;
+        let profile: crate::profile::TaxpayerProfile = serde_json::from_value(serde_json::json!({
+            "id": null,
+            "full_name": "Example Store",
+            "tin": {"segment1": "123", "segment2": "456", "segment3": "788", "branch": "00000"},
+            "rdo_code": "040",
+            "line_of_business": "Retail",
+            "registered_address": "1 Example Street",
+            "zip_code": "1600",
+            "phone": "0280000000",
+            "email": "store@example.test",
+            "default_form_type": "2551Qv2018"
+        }))
+        .unwrap();
+        let mut draft =
+            serde_json::to_value(Form2551QDraft::new_from_profile(&profile, 2026, 3)).unwrap();
+        let before = draft.clone();
+        let refused = forget(kind, &mut draft, "frm2551Qv2018:amendedRtn").unwrap_err();
+        assert!(refused.contains("cannot be left unanswered"), "{refused}");
+        assert_eq!(draft, before);
+        compute(kind, &mut draft).expect("the draft still computes");
     }
 
     /// 2551Q's annual-election message names a field no box binds; it is

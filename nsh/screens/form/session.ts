@@ -380,6 +380,8 @@ interface St {
   dateErrors: Record<string, string>;
   datesEdited: Set<string>;
   pending: Record<string, string>;
+  /** Choice boxes whose answer an agent's fill dropped: the next fill drops them from the draft, before its edits (`screen_form_fill`'s `forget`). */
+  forget: string[];
   rangeHeld: Record<string, string>;
   /** What the boxes showed before a choice, for a removal the filer cancels. */
   chosenFrom: Record<string, string>;
@@ -415,7 +417,7 @@ function freshState(target: FormTarget): St {
     profileSave: {}, profileEdited: new Set(), profileAsked: new Set(), profileAskUnknown: false, guessed: new Set(), profileAskSeen: {}, profileAskMsg: {},
     askDone: new Set(), askDoneRaw: new Map(), profileChanged: [], errors: [], messages: {},
     messageKeys: {}, messageCounts: {}, rejected: {}, unfixable: new Set(), dirtyBatch: null, boxMessages: {}, formErrors: [], checkable: {}, electionAt: null, electionPick: null, electionSavedAt: null,
-    profileRefreshed: false, dateErrors: {}, datesEdited: new Set(), pending: {}, rangeHeld: {}, chosenFrom: {}, dirty: false,
+    profileRefreshed: false, dateErrors: {}, datesEdited: new Set(), pending: {}, rangeHeld: {}, forget: [], chosenFrom: {}, dirty: false,
     editSeq: 0, validateSeq: 0, checking: false, removal: null, queueWarn: null, openParts: new Set([0]), current: 0,
     touched: new Set(), showAll: false, previewOpen: false, overlay: null, saveState: { state: "idle" },
     electionReady: undefined, moreOpen: new Set(),
@@ -689,6 +691,9 @@ export class FormSession {
   /** A step's row to reveal (scroll to, then focus); seq changes on every step. */
   /** What the page brings into view: a step's row (then its keyboard focus), or a part the navigator or a part step went to. */
   readonly reveal: Accessor<{ row: string | null; part: number; seq: number } | null> = () => this.sReveal();
+  private sFocusedRow = signal<{ row: string; seq: number } | null>(null);
+  /** The row whose box last took the keyboard (the page keeps it clear of the floating pill). */
+  readonly focusedRow: Accessor<{ row: string; seq: number } | null> = () => this.sFocusedRow();
   /** Messages shown now, each counted once: the pill's red count, the part badges' sum and Check's toast agree on it. */
   readonly attention: Accessor<number> = () => this.sAttention();
 
@@ -818,6 +823,7 @@ export class FormSession {
     const old = this.st;
     const s = freshState(target);
     s.pending = { ...old.pending };
+    s.forget = [...old.forget];
     s.openParts = old.openParts;
     s.current = old.current;
     s.touched = old.touched;
@@ -1375,9 +1381,23 @@ export class FormSession {
   }
 
   /** A choice (sel, chk, a radio pick, a cleared row): committed at once. */
-  choose(edits: Record<string, string>) {
+  choose(edits: Record<string, string>, clear: string[] = []) {
     const s = this.st;
     if (!s.editable || !s.draft) return;
+    // Answers an agent's fill dropped: staged with the edits and dropped in the same fill, before them, so the return is
+    // computed once, as the agent computed it (dropped alone, an ATC and a rate would zero the graduated income before the
+    // edit that brings the rate back). The save that follows then does not store them again.
+    if (clear.length) {
+      s.forget = [...new Set([...s.forget, ...clear])];
+      s.dirty = true;
+      if (!Object.keys(edits).length) {
+        s.chosenFrom = {};
+        this.cancelAutosave();
+        this.markUnsaved();
+        this.flush();
+        return;
+      }
+    }
     const period = Object.fromEntries(Object.entries(edits).filter(([k]) => s.periodParts.has(k)));
     if (Object.keys(period).length) {
       this.setPeriodPart(period);
@@ -1474,6 +1494,7 @@ export class FormSession {
     const s = this.st;
     s.focusKey = k;
     const here = this.keyIndex.get(this.anchorKey(k));
+    if (here) this.sFocusedRow.set({ row: here, seq: ++this.revealSeq });
     if (this.endProfileEdit([...s.editing].filter((key) => this.keyIndex.get(key) !== here))) this.publish();
   }
 
@@ -1578,7 +1599,7 @@ export class FormSession {
     const edits = s.pending;
     s.pending = {};
     let filled = false;
-    if (Object.keys(edits).length) {
+    if (Object.keys(edits).length || s.forget.length) {
       this.retireRemovalUndo();
       try {
         const r = this.fill(s.draft, edits);
@@ -1605,7 +1626,11 @@ export class FormSession {
    */
   private fill(draft: object, edits: Record<string, string>): Filled {
     const code = this.st.target.formCode;
-    const r: Filled = bir.screen_form_fill(code, draft, edits, this.unlockedFor(edits));
+    const forget = this.st.forget;
+    const r: Filled = bir.screen_form_fill(code, draft, edits, this.unlockedFor(edits), forget);
+    // Dropped once the host took them (a throw keeps them for the next fill): `r.draft` no longer holds the answers, also
+    // when the fill is held for a removal the filer must confirm.
+    if (forget.length) this.st.forget = [];
     if (r.removes) return r;
     const refused = Object.keys(r.rejected || {}).filter((k) => k in edits && String(edits[k]).trim() === "" && NUMBER_KINDS.has(this.kindOf.get(k) ?? ""));
     if (!refused.length) return r;

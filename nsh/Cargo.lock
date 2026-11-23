@@ -491,7 +491,7 @@ dependencies = [
  "bir-print",
  "chrono",
  "futures",
- "gpui-agent 0.1.0 (git+https://github.com/hexuria/gpui-agent?rev=dab85991d700b8f3410cbaacbc5d9f90568c7ee3)",
+ "gpui-agent 0.4.0",
  "reqwest",
  "serde",
  "serde_json",
@@ -2587,11 +2587,13 @@ dependencies = [
 
 [[package]]
 name = "gpui-agent"
-version = "0.1.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71bd3fba3da2ba2253b47d1970ed91ea51df3c1d9d359194fa79914b4ddcf721"
+checksum = "6f967cfbd18de52c338b07ee30d5553945fc485c62441735cbd3ee18488049ca"
 dependencies = [
+ "base64 0.22.1",
  "hmac 0.12.1",
+ "log",
  "png 0.17.16",
  "serde",
  "serde_json",
@@ -2601,10 +2603,13 @@ dependencies = [
 
 [[package]]
 name = "gpui-agent"
-version = "0.1.0"
-source = "git+https://github.com/hexuria/gpui-agent?rev=dab85991d700b8f3410cbaacbc5d9f90568c7ee3#dab85991d700b8f3410cbaacbc5d9f90568c7ee3"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d048392444cd3ae4a0d4d941d4f7c21c2717ded12f753d90a62177e5c58bf00d"
 dependencies = [
+ "base64 0.22.1",
  "hmac 0.12.1",
+ "log",
  "png 0.17.16",
  "serde",
  "serde_json",
@@ -4033,7 +4038,7 @@ dependencies = [
  "block2 0.6.2",
  "dispatch2",
  "futures",
- "gpui-agent 0.1.0 (git+https://github.com/hexuria/gpui-agent?rev=dab85991d700b8f3410cbaacbc5d9f90568c7ee3)",
+ "gpui-agent 0.4.0",
  "gtk4",
  "jni",
  "libc",
@@ -4058,7 +4063,7 @@ dependencies = [
 
 [[package]]
 name = "nsh-base"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "chrono",
  "html5ever 0.27.0",
@@ -4076,7 +4081,7 @@ dependencies = [
 
 [[package]]
 name = "nsh-core"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "cap-std",
  "chrono",
@@ -4105,7 +4110,7 @@ dependencies = [
 
 [[package]]
 name = "nsh-engine"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "crossbeam-channel",
  "env_filter",
@@ -4122,7 +4127,7 @@ dependencies = [
 
 [[package]]
 name = "nsh-macros"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "imagesize",
  "proc-macro2",
@@ -4134,7 +4139,7 @@ dependencies = [
 
 [[package]]
 name = "nsh-platform-apple"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "block2 0.6.2",
  "cc",
@@ -4155,12 +4160,12 @@ dependencies = [
 
 [[package]]
 name = "nsh-platform-macos"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "block2 0.6.2",
  "crossbeam-channel",
  "dispatch2",
- "gpui-agent 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gpui-agent 0.3.0",
  "libc",
  "log",
  "nsh-base",
@@ -4184,7 +4189,7 @@ dependencies = [
 
 [[package]]
 name = "nsh-updater"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek 2.2.0",

@@ -84,6 +84,8 @@ export interface FormPageProps {
 
 const PILL_W = 488;
 const NARROW_PILL_HEIGHT = 60;
+// The pill's height, its 16 pt bottom gap and 12 pt of air: what a focused row keeps below it.
+const PILL_CLEAR = NARROW_PILL_HEIGHT + 16 + 12;
 /** The old shell's cap on a form page's column, padding included (app/main.js layout(): 1120 for "form"). */
 const FORM_COLUMN_MAX = 1120;
 
@@ -148,7 +150,7 @@ export function FormPage(props: FormPageProps) {
       // What an agent's commands ask (shell/agent): which return this is, when it has loaded, a fill committed as a choice.
       target: () => ({ tin: props.tin, formCode: props.formCode, year: props.year, period: props.period }),
       ready: () => s.ready(),
-      choose: (edits) => s.choose(edits),
+      choose: (edits, clear) => s.choose(edits, clear),
     }),
   );
 
@@ -196,7 +198,9 @@ export function FormPage(props: FormPageProps) {
   });
   async function reveal(row: string | null, part: number, seq: number) {
     let asked = false;
-    for (let tries = 0; tries < 20; tries++) {
+    let at: number | null = null;
+    let scrolls = 0;
+    for (let tries = 0; tries < 40; tries++) {
       await new Promise((done) => setTimeout(done, 50));
       if (s.reveal()?.seq !== seq) return;
       if (!scrollRef) continue;
@@ -216,10 +220,39 @@ export function FormPage(props: FormPageProps) {
       }
       const [m, area] = await Promise.all([ref.measure(), scrollRef.measure()]);
       if (!m || !area) continue;
-      scrollRef.scrollTo({ y: Math.max(0, scrollY + m.pagePosition.y - area.pagePosition.y - (row ? 72 : 0)), animated: true });
-      if (row) s.focusRow(row);
-      return;
+      const to = () => Math.max(0, scrollY + m.pagePosition.y - area.pagePosition.y - (row ? 72 : 0));
+      if (row) {
+        scrollRef.scrollTo({ y: to(), animated: true });
+        s.focusRow(row);
+        return;
+      }
+      // A part: the parts that were open fold as this one opens and its own rows are still being laid out, so the card
+      // keeps moving after the first measure (seen in the iOS Simulator: the page stopped below the fold, or in the middle
+      // of the card). Scroll only once it rests, and again while it rests away from the top.
+      if (at === null || Math.abs(m.pagePosition.y - at) > 0.5) {
+        at = m.pagePosition.y;
+        continue;
+      }
+      if (Math.abs(m.pagePosition.y - area.pagePosition.y) < 1 || scrolls === 3) return;
+      scrollRef.scrollTo({ y: to(), animated: scrolls === 0 });
+      scrolls += 1;
+      at = null;
     }
+  }
+
+  // A box that takes the keyboard under the floating pill (Tab into it) is scrolled clear of it: the pill sits 16 pt above
+  // the pane's bottom and covers what lies behind it.
+  effect(() => {
+    const f = s.focusedRow();
+    if (f) untracked(() => void clearOfPill(f.row, f.seq));
+  });
+  async function clearOfPill(row: string, seq: number) {
+    const ref = rowRefs.get(row);
+    if (!ref || !scrollRef) return;
+    const [m, area] = await Promise.all([ref.measure(), scrollRef.measure()]);
+    if (!m || !area || s.focusedRow()?.seq !== seq) return;
+    const covered = m.pagePosition.y + m.bounds.size.height - (area.pagePosition.y + area.bounds.size.height - PILL_CLEAR);
+    if (covered > 0) scrollRef.scrollTo({ y: scrollY + covered, animated: false });
   }
 
   const schema = s.schema;
@@ -232,6 +265,7 @@ export function FormPage(props: FormPageProps) {
         <Scroll
           ref={(r: ScrollRef) => (scrollRef = r)}
           testID="form-scroll"
+          keyboardShouldPersistTaps="handled"
           class="min-h-0 flex-1"
           contentClass={wide() ? "pt-7 pr-7.5 pb-28 pl-5.5" : narrow() ? "px-4 pt-5 pb-32" : "px-8 pt-7 pb-28"}
           onScroll={(e) => followScroll(e.offset.y)}
@@ -765,6 +799,8 @@ function Pill(props: { s: FormSession; wide: Accessor<boolean>; narrow: Accessor
     const n = red();
     return `${n} item${n > 1 ? "s" : ""} need${n > 1 ? "" : "s"} attention`;
   };
+  // The row is one button to assistive tech and to the agent tree, so its label carries what the pill shows.
+  const openLabel = () => `All sections · ${small()} · ${big()}${red() > 0 ? ` · ${redLabel()}` : ""}`;
   const target = (dir: number) => {
     todo();
     s.stepAt();
@@ -804,7 +840,7 @@ function Pill(props: { s: FormSession; wide: Accessor<boolean>; narrow: Accessor
             <View class="h-full min-w-0 flex-1 flex-row items-center">
               <IconButton testID="fp-pill-list" icon="list" tooltip="All sections" pressed={listOpen()} onPress={() => listOpen.set(!listOpen())} />
               <View class="min-w-0 flex-1">
-                <ListRow testID="fp-pill-open" accessibilityLabel="All sections" onPress={() => listOpen.set(true)}>
+                <ListRow testID="fp-pill-open" accessibilityLabel={openLabel()} onPress={() => listOpen.set(true)}>
                   {main}
                 </ListRow>
               </View>
@@ -828,7 +864,7 @@ function Pill(props: { s: FormSession; wide: Accessor<boolean>; narrow: Accessor
               <SectionsList s={s} onPick={() => listOpen.set(false)} maxHeight={Math.min(440, windowSize().height - 200)} />
             </Popover>
             <View class="min-w-0 flex-1">
-              <ListRow testID="fp-pill-open" accessibilityLabel="All sections" onPress={() => listOpen.set(!listOpen())}>
+              <ListRow testID="fp-pill-open" accessibilityLabel={openLabel()} onPress={() => listOpen.set(!listOpen())}>
                 {main}
               </ListRow>
             </View>

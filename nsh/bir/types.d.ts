@@ -713,13 +713,13 @@ export function screen_form_amend(tin: string, form_code: string, year: number, 
 /** An amended return's filed version from its history, read-only. */
 export function screen_form_filed_original(form_code: string, snapshot_id: number): Promise<ScreenFormOpened>;
 export function screen_form_sample_period(tin: string, form_code: string, parts: Record<string, string>): Promise<ScreenFormSamplePeriod>;
-/** `unlocked`: profile boxes the page has open (opened with Edit, or left blank by the profile); their edits stay on this return and never reach the profile. */
-export function screen_form_fill(form_code: string, draft: object, edits: Record<string, string | number | boolean | null>, unlocked?: string[]): ScreenFormFilled;
+/** `unlocked`: profile boxes the page has open (opened with Edit, or left blank by the profile); their edits stay on this return and never reach the profile. `forget`: choice boxes whose answer is dropped before the edits apply, so the form asks again (the agent's fill left them unanswered). */
+export function screen_form_fill(form_code: string, draft: object, edits: Record<string, string | number | boolean | null>, unlocked?: string[], forget?: string[]): ScreenFormFilled;
 /** "Use profile values" on a draft that differs from the tax profile (`profile_differs`), and "Update from tax profile": every profile box the filer did not edit takes the profile's value, and they follow later profile changes. `facts`: facts just answered from the return's cards; then only the boxes they fill move, and one the filer typed or picked on this return keeps its value. Nothing is saved; save the draft. `asks`: the cards still asked. */
 export function screen_form_use_profile(form_code: string, year: number, period: number, draft: object, facts?: ScreenFormFact[]): ScreenFormFilled & { asks: ScreenFormAsk[] };
 export function screen_form_validate(form_code: string, draft: object): Promise<ScreenFormValidated>;
 /** Save a draft. A Form library sample saves only once its period is set, never over a stored return of that period (answering the offer instead); an entry-numbered form takes its next free entry. */
-export function screen_form_save(form_code: string, draft: object): ScreenFormSaved;
+export function screen_form_save(form_code: string, draft: object, expected?: object | null): ScreenFormSaved;
 /** Print preview of a saved draft (opens the filled official sheet in the in-app preview window). */
 export function screen_form_print(form_code: string, draft: object): { path: string };
 /** Print preview of a Form library sample as the page holds it, staged edits included and its held boxes blank. Nothing is saved and no period is needed; the preview then follows `screen_form_preview_sync`. */

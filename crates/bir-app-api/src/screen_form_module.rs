@@ -284,13 +284,13 @@ export function screen_form_amend(tin: string, form_code: string, year: number, 
 /** An amended return's filed version from its history, read-only. */
 export function screen_form_filed_original(form_code: string, snapshot_id: number): Promise<ScreenFormOpened>;
 export function screen_form_sample_period(tin: string, form_code: string, parts: Record<string, string>): Promise<ScreenFormSamplePeriod>;
-/** `unlocked`: profile boxes the page has open (opened with Edit, or left blank by the profile); their edits stay on this return and never reach the profile. */
-export function screen_form_fill(form_code: string, draft: object, edits: Record<string, string | number | boolean | null>, unlocked?: string[]): ScreenFormFilled;
+/** `unlocked`: profile boxes the page has open (opened with Edit, or left blank by the profile); their edits stay on this return and never reach the profile. `forget`: choice boxes whose answer is dropped before the edits apply, so the form asks again (the agent's fill left them unanswered). */
+export function screen_form_fill(form_code: string, draft: object, edits: Record<string, string | number | boolean | null>, unlocked?: string[], forget?: string[]): ScreenFormFilled;
 /** "Use profile values" on a draft that differs from the tax profile (`profile_differs`), and "Update from tax profile": every profile box the filer did not edit takes the profile's value, and they follow later profile changes. `facts`: facts just answered from the return's cards; then only the boxes they fill move, and one the filer typed or picked on this return keeps its value. Nothing is saved; save the draft. `asks`: the cards still asked. */
 export function screen_form_use_profile(form_code: string, year: number, period: number, draft: object, facts?: ScreenFormFact[]): ScreenFormFilled & { asks: ScreenFormAsk[] };
 export function screen_form_validate(form_code: string, draft: object): Promise<ScreenFormValidated>;
 /** Save a draft. A Form library sample saves only once its period is set, never over a stored return of that period (answering the offer instead); an entry-numbered form takes its next free entry. */
-export function screen_form_save(form_code: string, draft: object): ScreenFormSaved;
+export function screen_form_save(form_code: string, draft: object, expected?: object | null): ScreenFormSaved;
 /** Print preview of a saved draft (opens the filled official sheet in the in-app preview window). */
 export function screen_form_print(form_code: string, draft: object): { path: string };
 /** Print preview of a Form library sample as the page holds it, staged edits included and its held boxes blank. Nothing is saved and no period is needed; the preview then follows `screen_form_preview_sync`. */
@@ -4833,7 +4833,18 @@ fn screen_form_fill(arguments: &HostArguments) -> HostResult {
     // fill: every writer here keeps the period locked.
     let before = draft.clone();
     let signature = penalty_signature(kind, &draft);
-    let rejected = apply_screen_edits(kind, &mut draft, &edits, editable, &unlocked)?;
+    // The answers an agent's fill dropped (its `ask`), dropped here too before
+    // the edits: the page saves its whole draft, and would store them again.
+    let mut forgotten = Map::new();
+    if editable {
+        for key in unlocked_argument(arguments, 4) {
+            if let Err(why) = agent::forget(kind, &mut draft, &key) {
+                forgotten.insert(key, Value::String(why));
+            }
+        }
+    }
+    let mut rejected = apply_screen_edits(kind, &mut draft, &edits, editable, &unlocked)?;
+    rejected.extend(forgotten);
     if editable {
         // An added 2550Q row needs a stable row ID before it is saved; the
         // same step opening a draft runs.
@@ -4872,14 +4883,7 @@ fn screen_form_fill(arguments: &HostArguments) -> HostResult {
     // 4's, PR 5's, PR 6's, PR 7's, PR 8's, PR 9's, PR 10's and PR 11's forms;
     // the integration merge chains PR 2's and
     // PR 3's below).
-    let removes = rows_dst_pt_vat::removes(kind, &before, &draft, &edits)
-        .or_else(|| rows_income_q::removes(kind, &before, &draft, &edits))
-        .or_else(|| rows_1604::removes(kind, &before, &draft, &edits))
-        .or_else(|| rows_annual_corporate::removes(kind, &before, &draft, &edits))
-        .or_else(|| rows_annual_individual::removes(kind, &before, &draft, &edits))
-        .or_else(|| rows_as_needed::removes(kind, &before, &draft, &edits))
-        .or_else(|| rows_donor_estate::removes(kind, &before, &draft, &edits))
-        .or_else(|| rows_excise::removes(kind, &before, &draft, &edits));
+    let removes = removes(kind, &before, &draft, &edits);
     // Locks this fill opened or shut (PR 8: a folded 1702RT item, item 42;
     // PR 11: an excise return's penalties kept as entered, then computed),
     // each with its note; `null` opens the box. bir-core's, as the open's.
@@ -4904,14 +4908,33 @@ fn screen_form_fill(arguments: &HostArguments) -> HostResult {
         "pools": pool_texts,
         "blank": sample.as_ref().map(|mark| mark.blank.clone()),
         // Rows the filer typed that this edit removed: the page asks first.
-        "removes": rows_withholding::removes(kind, &before, &draft, &edits)
-            .or_else(|| rows_monthly::removes(kind, &before, &draft, &edits))
-            .or(removes),
+        "removes": removes,
         "relocks": relocks,
         "relock_notes": relock_notes,
         "notes_always": noted,
         "profile_prerequisites": profile_prerequisites::of(kind, &draft).map_err(host_error)?,
     })))
+}
+
+/// What the filer typed in `before` that `edits` removed from `after`, as the
+/// page asks about before it applies them (`screen_form_fill`'s `removes`).
+/// An agent's fill asks the same way before it stores its result.
+pub(crate) fn removes(
+    kind: AgentFormKind,
+    before: &Value,
+    after: &Value,
+    edits: &Map<String, Value>,
+) -> Option<Value> {
+    rows_withholding::removes(kind, before, after, edits)
+        .or_else(|| rows_monthly::removes(kind, before, after, edits))
+        .or_else(|| rows_dst_pt_vat::removes(kind, before, after, edits))
+        .or_else(|| rows_income_q::removes(kind, before, after, edits))
+        .or_else(|| rows_1604::removes(kind, before, after, edits))
+        .or_else(|| rows_annual_corporate::removes(kind, before, after, edits))
+        .or_else(|| rows_annual_individual::removes(kind, before, after, edits))
+        .or_else(|| rows_as_needed::removes(kind, before, after, edits))
+        .or_else(|| rows_donor_estate::removes(kind, before, after, edits))
+        .or_else(|| rows_excise::removes(kind, before, after, edits))
 }
 
 /// Apply the page's edits to `draft` the one way both the draft fill and the
@@ -5925,8 +5948,29 @@ fn screen_form_save(arguments: &HostArguments) -> HostResult {
     if let Some(mark) = take_sample_mark(&mut draft) {
         return save_sample(kind, draft, &mark);
     }
+    let expected = match arguments.get(2).map(to_json) {
+        None | Some(Value::Null) => None,
+        Some(expected) if expected.is_object() => Some(expected),
+        Some(_) => return Err(host_error("expected must be a draft or null")),
+    };
     let amendment = take_amendment_mark(&mut draft);
     let id = with_database(|db| {
+        if amendment.is_none()
+            && let Some(expected) = expected.as_ref()
+        {
+            let Some(stored) = stored_return(db, kind, &draft).map_err(host_error)? else {
+                return Err(host_error(
+                    "changed since Continue: the return is no longer stored",
+                ));
+            };
+            let stored_values = values_json(kind, &stored).map_err(host_error)?;
+            let expected_values = values_json(kind, expected).map_err(host_error)?;
+            if stored_values != expected_values {
+                return Err(host_error(
+                    "changed since Continue: stored field values differ",
+                ));
+            }
+        }
         // 1600PT/1600VT: a Part I key the stored return lacks stays out while
         // blank, whatever the page sent (P2-4; the fill does the same,
         // rows_monthly::keep_absent_blank). An amendment's stored return is
@@ -12501,6 +12545,35 @@ mod tests {
         );
     }
 
+    /// A choice the return cannot hold unanswered is refused by name; the
+    /// answer stays and the fill's edits are still taken.
+    #[test]
+    fn screen_form_fill_refuses_to_forget_a_required_choice() {
+        setup();
+        let opened = open("1601C", 3);
+        let answered = fill(
+            "1601C",
+            &opened["draft"],
+            json!({"frm1601c:TaxWithheld_1": "true"}),
+        );
+        let key = "frm1601c:TaxWithheld";
+        let filled = call(
+            "screen_form_fill",
+            vec![
+                "1601C".into(),
+                json(answered["draft"].clone()),
+                json(json!({"frm1601c:txtTax14": "50,000.00"})),
+                json(json!([])),
+                json(json!([key])),
+            ],
+        )
+        .unwrap_or_else(|error| panic!("the fill is taken: {error}"));
+        let why = filled["rejected"][key].as_str().unwrap_or_default();
+        assert!(why.contains("cannot be left unanswered"), "{filled}");
+        assert_eq!(filled["values"]["frm1601c:TaxWithheld_1"], "true");
+        assert_eq!(amount(&filled["values"], "frm1601c:txtTax14"), 50_000.0);
+    }
+
     #[test]
     fn screen_form_fill_applies_edits_and_rejects_bad_ones() {
         setup();
@@ -12600,6 +12673,71 @@ mod tests {
         let mut queued = saved["draft"].clone();
         queued["status"] = json!("Queued");
         assert!(call("screen_form_save", vec!["1601C".into(), json(queued)]).is_err());
+    }
+
+    #[test]
+    fn screen_form_save_expected_guards_against_newer_values() {
+        setup();
+        let opened = open("1601C", 2);
+        let filled = fill(
+            "1601C",
+            &opened["draft"],
+            json!({"frm1601c:txtTax14": "1000"}),
+        );
+        let saved = save("1601C", &filled["draft"]);
+        let matching = call(
+            "screen_form_save",
+            vec![
+                "1601C".into(),
+                json(saved["draft"].clone()),
+                json(saved["draft"].clone()),
+            ],
+        )
+        .expect("a save with matching expected values succeeds");
+        let newer_fill = fill(
+            "1601C",
+            &matching["draft"],
+            json!({"frm1601c:txtTax14": "2000"}),
+        );
+        let newer = save("1601C", &newer_fill["draft"]);
+
+        let error = call(
+            "screen_form_save",
+            vec![
+                "1601C".into(),
+                json(saved["draft"].clone()),
+                json(matching["draft"].clone()),
+            ],
+        )
+        .expect_err("a save with stale expected values is refused");
+        assert!(
+            error.message().starts_with("changed since Continue:"),
+            "{error}"
+        );
+        let stored = with_database(|db| {
+            stored_return(db, AgentFormKind::Form1601C, &newer["draft"]).map_err(HostError::new)
+        })
+        .expect("the stored return can be read")
+        .expect("the newer return remains stored");
+        let stored_values = values_json(AgentFormKind::Form1601C, &stored).unwrap();
+        let newer_values = values_json(AgentFormKind::Form1601C, &newer["draft"]).unwrap();
+        assert_eq!(
+            stored_values["frm1601c:txtTax14"],
+            newer_values["frm1601c:txtTax14"]
+        );
+
+        let legacy = save("1601C", &saved["draft"]);
+        let legacy_values = values_json(AgentFormKind::Form1601C, &legacy["draft"]).unwrap();
+        let stored = with_database(|db| {
+            stored_return(db, AgentFormKind::Form1601C, &legacy["draft"]).map_err(HostError::new)
+        })
+        .expect("the stored return can be read")
+        .expect("the legacy save remains stored");
+        let stored_values = values_json(AgentFormKind::Form1601C, &stored).unwrap();
+        assert_eq!(
+            stored_values["frm1601c:txtTax14"],
+            legacy_values["frm1601c:txtTax14"]
+        );
     }
 
     #[test]

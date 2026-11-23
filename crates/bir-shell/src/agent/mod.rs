@@ -33,7 +33,13 @@ pub(crate) fn start(window: &mut Window, cx: &mut App, root: Entity<ShellRoot>) 
         .spawn(cx, async move |cx| {
             let _discovery = discovery;
             let root = root;
+            // Poll fast while a client is sending steps back to back (a recipe
+            // run), and fall back to the idle interval once it goes quiet.
+            let mut last_request = None::<std::time::Instant>;
             loop {
+                if !mailbox.is_empty() {
+                    last_request = Some(std::time::Instant::now());
+                }
                 let step = cx.update(|_window, app| {
                     let quit = drain(&mailbox, &session, &root, app);
                     if quit {
@@ -46,9 +52,11 @@ pub(crate) fn start(window: &mut Window, cx: &mut App, root: Entity<ShellRoot>) 
                     shutdown.store(true, Ordering::SeqCst);
                     break;
                 }
-                cx.background_executor()
-                    .timer(Duration::from_millis(32))
-                    .await;
+                let wait = bir_app_api::agent::drain_interval(
+                    last_request.map(|at| at.elapsed()),
+                    Duration::from_millis(32),
+                );
+                cx.background_executor().timer(wait).await;
             }
         })
         .detach();

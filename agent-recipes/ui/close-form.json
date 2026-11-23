@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "name": "bir-close-form",
+  "app": "bir-shell",
+  "params": [],
+  "steps": [
+    {
+      "id": "close",
+      "op": "invoke",
+      "name": "form.dismiss",
+      "args": {
+        "discard": true
+      }
+    }
+  ]
+}

@@ -345,3 +345,83 @@ fn it_starts_only_when_asked_for_with_a_token_and_on_loopback() {
         },
     );
 }
+
+/// Android's opt-in (the app process has no launch environment there): the development settings decide, a build
+/// without them never opts in, a token is required and is not one of the settings, and the default port is the one
+/// after NSH's window plane.
+#[test]
+fn the_development_settings_opt_in_needs_the_build_the_switch_and_a_token() {
+    let settings = |pairs: &'static [(&'static str, &'static str)]| {
+        move |name: &str| pairs.iter().find(|(key, _)| *key == name).map(|(_, value)| (*value).to_owned())
+    };
+    let token = || Some(TOKEN.to_owned());
+    let on: &[(&str, &str)] = &[("GPUI_AGENT", "1")];
+    let config = agent::settings_config(true, settings(on), token).expect("config").expect("opted in");
+    assert_eq!(config.addr, "127.0.0.1:17422".parse::<SocketAddr>().expect("address"));
+    assert_eq!(config.token.as_deref(), Some(TOKEN));
+    let placed: &[(&str, &str)] = &[("GPUI_AGENT", "true"), ("GPUI_AGENT_ADDR", "127.0.0.1:17442")];
+    let config = agent::settings_config(true, settings(placed), token).expect("config").expect("opted in");
+    assert_eq!(config.addr.port(), 17442);
+    let unasked = || -> Option<String> { panic!("the token is read only once the switch is on") };
+    assert!(agent::settings_config(false, settings(on), unasked).expect("off").is_none(), "a build without the settings");
+    assert!(agent::settings_config(true, settings(&[]), unasked).expect("off").is_none());
+    assert!(agent::settings_config(true, settings(&[("GPUI_AGENT", "0")]), unasked).expect("off").is_none());
+    // A token among the settings (a baked one) is not the token.
+    let baked: &[(&str, &str)] = &[("GPUI_AGENT", "1"), ("GPUI_AGENT_TOKEN", TOKEN)];
+    for missing in [None, Some(String::new())] {
+        let error = agent::settings_config(true, settings(baked), || missing).expect_err("no token");
+        assert!(error.contains(agent::TOKEN_FILE), "{error}");
+    }
+    let error = agent::settings_config(true, settings(&[("GPUI_AGENT", "1"), ("GPUI_AGENT_ADDR", "nowhere")]), token)
+        .expect_err("bad address");
+    assert!(error.contains("not a socket address"), "{error}");
+}
+
+/// A full Android reload replaces the engine thread, and the launcher writes the token file once: the launch keeps the
+/// token it read, so the replacement listener is authorized without a file. The file is still deleted once read, a
+/// later file (the launcher ran again against the live process) replaces the kept token, and a new process keeps none.
+#[test]
+fn the_launch_keeps_its_token_for_a_replacement_listener() {
+    let dir = tempfile::tempdir().expect("a folder");
+    let path = dir.path().join(agent::TOKEN_FILE);
+    let launch = agent::LaunchToken::new();
+    assert_eq!(launch.take(dir.path(), Duration::ZERO), None, "nothing handed over yet");
+    std::fs::write(&path, TOKEN).expect("written");
+    assert_eq!(launch.take(dir.path(), Duration::ZERO).as_deref(), Some(TOKEN));
+    assert!(!path.exists(), "deleted once read");
+    // The replacement engine thread asks again: no file, and no wait for one.
+    let held = std::sync::Arc::new(launch);
+    let again = held.clone();
+    let folder = dir.path().to_owned();
+    let asked = std::time::Instant::now();
+    let reloaded = std::thread::spawn(move || again.take(&folder, Duration::from_secs(30))).join().expect("the thread");
+    assert_eq!(reloaded.as_deref(), Some(TOKEN));
+    assert!(asked.elapsed() < Duration::from_secs(5), "the kept token is not waited for");
+    std::fs::write(&path, "another-token").expect("written");
+    assert_eq!(held.take(dir.path(), Duration::ZERO).as_deref(), Some("another-token"));
+    assert!(!path.exists(), "deleted once read");
+    assert_eq!(held.take(dir.path(), Duration::ZERO).as_deref(), Some("another-token"));
+    assert_eq!(agent::LaunchToken::new().take(dir.path(), Duration::ZERO), None, "another launch has no token");
+}
+
+/// The token file is read once and deleted; one written while the app starts is waited for; a missing one is `None`.
+#[test]
+fn the_token_file_is_taken_once_and_a_late_one_is_waited_for() {
+    let dir = tempfile::tempdir().expect("a folder");
+    let path = dir.path().join(agent::TOKEN_FILE);
+    assert_eq!(agent::take_token(dir.path(), Duration::ZERO), None);
+    std::fs::write(&path, TOKEN).expect("written");
+    assert_eq!(agent::take_token(dir.path(), Duration::ZERO).as_deref(), Some(TOKEN));
+    assert!(!path.exists(), "deleted once read");
+    assert_eq!(agent::take_token(dir.path(), Duration::ZERO), None);
+    let late = path.clone();
+    let writer = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(200));
+        std::fs::write(late, TOKEN).expect("written");
+    });
+    assert_eq!(agent::take_token(dir.path(), Duration::from_secs(10)).as_deref(), Some(TOKEN));
+    writer.join().expect("writer");
+    std::fs::write(&path, "").expect("written");
+    assert_eq!(agent::take_token(dir.path(), Duration::ZERO), None, "an empty file is no token");
+    assert!(!path.exists());
+}

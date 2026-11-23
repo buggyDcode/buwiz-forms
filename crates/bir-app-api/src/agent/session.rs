@@ -14,7 +14,7 @@ use bir_core::forms::{
 use bir_core::profile::TaxpayerProfile;
 use bir_core::profile::TaxpayerType;
 use bir_core::tax_profile::{
-    BranchFacts, BranchField, BranchUpdate, FieldSetting, NewTaxpayer, TaxpayerUpdate,
+    BranchFacts, BranchField, BranchUpdate, FieldSetting, FormTemplate, NewTaxpayer, TaxpayerUpdate,
 };
 use chrono::Datelike;
 use gpui_agent::protocol::{DeliveryMode, HelloAuth, HelloInfo, Op, PlatformKind};
@@ -52,6 +52,11 @@ impl UiQueue {
         }
     }
 
+    /// Whether a window takes what is pushed.
+    pub fn shown(&self) -> bool {
+        !self.discard
+    }
+
     pub fn pop(&self) -> Option<Value> {
         if self.discard {
             None
@@ -75,6 +80,11 @@ struct OpenForm {
     draft: Value,
     sources: BTreeMap<String, String>,
     dirty: bool,
+    /// A fill is held in the window for the filer's approval (it removes
+    /// what they typed): nothing of it is stored, and every call reads the
+    /// return again, as the filer's answer left it, until a fill is stored
+    /// (the filer may answer at any time).
+    awaiting: bool,
 }
 
 pub struct Session {
@@ -131,6 +141,11 @@ impl Session {
     }
 
     fn invoke(&mut self, name: &str, args: &Value) -> Result<DispatchResult, String> {
+        // Dismissing reads nothing of the return: a held return that can no
+        // longer be read again must still be closable.
+        if name != "form.dismiss" {
+            self.settle()?;
+        }
         match name {
             "nav.go" => {
                 let page = args
@@ -146,15 +161,20 @@ impl Session {
             "profile.forms_set" | "profile.forms_set.set" => self.profile_forms_set(args),
             "dues.list" => self.dues_list(args),
             "filing.start" | "form.open" => self.form_open(args),
-            "form.fields" => self.form_fields(),
+            "form.fields" => self.form_fields(args),
             "form.fill" => self.form_fill(args),
             "form.needs_you" => self.form_needs_you(),
             "filing.validate" | "form.validate" => self.form_validate(),
             "form.context" => self.form_context(),
+            "form.schema" => self.form_schema(args),
+            "form.check" => self.form_check(args),
+            "template.list" => self.template_list(args),
+            "template.get" => self.template_get(args),
+            "recipe.generate" => self.recipe_generate(args),
             "form.review_in_app" => self.form_review_in_app(),
             "form.send" => self.form_send(),
             "form.save_draft" => self.form_save_draft(),
-            "form.dismiss" => self.form_dismiss(),
+            "form.dismiss" => self.form_dismiss(args),
             "form.file" | "form.submit_external" | "filing.file" => Err(format!(
                 "invoke `{name}` is not allow-listed; queue with form.queue/filing.queue confirm=true, then let cron PUT"
             )),
@@ -295,19 +315,20 @@ impl Session {
         let existing = db.get_taxpayer(&root).map_err(|error| error.to_string())?;
         let created = existing.is_none();
         let saved_name = if let Some(existing) = existing {
-            let saved_name = if let Some(name) = name.clone() {
+            if name.is_some() || birth.is_some() {
                 db.update_taxpayer(
                     &root,
                     TaxpayerUpdate {
-                        name: Some(name.clone()),
+                        name: name.clone(),
+                        birth_date: birth.map(Some),
                         ..TaxpayerUpdate::default()
                     },
                 )
                 .map_err(|error| error.to_string())?;
-                name
-            } else {
-                existing.taxpayer.name.clone()
-            };
+            }
+            let saved_name = name
+                .clone()
+                .unwrap_or_else(|| existing.taxpayer.name.clone());
             if facts_present(args) {
                 let mut fields = BTreeMap::new();
                 if args.get("rdo_code").is_some() {
@@ -544,6 +565,7 @@ impl Session {
             draft,
             sources: BTreeMap::new(),
             dirty: false,
+            awaiting: false,
         });
         self.commands
             .push(json!({"op": "refresh", "tin_root": root}));
@@ -562,14 +584,14 @@ impl Session {
         })))
     }
 
-    fn form_fields(&self) -> Result<DispatchResult, String> {
+    fn form_fields(&self, args: &Value) -> Result<DispatchResult, String> {
         let open = self
             .open
             .as_ref()
             .ok_or("open a form first (bir_form_open)")?;
         let def = open.kind.definition();
         let map = agent::field_map(open.kind, &open.draft)?;
-        let boxes: Vec<Value> = def
+        let mut boxes: Vec<Value> = def
             .fillable()
             .map(|entry| {
                 card_json(
@@ -578,6 +600,17 @@ impl Session {
                 )
             })
             .collect();
+        if args.get("locked").and_then(Value::as_bool) == Some(true) {
+            for entry in def.boxes.iter().filter(|entry| entry.is_question()) {
+                let Some(lock) = def.bindings.get(&entry.key).and_then(|bound| bound.lock) else {
+                    continue;
+                };
+                let card = CardBox::new(def, entry, &map);
+                let mut value = card_json(&card, None);
+                value["locked"] = json!(lock);
+                boxes.push(value);
+            }
+        }
         let questions = def.boxes.iter().filter(|entry| entry.is_question()).count();
         let status = agent::identity(open.kind, &open.draft)?.status;
         Ok(DispatchResult::json(json!({
@@ -590,6 +623,26 @@ impl Session {
         })))
     }
 
+    /// After a fill held for the filer's approval, the stored return is the
+    /// outcome (Continue stored the fill, Cancel or leaving did not): read it
+    /// again before anything is done with the open form, on every call, since
+    /// the answer can come between any two.
+    fn settle(&mut self) -> Result<(), String> {
+        let Some(open) = self.open.as_ref().filter(|open| open.awaiting) else {
+            return Ok(());
+        };
+        let (kind, year, period, tin) = (open.kind, open.year, open.period, open.tin.clone());
+        let db = self.lock_db()?;
+        let profile = load_profile(&db, &tin, year)?;
+        let draft =
+            crate::screen_form_module::load_draft(&db, kind, &profile, year, period, false, None)?;
+        drop(db);
+        if let Some(open) = self.open.as_mut() {
+            open.draft = draft;
+        }
+        Ok(())
+    }
+
     fn form_fill(&mut self, args: &Value) -> Result<DispatchResult, String> {
         let open = self
             .open
@@ -599,7 +652,8 @@ impl Session {
         let year = open.year;
         let period = open.period;
         let tin = open.tin.clone();
-        let mut draft = open.draft.clone();
+        let before = open.draft.clone();
+        let mut draft = before.clone();
         let sources = open.sources.clone();
         if agent::identity(kind, &draft)?.status != FilingStatus::Draft {
             return Err("this return is no longer a draft".into());
@@ -612,6 +666,9 @@ impl Session {
         let def = kind.definition();
         let (mut filled, mut kept) = (Vec::new(), Vec::new());
         let mut refused = Map::new();
+        let (forgot, kept_answers) = forget_unanswered(kind, &mut draft, args, &fields)?;
+        refused.extend(kept_answers);
+        let mut chosen = BTreeMap::new();
         for (key, value) in &fields {
             if sources
                 .get(key)
@@ -625,14 +682,31 @@ impl Session {
                 refused.insert(key.clone(), Value::String(why));
                 continue;
             }
+            note_choice(kind, def, key, value, &mut chosen);
             filled.push(key.clone());
         }
         agent::compute(kind, &mut draft)?;
         let map = agent::field_map(kind, &draft)?;
-        let not_shown = not_shown(def, &fields, &filled, &map);
+        let not_shown = not_shown(def, &fields, &filled, &chosen, &map);
         let mut edits = Map::new();
-        if !filled.is_empty() {
-            agent::save_draft(kind, &db, &mut draft)?;
+        // A fill that removes what the filer typed is the filer's to approve:
+        // the window asks (its own fill of the same edits finds the same
+        // removal) and stores the result on Continue. Nothing is stored here,
+        // so Cancel, or leaving with the question open, keeps the return.
+        // Without a window nobody can be asked, and the fill is the answer.
+        let asks = if self.commands.shown() && (!filled.is_empty() || !forgot.is_empty()) {
+            let made: Map<String, Value> = filled
+                .iter()
+                .filter_map(|key| Some((key.clone(), fields.get(key)?.clone())))
+                .collect();
+            crate::screen_form_module::removes(kind, &before, &draft, &made)
+        } else {
+            None
+        };
+        if !filled.is_empty() || !forgot.is_empty() {
+            if asks.is_none() {
+                agent::save_draft(kind, &db, &mut draft)?;
+            }
             for key in &filled {
                 if not_shown.iter().any(|hidden| hidden == key) {
                     continue;
@@ -642,14 +716,35 @@ impl Session {
         }
         drop(db);
         if let Some(open) = self.open.as_mut() {
-            open.draft = draft;
-            open.dirty |= !filled.is_empty();
-            for key in &filled {
-                open.sources.insert(key.clone(), source.clone());
+            if asks.is_some() {
+                open.awaiting = true;
+            } else {
+                open.awaiting = false;
+                open.draft = draft;
+                open.dirty |= !filled.is_empty() || !forgot.is_empty();
+                for key in &filled {
+                    open.sources.insert(key.clone(), source.clone());
+                }
             }
         }
-        if !edits.is_empty() {
-            self.commands.push(json!({"op": "choose", "edits": edits}));
+        // The window holds its own copy of the return and saves all of it: the
+        // answers dropped go to it with the edits, or its next save would
+        // store them again.
+        if !edits.is_empty() || !forgot.is_empty() {
+            let mut choose = json!({"op": "choose", "edits": edits});
+            if !forgot.is_empty() {
+                choose["clear"] = json!(forgot);
+            }
+            self.commands.push(choose);
+        }
+        if let Some(asks) = asks {
+            let message = asks
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("The answer removes information the filer entered.");
+            return Err(format!(
+                "approval required: {message} Nothing was stored; the window asks the filer. Continue stores the fill, Cancel keeps the return. Read the return again with form.fields."
+            ));
         }
         let mut result = json!({
             "form": kind.form_code(),
@@ -710,6 +805,259 @@ impl Session {
             "errors": errors.len(),
             "field_errors": field_errors(&errors),
             "form": code,
+        })))
+    }
+
+    fn form_schema(&self, args: &Value) -> Result<DispatchResult, String> {
+        let kind = form_kind(args, "form.schema")?;
+        Ok(DispatchResult::json(agent::recipe::form_schema(kind)))
+    }
+
+    /// The taxpayer an invoke names (`args.tin` / `args.q`), else the
+    /// selected one.
+    fn taxpayer(&self, args: &Value, invoke: &str) -> Result<String, String> {
+        match self.resolve_tin(args)? {
+            TinQuery::Missing => self
+                .selected_tin
+                .clone()
+                .ok_or_else(|| format!("{invoke} requires a taxpayer (args.tin or profile.set)")),
+            TinQuery::NotFound { query } => Err(format!("{invoke} taxpayer not found for {query}")),
+            TinQuery::Ambiguous { query, .. } => Err(format!(
+                "{invoke} taxpayer {query} is ambiguous; use args.tin as 14 digits"
+            )),
+            TinQuery::One { tin, .. } => Ok(tin),
+        }
+    }
+
+    /// A dry run of `form.open` + `form.fill` + `form.validate`: nothing is
+    /// saved, opened or shown. On a fresh in-memory return, or with
+    /// `args.stored` on the return `form.open` would open for the period
+    /// (the stored draft when there is one), which must still be a draft.
+    /// `args.ask` lists choice boxes whose stored answer is dropped unless
+    /// `fields` answers them (a stopped box is asked again where it applies).
+    /// `discarded` lists the inputs the computed return does not hold.
+    fn form_check(&self, args: &Value) -> Result<DispatchResult, String> {
+        let kind = form_kind(args, "form.check")?;
+        let year = require_year(args, "form.check")?;
+        let period = optional_u8(args, "period").unwrap_or(0);
+        let tin = self.taxpayer(args, "form.check")?;
+        let fields = match args.get("fields") {
+            None | Some(Value::Null) => Map::new(),
+            Some(Value::Object(object)) => object.clone(),
+            Some(_) => return Err("form.check requires args.fields as an object".into()),
+        };
+        let strict = args.get("strict").and_then(Value::as_bool) == Some(true);
+        let db = self.lock_db()?;
+        let profile = load_profile(&db, &tin, year)?;
+        let mut from_profile = profile_context(&db, kind, &profile, year, period)?;
+        // As `form.open` does: a later 2551Q quarter holds its filed Q1's
+        // Item 13 answer.
+        if kind == AgentFormKind::Form2551Q {
+            let mut typed: bir_core::forms::form_2551q::Form2551QDraft =
+                serde_json::from_value(from_profile.draft).map_err(|error| error.to_string())?;
+            agent::draft_locks::item_13::refresh(&db, &mut typed)
+                .map_err(|error| error.to_string())?;
+            from_profile.draft = serde_json::to_value(typed).map_err(|error| error.to_string())?;
+        }
+        let stored = args.get("stored").and_then(Value::as_bool) == Some(true);
+        let mut draft = if stored {
+            crate::screen_form_module::load_draft(&db, kind, &profile, year, period, false, None)?
+        } else {
+            from_profile.draft.clone()
+        };
+        drop(db);
+        if agent::identity(kind, &draft)?.status != FilingStatus::Draft {
+            return Err(format!(
+                "form.check failed, nothing was written: Form {} for {year} period {period} is no longer a draft",
+                kind.form_code()
+            ));
+        }
+        let mut applied = Vec::new();
+        let mut refused = Map::new();
+        let (_, kept_answers) = forget_unanswered(kind, &mut draft, args, &fields)?;
+        refused.extend(kept_answers);
+        let def = kind.definition();
+        let mut chosen = BTreeMap::new();
+        for (key, value) in &fields {
+            match agent::fill(kind, &mut draft, key, value, Some(&from_profile)) {
+                Ok(()) => {
+                    note_choice(kind, def, key, value, &mut chosen);
+                    applied.push(key.clone());
+                }
+                Err(why) => {
+                    refused.insert(key.clone(), Value::String(why));
+                }
+            }
+        }
+        agent::compute(kind, &mut draft)?;
+        let errors = agent::validate(kind, &mut draft)?;
+        let map = agent::field_map(kind, &draft)?;
+        let computed: Map<String, Value> = def
+            .boxes
+            .iter()
+            .filter(|entry| entry.computed && entry.group.is_none())
+            .filter_map(|entry| {
+                let value = def.box_value(&entry.key, &map);
+                (!agent::carry::is_blank_value(&value)).then(|| (entry.key.clone(), json!(value)))
+            })
+            .collect();
+        let discarded = discarded(def, &fields, &applied, &chosen, &map);
+        let ok = errors.is_empty() && refused.is_empty() && discarded.is_empty();
+        if strict && !ok {
+            let mut problems: Vec<String> = refused
+                .iter()
+                .map(|(key, why)| format!("{key}: {}", why.as_str().unwrap_or_default()))
+                .collect();
+            problems.extend(discarded.iter().map(|key| {
+                format!("{key}: the return does not keep this value (its box is not in use with the other answers)")
+            }));
+            problems.extend(
+                errors
+                    .iter()
+                    .map(|(field, message)| format!("{field}: {message}")),
+            );
+            return Err(format!(
+                "form.check failed, nothing was written: {}",
+                problems.join("; ")
+            ));
+        }
+        Ok(DispatchResult::json(json!({
+            "form": kind.form_code(),
+            "year": year,
+            "period": period,
+            "tin": tin,
+            "ok": ok,
+            "saved": false,
+            "applied": applied,
+            "refused": refused,
+            "discarded": discarded,
+            "errors": errors.len(),
+            "field_errors": field_errors(&errors),
+            "computed": computed,
+        })))
+    }
+
+    fn template_list(&self, args: &Value) -> Result<DispatchResult, String> {
+        let tin = self.taxpayer(args, "template.list")?;
+        let db = self.lock_db()?;
+        let templates: Vec<Value> = db
+            .list_form_templates(&tin)
+            .map_err(|error| error.to_string())?
+            .iter()
+            .map(|template| template_json(template, false))
+            .collect();
+        Ok(DispatchResult::json(
+            json!({"tin": tin, "templates": templates}),
+        ))
+    }
+
+    /// One form's template. With `args.expect_stamp` it fails unless the
+    /// template is still the one a recipe was generated from.
+    fn template_get(&self, args: &Value) -> Result<DispatchResult, String> {
+        let kind = form_kind(args, "template.get")?;
+        let tin = self.taxpayer(args, "template.get")?;
+        let db = self.lock_db()?;
+        let template = db
+            .get_form_template(&tin, kind.form_code())
+            .map_err(|error| error.to_string())?;
+        drop(db);
+        let stamp = agent::recipe::template_stamp(template.as_ref());
+        if let Some(expected) = optional_str(args, "expect_stamp")
+            && expected != stamp
+        {
+            return Err(format!(
+                "template for Form {} changed since this recipe was generated (expected {expected}, now {stamp}); run recipe.generate again",
+                kind.form_code()
+            ));
+        }
+        let mut out = match &template {
+            Some(template) => template_json(template, true),
+            None => json!({"form": kind.form_code(), "stamp": stamp}),
+        };
+        if let Value::Object(object) = &mut out {
+            object.insert("tin".into(), json!(tin));
+            object.insert("exists".into(), json!(template.is_some()));
+        }
+        Ok(DispatchResult::json(out))
+    }
+
+    /// The taxpayer's own recipe for a form, from its box definitions,
+    /// their template and their previous return. Read-only.
+    fn recipe_generate(&self, args: &Value) -> Result<DispatchResult, String> {
+        let kind = form_kind(args, "recipe.generate")?;
+        let tin = self.taxpayer(args, "recipe.generate")?;
+        // The history ends before the period named. Left out, it ends at the
+        // newest return; a year alone, at that year's last. Given, each must
+        // be usable, and a period needs its year: the newest return is not
+        // what a caller who named a period asked for.
+        let year = match args.get("year") {
+            None | Some(Value::Null) => None,
+            Some(_) => Some(require_year(args, "recipe.generate")?),
+        };
+        let period = match args.get("period") {
+            None | Some(Value::Null) => None,
+            Some(given) => Some(
+                json_u64(given)
+                    .and_then(|period| u32::try_from(period).ok())
+                    .ok_or("recipe.generate requires args.period as a JSON number")?,
+            ),
+        };
+        if year.is_none() && period.is_some() {
+            return Err(
+                "recipe.generate requires args.year when args.period is given: a period alone names no return"
+                    .into(),
+            );
+        }
+        let options = agent::recipe::Options {
+            check: agent::recipe::CheckMode::parse(args.get("check").and_then(Value::as_str))?,
+            include_unused: args.get("include_unused").and_then(Value::as_bool) == Some(true),
+            keep_open: args.get("keep_open").and_then(Value::as_bool) == Some(true),
+        };
+        let db = self.lock_db()?;
+        let template = db
+            .get_form_template(&tin, kind.form_code())
+            .map_err(|error| error.to_string())?;
+        let mut previous = Vec::new();
+        let mut before = (year.unwrap_or(u16::MAX), period.unwrap_or(u32::MAX));
+        while previous.len() < RECIPE_HISTORY {
+            let Some(earlier) = db
+                .previous_return(&tin, kind.form_code(), before.0, before.1)
+                .map_err(|error| error.to_string())?
+            else {
+                break;
+            };
+            before = (earlier.taxable_year, earlier.period);
+            previous.push(earlier);
+        }
+        drop(db);
+        let drafts: Vec<Value> = previous
+            .iter()
+            .map(|earlier| earlier.draft.clone())
+            .collect();
+        let generated = agent::recipe::generate(&agent::recipe::Inputs {
+            kind,
+            tin: &tin,
+            template: template.as_ref(),
+            previous: &drafts,
+            options,
+        })?;
+        Ok(DispatchResult::json(json!({
+            "form": kind.form_code(),
+            "tin": tin,
+            "recipe": generated.recipe,
+            "input_schema": generated.input_schema,
+            "template_stamp": generated.template_stamp,
+            "from": {
+                "template": template.as_ref().map(|template| template.source.to_db()),
+                "previous_returns": previous.iter().map(|earlier| json!({
+                    "id": earlier.id,
+                    "year": earlier.taxable_year,
+                    "period": earlier.period,
+                })).collect::<Vec<_>>(),
+            },
+            "constants": generated.constants,
+            "params": generated.params,
+            "left_out": generated.left_out,
         })))
     }
 
@@ -947,18 +1295,26 @@ impl Session {
         Ok(DispatchResult::json(outcome))
     }
 
-    fn form_dismiss(&mut self) -> Result<DispatchResult, String> {
-        if self.open.as_ref().is_some_and(|open| open.dirty) {
+    /// With `discard: true`, closes without writing the agent's copy. The NSH
+    /// window saves the filer's typing on leave; classic GPUI `enterView`
+    /// switches views without saving unsaved typing.
+    fn form_dismiss(&mut self, args: &Value) -> Result<DispatchResult, String> {
+        let discard = args.get("discard").and_then(Value::as_bool) == Some(true);
+        if !discard && self.open.as_ref().is_some_and(|open| open.dirty) {
             return Err("the form has unsaved edits; save the draft before dismissing it".into());
         }
         let Some(open) = self.open.take() else {
             return Err("no form is open to dismiss".into());
         };
         self.commands.push(json!({"op": "go", "view": "home"}));
-        Ok(DispatchResult::json(json!({
+        let mut result = json!({
             "dismissed": true,
             "form": open.kind.form_code(),
-        })))
+        });
+        if discard {
+            result["discarded"] = json!(true);
+        }
+        Ok(DispatchResult::json(result))
     }
 
     fn resolve_tin(&self, args: &Value) -> Result<TinQuery, String> {
@@ -1022,6 +1378,9 @@ impl AgentHost for Session {
             auth: HelloAuth::None,
             bundle_id: None,
             executable: None,
+            features: Vec::new(),
+            framework: None,
+            device: None,
         }
     }
 
@@ -1080,6 +1439,33 @@ fn profile_context(
     let values =
         serde_json::to_value(agent::field_map(kind, &draft)?).map_err(|error| error.to_string())?;
     Ok(FromProfile { draft, values })
+}
+
+/// How many earlier returns `recipe.generate` reads.
+const RECIPE_HISTORY: usize = 8;
+
+fn form_kind(args: &Value, invoke: &str) -> Result<AgentFormKind, String> {
+    let code = args
+        .get("code")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{invoke} requires args.code"))?;
+    AgentFormKind::from_code(code).ok_or_else(|| format!("unknown form `{code}`"))
+}
+
+fn template_json(template: &FormTemplate, with_fields: bool) -> Value {
+    let mut out = json!({
+        "form": template.form_code,
+        "stamp": agent::recipe::template_stamp(Some(template)),
+        "source": template.source.to_db(),
+        "updated_at": template.updated_at,
+        "pinned": template.pinned().len(),
+        "stops_on": template.stops_on(),
+    });
+    if with_fields && let Value::Object(object) = &mut out {
+        object.insert("answers".into(), json!(template.pinned()));
+        object.insert("stops".into(), json!(template.stop_edits()));
+    }
+    out
 }
 
 fn view_from_page(page: &str) -> Result<&'static str, String> {
@@ -1221,12 +1607,17 @@ fn collect_fill_fields(args: &Value) -> Result<Map<String, Value>, String> {
     }
     if let Some(object) = args.as_object() {
         for (key, value) in object {
-            if !matches!(key.as_str(), "fields" | "source" | "from_card") {
+            if !matches!(key.as_str(), "fields" | "source" | "from_card" | "ask") {
                 fields.insert(key.clone(), value.clone());
             }
         }
     }
-    if fields.is_empty() {
+    // A request that only drops stored answers (`ask`) fills nothing.
+    let asks = args
+        .get("ask")
+        .and_then(Value::as_array)
+        .is_some_and(|keys| !keys.is_empty());
+    if fields.is_empty() && !asks {
         return Err(
             "form.fill requires args.fields as an object, or fillable KEY=VALUE args".into(),
         );
@@ -1290,10 +1681,69 @@ fn field_errors(errors: &[(String, String)]) -> Vec<Value> {
         .collect()
 }
 
+/// Drop the stored answer of every `args.ask` box that `fields` leaves
+/// unanswered. The boxes whose answer was dropped, then the boxes the return
+/// cannot hold unanswered, each with why: those keep their answer, as the
+/// window's own fill keeps them.
+fn forget_unanswered(
+    kind: AgentFormKind,
+    draft: &mut Value,
+    args: &Value,
+    fields: &Map<String, Value>,
+) -> Result<(Vec<String>, Map<String, Value>), String> {
+    let ask = match args.get("ask") {
+        None | Some(Value::Null) => return Ok((Vec::new(), Map::new())),
+        Some(Value::Array(keys)) => keys,
+        Some(_) => return Err("args.ask must be a list of box keys".into()),
+    };
+    let mut forgotten = Vec::new();
+    let mut refused = Map::new();
+    for key in ask.iter().filter_map(Value::as_str) {
+        let answered = match fields.get(key) {
+            None | Some(Value::Null) => false,
+            Some(Value::String(text)) => !text.trim().is_empty(),
+            Some(_) => true,
+        };
+        if !answered {
+            let before = draft.clone();
+            match agent::forget(kind, draft, key) {
+                Ok(()) if *draft != before => forgotten.push(key.to_string()),
+                Ok(()) => {}
+                Err(why) => {
+                    refused.insert(key.to_string(), Value::String(why));
+                }
+            }
+        }
+    }
+    Ok((forgotten, refused))
+}
+
+/// After a radio item is filled: the option that fill chose, by the write's
+/// own matching of labels and aliases ([`agent::chosen_option`]). Not read
+/// back from the draft: a box whose answer the form derives (the spouse's
+/// rate, from the ATC) shows the old answer until the form recomputes.
+fn note_choice(
+    kind: AgentFormKind,
+    def: &agent::AgentFormDef,
+    key: &str,
+    value: &Value,
+    chosen: &mut BTreeMap<String, String>,
+) {
+    if def.box_def(key).is_some_and(|entry| entry.radio_group)
+        && let Some(option) = agent::chosen_option(kind, key, value)
+    {
+        chosen.insert(key.to_string(), option);
+    }
+}
+
+/// The filled boxes the return does not show as filled. `chosen` holds the
+/// option each filled radio item selected ([`note_choice`]): an item whose
+/// selection the computation replaced is not shown.
 fn not_shown(
     def: &agent::AgentFormDef,
     fields: &Map<String, Value>,
     filled: &[String],
+    chosen: &BTreeMap<String, String>,
     map: &BTreeMap<String, String>,
 ) -> Vec<String> {
     let text = |value: &Value| match value {
@@ -1312,7 +1762,7 @@ fn not_shown(
                 return true;
             }
             if def.box_def(key).is_some_and(|entry| entry.radio_group) {
-                return shown.is_empty();
+                return shown.is_empty() || chosen.get(*key).is_some_and(|option| *option != shown);
             }
             match def.bindings.get(*key).map(|bound| &bound.binding) {
                 Some(Binding::Amount { .. }) => {
@@ -1334,6 +1784,38 @@ fn not_shown(
             }
         })
         .cloned()
+        .collect()
+}
+
+/// The applied inputs the computed return does not hold: a box the other
+/// answers switch off, or a value the computation replaced. A blank input,
+/// and a zero for an amount or a count, ask for nothing and are never listed.
+fn discarded(
+    def: &agent::AgentFormDef,
+    fields: &Map<String, Value>,
+    applied: &[String],
+    chosen: &BTreeMap<String, String>,
+    map: &BTreeMap<String, String>,
+) -> Vec<String> {
+    not_shown(def, fields, applied, chosen, map)
+        .into_iter()
+        .filter(|key| {
+            let wanted = match fields.get(key) {
+                Some(Value::String(text)) => text.trim().to_string(),
+                Some(Value::Null) | None => String::new(),
+                Some(other) => other.to_string(),
+            };
+            if wanted.is_empty() {
+                return false;
+            }
+            match def.bindings.get(key).map(|bound| &bound.binding) {
+                Some(Binding::Amount { .. }) => {
+                    agent::parse_amount(&wanted).is_none_or(|amount| amount.abs() >= 0.005)
+                }
+                Some(Binding::Whole { .. }) => wanted.parse::<i64>().ok() != Some(0),
+                _ => true,
+            }
+        })
         .collect()
 }
 
@@ -1482,6 +1964,8 @@ mod tests {
 
     const TIN: &str = "12345678800000";
     const ROOT: &str = "123456788";
+    /// A spouse TIN with a valid check digit.
+    const SPOUSE_TIN: &str = "12345678800000";
 
     fn session() -> Session {
         let db = Arc::new(Mutex::new(
@@ -1575,6 +2059,7 @@ mod tests {
                     mode: ScreenshotMode::Viewport,
                     target: None,
                     max_height_px: None,
+                    inline: false,
                 },
             ),
             None,
@@ -1624,6 +2109,33 @@ mod tests {
         }
         assert!(saw_refresh, "profile.set refreshes the selected taxpayer");
         assert!(saw_home, "dashboard navigates to home");
+    }
+
+    /// `profile.save` on a taxpayer that already exists stores `birth_date`
+    /// and leaves the name alone when none is given.
+    #[test]
+    fn profile_save_stores_birth_date_on_an_existing_taxpayer() {
+        let mut session = session();
+        save_scratch(&mut session);
+        let saved = call(
+            &mut session,
+            "profile.save",
+            json!({"tin": TIN, "birth_date": "1975-10-10"}),
+        )
+        .unwrap();
+        assert_eq!(saved["created"], false);
+        assert_eq!(saved["name"], "TEST");
+        let stored = session
+            .lock_db()
+            .unwrap()
+            .get_taxpayer(ROOT)
+            .unwrap()
+            .expect("taxpayer");
+        assert_eq!(
+            stored.taxpayer.birth_date,
+            chrono::NaiveDate::from_ymd_opt(1975, 10, 10)
+        );
+        assert_eq!(stored.taxpayer.name, "TEST");
     }
 
     #[test]
@@ -1689,6 +2201,1230 @@ mod tests {
         let saved = call(&mut session, "form.save_draft", json!({})).unwrap();
         assert_eq!(saved["saved"], true);
         assert_eq!(saved["form"], "1701Q");
+    }
+
+    #[test]
+    fn form_fields_can_read_locked_profile_email_without_making_it_fillable() {
+        let mut session = session();
+        save_complete(&mut session);
+        store_1701q(&mut session, 1, &graduated_1701q());
+        call(
+            &mut session,
+            "form.open",
+            json!({"code": "1701Q", "year": 2026, "period": 1, "tin": TIN}),
+        )
+        .unwrap();
+
+        let fields = call(&mut session, "form.fields", json!({})).unwrap();
+        assert!(
+            !fields["boxes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|box_| box_["key"] == "txtEmail"),
+            "{fields}"
+        );
+
+        let fields = call(&mut session, "form.fields", json!({"locked": true})).unwrap();
+        let email = fields["boxes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|box_| box_["key"] == "txtEmail")
+            .expect("locked profile email is readable");
+        assert_eq!(email["value"], "test@example.com", "{email}");
+        assert_eq!(email["locked"], "profile", "{email}");
+
+        let fill = call(
+            &mut session,
+            "form.fill",
+            json!({"fields": {"txtEmail": "changed@example.com"}}),
+        )
+        .unwrap();
+        assert!(fill["filled"].as_array().unwrap().is_empty(), "{fill}");
+        assert!(
+            fill["refused"]["txtEmail"]
+                .as_str()
+                .unwrap()
+                .contains("taxpayer profile"),
+            "{fill}"
+        );
+    }
+
+    #[test]
+    fn recipe_is_generated_from_the_template_and_the_previous_return() {
+        let mut session = session();
+        save_scratch(&mut session);
+        let blank = call(&mut session, "recipe.generate", json!({"code": "1701Q"})).unwrap();
+        assert_eq!(blank["template_stamp"], "none", "{blank}");
+        assert!(blank["constants"].as_object().unwrap().is_empty());
+        let required = |made: &Value| -> Vec<String> {
+            serde_json::from_value(made["input_schema"]["required"].clone()).unwrap()
+        };
+
+        call(
+            &mut session,
+            "form.open",
+            json!({"code": "1701Q", "year": 2026, "period": 1, "tin": TIN}),
+        )
+        .unwrap();
+        let filled = call(
+            &mut session,
+            "form.fill",
+            json!({"fields": {
+                "frm1701q:txtCitizenship": "FILIPINO",
+                "frm1701q:optTaxRate": "Graduated",
+                "frm1701q:optMethodOfDeduction": "I",
+                "frm1701q:txt36A": "250000.00",
+            }}),
+        )
+        .unwrap();
+        assert!(filled.get("refused").is_none(), "{filled}");
+        call(&mut session, "form.save_draft", json!({})).unwrap();
+        call(&mut session, "form.dismiss", json!({})).unwrap();
+        session
+            .lock_db()
+            .unwrap()
+            .snapshot_template_from_latest_return(TIN, "1701Q")
+            .unwrap();
+
+        let listed = call(&mut session, "template.list", json!({"tin": TIN})).unwrap();
+        assert_eq!(listed["templates"][0]["form"], "1701Q", "{listed}");
+        let generated = call(
+            &mut session,
+            "recipe.generate",
+            json!({"code": "1701Q", "tin": TIN}),
+        )
+        .unwrap();
+        // An election the history answered is asked every time, never defaulted.
+        assert!(required(&generated).contains(&"opttaxrate".to_string()));
+        let rate = &generated["input_schema"]["properties"]["opttaxrate"];
+        assert!(rate.get("default").is_none(), "{rate}");
+        assert_eq!(generated["from"]["previous_returns"][0]["period"], 1);
+        let stamp = generated["template_stamp"].as_str().unwrap().to_string();
+        assert_ne!(stamp, "none");
+        assert_eq!(listed["templates"][0]["stamp"], stamp.as_str());
+        assert_eq!(
+            generated["constants"]["frm1701q:txtCitizenship"], "FILIPINO",
+            "{generated}"
+        );
+        let recipe = &generated["recipe"];
+        let fill = recipe["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|step| step["id"] == "fill")
+            .unwrap();
+        assert_eq!(
+            fill["args"]["fields"]["frm1701q:txtCitizenship"],
+            "FILIPINO"
+        );
+        assert_eq!(
+            fill["args"]["fields"]["frm1701q:txt36A"], "$txt36a",
+            "{generated:#}"
+        );
+        let sales = recipe["params"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|param| param["name"] == "txt36a")
+            .unwrap();
+        assert!(
+            sales.get("default").is_none(),
+            "an amount is never carried: {sales}"
+        );
+        assert!(sales["pattern"].is_string(), "{sales}");
+        assert_eq!(
+            generated["input_schema"]["properties"]["txt36a"]["x-box"],
+            "frm1701q:txt36A"
+        );
+        let names: Vec<&str> = recipe["params"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|param| param["name"].as_str().unwrap())
+            .collect();
+        for placeholder in fill["args"]["fields"].as_object().unwrap().values() {
+            if let Some(name) = placeholder.as_str().unwrap().strip_prefix('$') {
+                assert!(names.contains(&name), "{name} is declared");
+            }
+        }
+
+        let fresh = call(
+            &mut session,
+            "template.get",
+            json!({"code": "1701Q", "tin": TIN, "expect_stamp": stamp}),
+        )
+        .unwrap();
+        assert_eq!(fresh["exists"], true, "{fresh}");
+        session
+            .lock_db()
+            .unwrap()
+            .set_template_stop(TIN, "1701Q", "frm1701q:txtCitizenship", Some(true))
+            .unwrap();
+        let stale = call(
+            &mut session,
+            "template.get",
+            json!({"code": "1701Q", "tin": TIN, "expect_stamp": stamp}),
+        )
+        .unwrap_err();
+        assert!(stale.contains("run recipe.generate again"), "{stale}");
+        let again = call(
+            &mut session,
+            "recipe.generate",
+            json!({"code": "1701Q", "tin": TIN}),
+        )
+        .unwrap();
+        assert!(
+            again["constants"].get("frm1701q:txtCitizenship").is_none(),
+            "a stop is asked, not pinned: {again}"
+        );
+        assert!(
+            again["input_schema"]["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("txtcitizenship")),
+            "{again}"
+        );
+    }
+
+    /// A later 2551Q quarter's dry run starts from the filed Q1's Item 13,
+    /// as `form.open` does.
+    #[test]
+    fn check_of_a_later_2551q_quarter_holds_the_filed_q1_item_13() {
+        let mut session = session();
+        save_scratch(&mut session);
+        let later = json!({"code": "2551Q", "year": 2026, "period": 2, "tin": TIN});
+        let before = call(&mut session, "form.check", later.clone()).unwrap();
+        {
+            let db = session.lock_db().unwrap();
+            let profile = load_profile(&db, TIN, 2026).unwrap();
+            let mut q1 = Form2551QDraft::new_from_effective_profile(&profile, 2026, 1);
+            q1.item_13_election = bir_core::forms::form_2551q::Item13Election::Graduated;
+            let id = db.save_2551q_draft(&q1).unwrap();
+            q1.id = Some(id);
+            q1.status = FilingStatus::Submitted;
+            db.conn_for_tests()
+                .execute(
+                    "UPDATE form_drafts SET status = 'Submitted', data_json = ?1 WHERE id = ?2",
+                    (serde_json::to_string(&q1).unwrap(), id),
+                )
+                .unwrap();
+        }
+        let after = call(&mut session, "form.check", later).unwrap();
+        let unanswered = |checked: &Value| {
+            checked["field_errors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|error| error["field"] == "item_13_election")
+        };
+        assert!(unanswered(&before), "{before}");
+        assert!(!unanswered(&after), "{after}");
+    }
+
+    /// A stop on a computed penalty box is not an input: `fill` refuses the
+    /// box until Edit opens it in the app, so a strict check could not pass.
+    #[test]
+    fn a_penalty_stop_is_not_a_recipe_input() {
+        let mut session = session();
+        save_scratch(&mut session);
+        let key = "frm2551Qv2018:txt20";
+        session
+            .lock_db()
+            .unwrap()
+            .set_template_stop(TIN, "2551Q", key, Some(true))
+            .unwrap();
+        let generated = call(
+            &mut session,
+            "recipe.generate",
+            json!({"code": "2551Q", "tin": TIN}),
+        )
+        .unwrap();
+        assert!(
+            !generated["recipe"].to_string().contains(key),
+            "{generated}"
+        );
+        let schema = call(&mut session, "form.schema", json!({"code": "2551Q"})).unwrap();
+        let entry = schema["boxes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["key"] == key)
+            .unwrap();
+        assert_eq!(entry["fillable"], false, "{entry}");
+    }
+
+    /// Every value `form.schema` offers for a fillable box is one `fill` takes.
+    #[test]
+    fn schema_choices_are_the_ones_fill_accepts() {
+        let mut session = session();
+        save_scratch(&mut session);
+        let mut wrong = Vec::new();
+        for kind in AgentFormKind::all() {
+            let code = kind.form_code();
+            let schema = call(&mut session, "form.schema", json!({"code": code})).unwrap();
+            for entry in schema["boxes"].as_array().unwrap() {
+                let (Some(key), Some(values)) =
+                    (entry["key"].as_str(), entry["value"]["enum"].as_array())
+                else {
+                    continue;
+                };
+                if entry["fillable"] != true {
+                    continue;
+                }
+                for value in values {
+                    let checked = call(
+                        &mut session,
+                        "form.check",
+                        json!({"code": code, "year": 2026, "period": 1, "tin": TIN,
+                               "fields": {key: value}}),
+                    );
+                    match checked {
+                        Ok(checked) if checked["refused"].get(key).is_none() => {}
+                        Ok(checked) => {
+                            wrong.push(format!("{code} {key}={value}: {}", checked["refused"][key]))
+                        }
+                        Err(error) => wrong.push(format!("{code} {key}={value}: {error}")),
+                    }
+                }
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} refused:\n{}",
+            wrong.len(),
+            wrong.join("\n")
+        );
+    }
+
+    /// The review's three cases on the generated recipe's strict check.
+    #[test]
+    fn strict_check_is_on_the_stored_draft_and_refuses_discarded_inputs() {
+        let mut session = session();
+        save_scratch(&mut session);
+        let valid = json!({
+            "frm1701q:txtCitizenship": "FILIPINO",
+            "frm1701q:optType": "Professional",
+            "frm1701q:optATC": "II012",
+            "frm1701q:txtBirthMonth": "01/15/1990",
+            "frm1701q:optTaxRate": "Graduated",
+            "frm1701q:optMethodOfDeduction": "O",
+            "frm1701q:txt36A": "250000.00",
+        });
+        let check = |session: &mut Session, fields: &Value, stored: bool| {
+            call(
+                session,
+                "form.check",
+                json!({"code": "1701Q", "year": 2026, "period": 1, "tin": TIN,
+                       "fields": fields, "stored": stored}),
+            )
+            .unwrap()
+        };
+        // A draft stored while the profile had no email keeps its blank email.
+        call(
+            &mut session,
+            "form.open",
+            json!({"code": "1701Q", "year": 2026, "period": 1, "tin": TIN}),
+        )
+        .unwrap();
+        call(&mut session, "form.save_draft", json!({})).unwrap();
+        call(&mut session, "form.dismiss", json!({})).unwrap();
+        call(
+            &mut session,
+            "profile.save",
+            json!({"tin": TIN, "name": "TEST", "rdo_code": "040", "email": "test@example.com"}),
+        )
+        .unwrap();
+        let fresh = check(&mut session, &valid, false);
+        let stored = check(&mut session, &valid, true);
+        let names = |checked: &Value| -> Vec<String> {
+            checked["field_errors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|error| error["field"].as_str().unwrap_or_default().to_string())
+                .collect()
+        };
+        assert!(
+            !names(&fresh).iter().any(|field| field == "email"),
+            "{fresh}"
+        );
+        assert!(
+            names(&stored).iter().any(|field| field == "email"),
+            "{stored}"
+        );
+        let strict = call(
+            &mut session,
+            "form.check",
+            json!({"code": "1701Q", "year": 2026, "period": 1, "tin": TIN,
+                   "fields": valid, "stored": true, "strict": true}),
+        )
+        .unwrap_err();
+        assert!(
+            strict.contains("nothing was written") && strict.contains("email"),
+            "{strict}"
+        );
+
+        // Cost of sales under the optional standard deduction is zeroed by the form.
+        let mut discarded = valid.clone();
+        discarded["frm1701q:txt37A"] = json!("40000.00");
+        let checked = check(&mut session, &discarded, false);
+        assert_eq!(
+            checked["discarded"],
+            json!(["frm1701q:txt37A"]),
+            "{checked}"
+        );
+        assert_eq!(checked["ok"], false, "{checked}");
+        let strict = call(
+            &mut session,
+            "form.check",
+            json!({"code": "1701Q", "year": 2026, "period": 2, "tin": TIN,
+                   "fields": discarded, "strict": true}),
+        )
+        .unwrap_err();
+        assert!(strict.contains("frm1701q:txt37A"), "{strict}");
+        // A zero in the same inactive box asks for nothing.
+        let mut zero = valid.clone();
+        zero["frm1701q:txt37A"] = json!("0.00");
+        let checked = check(&mut session, &zero, false);
+        assert_eq!(checked["discarded"], json!([]), "{checked}");
+    }
+
+    /// 1701Q Item 16A is asked only under graduated rates.
+    #[test]
+    fn eight_percent_recipe_does_not_require_the_deduction_method() {
+        let mut session = session();
+        save_scratch(&mut session);
+        let made = call(&mut session, "recipe.generate", json!({"code": "1701Q"})).unwrap();
+        let name = made["input_schema"]["properties"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .find(|(_, property)| property["x-box"] == "frm1701q:optMethodOfDeduction")
+            .map(|(name, _)| name.clone())
+            .unwrap_or_else(|| panic!("{made}"));
+        let required = made["input_schema"]["required"].as_array().unwrap();
+        assert!(!required.contains(&json!(name)), "{made}");
+        let errors = |session: &mut Session, rate: &str| -> Vec<String> {
+            let checked = call(
+                session,
+                "form.check",
+                json!({"code": "1701Q", "year": 2026, "period": 1, "tin": TIN,
+                       "fields": {"frm1701q:optTaxRate": rate}}),
+            )
+            .unwrap();
+            checked["field_errors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|error| error["field"].as_str().unwrap_or_default().to_string())
+                .collect()
+        };
+        let rates: Vec<String> = serde_json::from_value(
+            made["input_schema"]["properties"]
+                .as_object()
+                .unwrap()
+                .values()
+                .find(|property| property["x-box"] == "frm1701q:optTaxRate")
+                .unwrap()["enum"]
+                .clone(),
+        )
+        .unwrap();
+        let eight = rates
+            .iter()
+            .find(|rate| rate.as_str() != "Graduated")
+            .unwrap();
+        assert!(
+            !errors(&mut session, eight)
+                .iter()
+                .any(|field| field == "deduction_method")
+        );
+        assert!(
+            errors(&mut session, "Graduated")
+                .iter()
+                .any(|field| field == "deduction_method")
+        );
+    }
+
+    /// A valid first-quarter 1701Q under graduated rates.
+    fn graduated_1701q() -> Value {
+        json!({
+            "frm1701q:txtCitizenship": "FILIPINO",
+            "frm1701q:optType": "Professional",
+            "frm1701q:optATC": "II012",
+            "frm1701q:optTaxRate": "Graduated",
+            "frm1701q:optMethodOfDeduction": "O",
+            "frm1701q:txt36A": "250000.00",
+        })
+    }
+
+    /// A scratch profile complete enough for a return to validate.
+    fn save_complete(session: &mut Session) {
+        call(
+            session,
+            "profile.save",
+            json!({"tin": TIN, "name": "TEST", "rdo_code": "040", "birth_date": "1990-01-15",
+                   "address": "1 TEST STREET", "zip": "1100", "email": "test@example.com"}),
+        )
+        .unwrap();
+    }
+
+    /// Store `fields` as the period's draft, the history a recipe reads.
+    fn store_1701q(session: &mut Session, period: u32, fields: &Value) {
+        store_1701q_as(session, period, fields, false);
+    }
+
+    /// [`store_1701q`]; `married` turns the spouse's part on first, as the
+    /// page's Civil Status does (no agent box does).
+    fn store_1701q_as(session: &mut Session, period: u32, fields: &Value, married: bool) {
+        call(
+            session,
+            "form.open",
+            json!({"code": "1701Q", "year": 2026, "period": period, "tin": TIN}),
+        )
+        .unwrap();
+        if married {
+            let draft = &mut session.open.as_mut().unwrap().draft;
+            draft["has_spouse"] = json!(true);
+            draft["spouse_tin"] = json!(SPOUSE_TIN);
+            draft["spouse_name"] = json!("TEST, SPOUSE");
+            draft["spouse_rdo_code"] = json!("040");
+        }
+        let filled = call(session, "form.fill", json!({"fields": fields})).unwrap();
+        assert!(filled.get("refused").is_none(), "{filled}");
+        call(session, "form.save_draft", json!({})).unwrap();
+        call(session, "form.dismiss", json!({})).unwrap();
+    }
+
+    /// The generated recipe's parameter for box `key`.
+    fn param_of(made: &Value, key: &str) -> String {
+        made["input_schema"]["properties"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .find(|(_, property)| property["x-box"] == key)
+            .map(|(name, _)| name.clone())
+            .unwrap_or_else(|| panic!("no parameter for {key}: {made}"))
+    }
+
+    fn is_required(made: &Value, key: &str) -> bool {
+        made["input_schema"]["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(param_of(made, key)))
+    }
+
+    /// Run a generated recipe the way `gpui-agent recipe run` does: bind
+    /// `set` (box key, value) with the runner's own rules, an optional
+    /// parameter left out dropping its argument, then invoke each step in
+    /// order. The error names the step that stopped the run.
+    fn run_recipe(
+        session: &mut Session,
+        made: &Value,
+        period: u32,
+        set: &[(&str, &str)],
+    ) -> Result<BTreeMap<String, Value>, String> {
+        use gpui_agent::protocol::Op;
+        let recipe = gpui_agent_recipe::Recipe::from_value(&made["recipe"])
+            .map_err(|error| format!("recipe: {error}"))?;
+        let mut bound: BTreeMap<String, String> = set
+            .iter()
+            .map(|(key, value)| (param_of(made, key), (*value).to_string()))
+            .collect();
+        bound.insert("year".into(), "2026".into());
+        bound.insert("period".into(), period.to_string());
+        let recipe = gpui_agent_recipe::apply_params(&recipe, &bound)
+            .map_err(|error| format!("params: {error}"))?;
+        let mut done = BTreeMap::new();
+        for step in &recipe.steps {
+            let Op::Invoke { name, args } = &step.op else {
+                panic!("step {} is not an invoke", step.id);
+            };
+            let value =
+                call(session, name, args.clone()).map_err(|why| format!("{}: {why}", step.id))?;
+            done.insert(step.id.clone(), value);
+        }
+        Ok(done)
+    }
+
+    /// Answers for a 1701Q under graduated rates, Item 16A left out.
+    const GRADUATED_SET: [(&str, &str); 8] = [
+        ("frm1701q:txtCitizenship", "FILIPINO"),
+        ("frm1701q:optType", "Professional"),
+        ("frm1701q:optATC", "II012"),
+        ("frm1701q:txtBirthMonth", "01"),
+        ("frm1701q:txtBirthDay", "15"),
+        ("frm1701q:txtBirthYear", "1990"),
+        ("frm1701q:optTaxRate", "Graduated"),
+        ("frm1701q:txt36A", "250000.00"),
+    ];
+
+    /// The same return under the 8% rate.
+    const EIGHT_PERCENT_SET: [(&str, &str); 7] = [
+        ("frm1701q:txtCitizenship", "FILIPINO"),
+        ("frm1701q:optType", "Professional"),
+        ("frm1701q:optATC", "II015"),
+        ("frm1701q:txtBirthMonth", "01"),
+        ("frm1701q:txtBirthDay", "15"),
+        ("frm1701q:txtBirthYear", "1990"),
+        ("frm1701q:optTaxRate", "Percentage"),
+    ];
+
+    /// The answers of `set` the recipe has a parameter for.
+    fn asked<'a>(made: &Value, set: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
+        set.iter()
+            .copied()
+            .filter(|(key, _)| made_asks(made, key))
+            .collect()
+    }
+
+    fn with<'a>(
+        base: &[(&'a str, &'a str)],
+        more: &[(&'a str, &'a str)],
+    ) -> Vec<(&'a str, &'a str)> {
+        base.iter().chain(more).copied().collect()
+    }
+
+    /// The generated recipe itself runs an 8% return with Item 16A left
+    /// out: the runner drops the argument from both the check and the fill.
+    #[test]
+    fn generated_recipe_runs_an_eight_percent_return_without_the_deduction_method() {
+        let mut session = session();
+        save_complete(&mut session);
+        let made = call(
+            &mut session,
+            "recipe.generate",
+            json!({"code": "1701Q", "tin": TIN, "check": "strict"}),
+        )
+        .unwrap();
+        let done = run_recipe(&mut session, &made, 1, &asked(&made, &EIGHT_PERCENT_SET)).unwrap();
+        assert_eq!(done["check"]["ok"], true, "{}", done["check"]);
+        assert_eq!(done["validate"]["ok"], true, "{}", done["validate"]);
+        assert_eq!(done["save"]["saved"], true, "{}", done["save"]);
+        // Graduated rates still ask for it, and name it before any write.
+        let stopped =
+            run_recipe(&mut session, &made, 2, &asked(&made, &GRADUATED_SET)).unwrap_err();
+        assert!(stopped.starts_with("check: "), "{stopped}");
+        assert!(stopped.contains("Item 16A"), "{stopped}");
+        let answered = with(
+            &asked(&made, &GRADUATED_SET),
+            &[("frm1701q:optMethodOfDeduction", "O")],
+        );
+        let done = run_recipe(&mut session, &made, 2, &answered).unwrap();
+        assert_eq!(done["save"]["saved"], true, "{}", done["save"]);
+    }
+
+    #[test]
+    fn generated_recipe_waits_for_approval_before_saving_a_rate_change() {
+        let mut session = session();
+        save_complete(&mut session);
+        store_1701q(&mut session, 1, &graduated_1701q());
+        let made = call(
+            &mut session,
+            "recipe.generate",
+            json!({"code": "1701Q", "tin": TIN, "check": "strict"}),
+        )
+        .unwrap();
+
+        let stopped =
+            run_recipe(&mut session, &made, 1, &asked(&made, &EIGHT_PERCENT_SET)).unwrap_err();
+        assert!(stopped.starts_with("fill: approval required:"), "{stopped}");
+        assert!(!stopped.contains("save:"), "{stopped}");
+        assert!(session.open.is_some(), "{stopped}");
+        assert_eq!(stored_income(&session, 1), "250,000.00");
+    }
+
+    /// A spouse who filed under graduated rates may elect 8% later: Item
+    /// 25A is then not asked for, and the recipe runs without it.
+    #[test]
+    fn spouse_eight_percent_recipe_does_not_require_the_spouse_deduction_method() {
+        let mut session = session();
+        save_complete(&mut session);
+        let mut history = graduated_1701q();
+        for (key, value) in SPOUSE_GRADUATED {
+            history[key] = json!(value);
+        }
+        store_1701q_as(&mut session, 1, &history, true);
+        // The period's draft is the married filer's, its elections unmade.
+        store_1701q_as(
+            &mut session,
+            2,
+            &json!({"frm1701q:txtCitizenship": "FILIPINO"}),
+            true,
+        );
+        let made = call(
+            &mut session,
+            "recipe.generate",
+            json!({"code": "1701Q", "tin": TIN, "check": "strict"}),
+        )
+        .unwrap();
+        assert!(!is_required(&made, "frm1701q:optSpouseMethod"), "{made}");
+        let filer = with(
+            &asked(&made, &GRADUATED_SET),
+            &[("frm1701q:optMethodOfDeduction", "O")],
+        );
+        let spouse: Vec<(&str, &str)> = SPOUSE_GRADUATED
+            .iter()
+            // Neither Item 25A nor graduated sales (Item 36B) is on an 8% column.
+            .filter(|(key, _)| !matches!(*key, "frm1701q:optSpouseMethod" | "frm1701q:txt36B"))
+            .map(|(key, value)| match *key {
+                "frm1701q:optSpouseATC" => (*key, "II015"),
+                _ => (*key, *value),
+            })
+            .chain([("frm1701q:optSpouseTaxRate", "Percentage")])
+            .filter(|(key, _)| made_asks(&made, key))
+            .collect();
+        let done = run_recipe(&mut session, &made, 2, &with(&filer, &spouse)).unwrap();
+        assert_eq!(done["check"]["ok"], true, "{}", done["check"]);
+        assert_eq!(done["check"]["discarded"], json!([]), "{}", done["check"]);
+        assert_eq!(done["save"]["saved"], true, "{}", done["save"]);
+        // The 8% spouse return holds no method of deduction.
+        assert_eq!(
+            read(&done["readback"], "frm1701q:optSpouseTaxRate"),
+            "Percentage"
+        );
+        assert_eq!(read(&done["readback"], "frm1701q:optSpouseMethod"), "");
+    }
+
+    /// A graduated spouse return.
+    const SPOUSE_GRADUATED: [(&str, &str); 4] = [
+        ("frm1701q:optSpouseType", "Professional"),
+        ("frm1701q:optSpouseATC", "II012"),
+        ("frm1701q:optSpouseMethod", "O"),
+        ("frm1701q:txt36B", "100000.00"),
+    ];
+
+    /// The value `form.fields` read back for box `key`.
+    fn read(readback: &Value, key: &str) -> String {
+        readback["boxes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["key"] == key)
+            .unwrap_or_else(|| panic!("no box {key}"))["value"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    fn made_asks(made: &Value, key: &str) -> bool {
+        made["input_schema"]["properties"]
+            .as_object()
+            .unwrap()
+            .values()
+            .any(|property| property["x-box"] == key)
+    }
+
+    /// A tax rate the ATC replaces is a discarded input: strict preflight
+    /// stops the recipe before the form opens.
+    #[test]
+    fn strict_check_refuses_a_tax_rate_the_atc_replaces() {
+        let mut session = session();
+        save_complete(&mut session);
+        let check = |session: &mut Session, fields: &Value, strict: bool| {
+            call(
+                session,
+                "form.check",
+                json!({"code": "1701Q", "year": 2026, "period": 1, "tin": TIN,
+                       "fields": fields, "strict": strict}),
+            )
+        };
+        let mut conflict = graduated_1701q();
+        conflict["frm1701q:optATC"] = json!("II015");
+        let checked = check(&mut session, &conflict, false).unwrap();
+        let discarded = checked["discarded"].as_array().unwrap();
+        assert!(
+            discarded.contains(&json!("frm1701q:optTaxRate")),
+            "{checked}"
+        );
+        assert_eq!(checked["ok"], false, "{checked}");
+        let refused = check(&mut session, &conflict, true).unwrap_err();
+        assert!(refused.contains("frm1701q:optTaxRate"), "{refused}");
+        // A label or alias fill accepts for the option the return keeps is
+        // not a discard.
+        for rate in ["Graduated", "graduated", "Graduated Rates"] {
+            let mut same = graduated_1701q();
+            same["frm1701q:optTaxRate"] = json!(rate);
+            let Ok(checked) = check(&mut session, &same, false) else {
+                continue;
+            };
+            if checked["refused"].get("frm1701q:optTaxRate").is_some() {
+                continue;
+            }
+            assert_eq!(checked["discarded"], json!([]), "{rate}: {checked}");
+        }
+        let checked = check(&mut session, &graduated_1701q(), true).unwrap();
+        assert_eq!(checked["ok"], true, "{checked}");
+
+        // The generated recipe stops at its check, with the form unopened.
+        let made = call(
+            &mut session,
+            "recipe.generate",
+            json!({"code": "1701Q", "tin": TIN, "check": "strict"}),
+        )
+        .unwrap();
+        let set: Vec<_> = asked(&made, &EIGHT_PERCENT_SET)
+            .into_iter()
+            .map(|(key, value)| match key {
+                "frm1701q:optTaxRate" => (key, "Graduated"),
+                _ => (key, value),
+            })
+            .chain([("frm1701q:optMethodOfDeduction", "O")])
+            .collect();
+        let stopped = run_recipe(&mut session, &made, 1, &set).unwrap_err();
+        assert!(stopped.starts_with("check: "), "{stopped}");
+        assert!(stopped.contains("frm1701q:optTaxRate"), "{stopped}");
+        assert!(call(&mut session, "form.fields", json!({})).is_err());
+    }
+
+    /// The generated recipe refuses an amount the return discards, before
+    /// it opens the form, and runs with a zero in the inactive box.
+    #[test]
+    fn generated_recipe_stops_on_a_discarded_amount() {
+        let mut session = session();
+        save_complete(&mut session);
+        // An itemized return with cost of sales, so the recipe asks for it.
+        let mut itemized = graduated_1701q();
+        itemized["frm1701q:optMethodOfDeduction"] = json!("I");
+        itemized["frm1701q:txt37A"] = json!("40000.00");
+        store_1701q(&mut session, 1, &itemized);
+        let made = call(
+            &mut session,
+            "recipe.generate",
+            json!({"code": "1701Q", "tin": TIN, "check": "strict"}),
+        )
+        .unwrap();
+        let set = with(
+            &asked(&made, &GRADUATED_SET),
+            &[("frm1701q:optMethodOfDeduction", "O")],
+        );
+        let stopped = run_recipe(
+            &mut session,
+            &made,
+            2,
+            &with(&set, &[("frm1701q:txt37A", "40000.00")]),
+        )
+        .unwrap_err();
+        assert!(stopped.starts_with("check: "), "{stopped}");
+        assert!(stopped.contains("frm1701q:txt37A"), "{stopped}");
+        assert!(call(&mut session, "form.fields", json!({})).is_err());
+        let done = run_recipe(
+            &mut session,
+            &made,
+            2,
+            &with(&set, &[("frm1701q:txt37A", "0.00")]),
+        )
+        .unwrap();
+        assert_eq!(done["check"]["discarded"], json!([]), "{}", done["check"]);
+        assert_eq!(done["save"]["saved"], true, "{}", done["save"]);
+    }
+
+    /// A stop on Item 16A asks again where the item applies: the method a
+    /// stored draft holds is not reused. Under 8%, changing a typed draft
+    /// needs approval before the recipe can continue.
+    #[test]
+    fn explicit_stop_on_the_deduction_method_is_asked_again() {
+        let mut session = session();
+        save_complete(&mut session);
+        store_1701q(&mut session, 1, &graduated_1701q());
+        session
+            .lock_db()
+            .unwrap()
+            .snapshot_template_from_latest_return(TIN, "1701Q")
+            .unwrap();
+        session
+            .lock_db()
+            .unwrap()
+            .set_template_stop(TIN, "1701Q", "frm1701q:optMethodOfDeduction", Some(true))
+            .unwrap();
+        let made = call(
+            &mut session,
+            "recipe.generate",
+            json!({"code": "1701Q", "tin": TIN, "check": "strict"}),
+        )
+        .unwrap();
+        assert!(made_asks(&made, "frm1701q:optMethodOfDeduction"), "{made}");
+        assert!(
+            !is_required(&made, "frm1701q:optMethodOfDeduction"),
+            "{made}"
+        );
+        // The period's draft already holds a method of deduction.
+        store_1701q(&mut session, 2, &graduated_1701q());
+        let stopped =
+            run_recipe(&mut session, &made, 2, &asked(&made, &GRADUATED_SET)).unwrap_err();
+        assert!(stopped.starts_with("check: "), "{stopped}");
+        assert!(stopped.contains("Item 16A"), "{stopped}");
+        let answered = with(
+            &asked(&made, &GRADUATED_SET),
+            &[("frm1701q:optMethodOfDeduction", "I")],
+        );
+        let done = run_recipe(&mut session, &made, 2, &answered).unwrap();
+        assert_eq!(
+            read(&done["readback"], "frm1701q:optMethodOfDeduction"),
+            "I"
+        );
+        // An 8% return runs with Item 16A left out, on a prefilled draft too.
+        store_1701q(&mut session, 3, &graduated_1701q());
+        let stopped =
+            run_recipe(&mut session, &made, 3, &asked(&made, &EIGHT_PERCENT_SET)).unwrap_err();
+        assert!(stopped.starts_with("fill: approval required:"), "{stopped}");
+        assert!(!stopped.contains("save:"), "{stopped}");
+        assert!(session.open.as_ref().unwrap().awaiting, "{stopped}");
+        assert_eq!(stored_income(&session, 3), "250,000.00");
+    }
+
+    /// A strict recipe that moves a stored graduated spouse to 8%: the rate
+    /// box writes the ATC and the form derives the rate afterwards, so the
+    /// answer is kept, not discarded.
+    #[test]
+    fn strict_check_accepts_a_spouse_rate_that_replaces_a_stored_one() {
+        // No window: the switch drops the spouse's graduated entries, which a
+        // window would ask the filer about first.
+        let mut session = session();
+        session.commands = UiQueue::discarding();
+        save_complete(&mut session);
+        let mut stored = graduated_1701q();
+        for (key, value) in SPOUSE_GRADUATED {
+            stored[key] = json!(value);
+        }
+        stored["frm1701q:optSpouseTaxRate"] = json!("Graduated");
+        store_1701q_as(&mut session, 1, &stored, true);
+        store_1701q_as(&mut session, 2, &stored, true);
+        let made = call(
+            &mut session,
+            "recipe.generate",
+            json!({"code": "1701Q", "tin": TIN, "check": "strict"}),
+        )
+        .unwrap();
+        let filer = with(
+            &asked(&made, &GRADUATED_SET),
+            &[("frm1701q:optMethodOfDeduction", "O")],
+        );
+        let spouse: Vec<(&str, &str)> = [
+            ("frm1701q:optSpouseType", "Professional"),
+            ("frm1701q:optSpouseATC", "II015"),
+            ("frm1701q:optSpouseTaxRate", "Percentage"),
+        ]
+        .into_iter()
+        .filter(|(key, _)| made_asks(&made, key))
+        .collect();
+        assert!(
+            spouse
+                .iter()
+                .any(|(key, _)| *key == "frm1701q:optSpouseTaxRate"),
+            "{made}"
+        );
+        let done = run_recipe(&mut session, &made, 2, &with(&filer, &spouse)).unwrap();
+        assert_eq!(done["check"]["ok"], true, "{}", done["check"]);
+        assert_eq!(done["check"]["discarded"], json!([]), "{}", done["check"]);
+        assert_eq!(
+            read(&done["readback"], "frm1701q:optSpouseTaxRate"),
+            "Percentage"
+        );
+    }
+
+    /// The income the database holds for the scratch 1701Q, read as another
+    /// session without a window reads it.
+    fn stored_income(session: &Session, period: u32) -> String {
+        let mut other = Session::new(UiQueue::discarding());
+        other.db = session.db.clone();
+        call(
+            &mut other,
+            "form.open",
+            json!({"code": "1701Q", "year": 2026, "period": period, "tin": TIN}),
+        )
+        .unwrap();
+        let fields = call(&mut other, "form.fields", json!({})).unwrap();
+        read(&fields, "frm1701q:txt36A")
+    }
+
+    #[test]
+    fn a_fill_that_removes_what_the_filer_typed_waits_for_the_window() {
+        let mut session = session();
+        save_complete(&mut session);
+        store_1701q(&mut session, 1, &graduated_1701q());
+        assert_eq!(stored_income(&session, 1), "250,000.00");
+        call(
+            &mut session,
+            "form.open",
+            json!({"code": "1701Q", "year": 2026, "period": 1, "tin": TIN}),
+        )
+        .unwrap();
+        while session.commands.pop().is_some() {}
+        let ask = json!(["frm1701q:optATC", "frm1701q:optTaxRate"]);
+        let error = call(&mut session, "form.fill", json!({"fields": {}, "ask": ask})).unwrap_err();
+        assert!(error.starts_with("approval required:"), "{error}");
+        assert!(error.contains("Nothing was stored;"), "{error}");
+        assert!(session.open.as_ref().unwrap().awaiting);
+        // The window is asked, with the same answers to drop.
+        let choose = session.commands.pop().expect("the window is told");
+        assert_eq!(choose["clear"], ask, "{choose}");
+        // Before approval, and after leaving with the question open (the
+        // window stores nothing): the income is as the filer typed it.
+        assert_eq!(stored_income(&session, 1), "250,000.00");
+        let fields = call(&mut session, "form.fields", json!({})).unwrap();
+        assert_eq!(read(&fields, "frm1701q:txt36A"), "250,000.00");
+        assert_eq!(read(&fields, "frm1701q:optATC"), "II012");
+        // The filer's Continue can come after any call: the window stores the
+        // fill (here, another writer does), and the next read shows it.
+        call(&mut session, "form.save_draft", json!({})).unwrap();
+        assert_eq!(stored_income(&session, 1), "250,000.00");
+        let mut window = Session::new(UiQueue::discarding());
+        window.db = session.db.clone();
+        call(
+            &mut window,
+            "form.open",
+            json!({"code": "1701Q", "year": 2026, "period": 1, "tin": TIN}),
+        )
+        .unwrap();
+        call(
+            &mut window,
+            "form.fill",
+            json!({"fields": {"frm1701q:txt36A": "300000"}}),
+        )
+        .unwrap();
+        let fields = call(&mut session, "form.fields", json!({})).unwrap();
+        assert_eq!(read(&fields, "frm1701q:txt36A"), "300,000.00");
+        call(
+            &mut session,
+            "form.fill",
+            json!({"fields": {"frm1701q:txt36A": "250000"}}),
+        )
+        .unwrap();
+        call(&mut session, "form.save_draft", json!({})).unwrap();
+        call(&mut session, "form.dismiss", json!({})).unwrap();
+        assert_eq!(stored_income(&session, 1), "250,000.00");
+        // Without a window nobody can be asked: the fill is the answer.
+        let mut alone = Session::new(UiQueue::discarding());
+        alone.db = session.db.clone();
+        call(
+            &mut alone,
+            "form.open",
+            json!({"code": "1701Q", "year": 2026, "period": 1, "tin": TIN}),
+        )
+        .unwrap();
+        let filled = call(&mut alone, "form.fill", json!({"fields": {}, "ask": ask})).unwrap();
+        assert!(filled.get("awaiting_approval").is_none(), "{filled}");
+    }
+
+    /// A fill that only leaves a stored choice unanswered (`fields` empty,
+    /// the box in `ask`) is taken, and the window is told which answer was
+    /// dropped: it saves its own copy of the return whole.
+    #[test]
+    fn a_fill_that_only_drops_an_answer_tells_the_window() {
+        let mut session = session();
+        save_complete(&mut session);
+        store_1701q(&mut session, 1, &graduated_1701q());
+        call(
+            &mut session,
+            "form.open",
+            json!({"code": "1701Q", "year": 2026, "period": 1, "tin": TIN}),
+        )
+        .unwrap();
+        while session.commands.pop().is_some() {}
+        let ask = json!(["frm1701q:optMethodOfDeduction"]);
+        let filled = call(&mut session, "form.fill", json!({"fields": {}, "ask": ask})).unwrap();
+        assert_eq!(filled["applied"], json!([]), "{filled}");
+        let choose = session.commands.pop().expect("the window is told");
+        assert_eq!(choose["op"], "choose", "{choose}");
+        assert_eq!(choose["clear"], ask, "{choose}");
+        assert_eq!(choose["edits"], json!({}), "{choose}");
+        let fields = call(&mut session, "form.fields", json!({})).unwrap();
+        assert_eq!(read(&fields, "frm1701q:optMethodOfDeduction"), "");
+        // With an edit beside it, one message carries both.
+        call(
+            &mut session,
+            "form.fill",
+            json!({"fields": {"frm1701q:optMethodOfDeduction": "O"}}),
+        )
+        .unwrap();
+        while session.commands.pop().is_some() {}
+        call(
+            &mut session,
+            "form.fill",
+            json!({"fields": {"frm1701q:txtSheets": "3"}, "ask": ask}),
+        )
+        .unwrap();
+        let choose = session.commands.pop().expect("the window is told");
+        assert_eq!(choose["clear"], ask, "{choose}");
+        assert_eq!(choose["edits"]["frm1701q:txtSheets"], "3", "{choose}");
+        // Nothing to fill and nothing to drop is still refused.
+        assert!(call(&mut session, "form.fill", json!({"fields": {}})).is_err());
+        assert!(call(&mut session, "form.fill", json!({"fields": {}, "ask": []})).is_err());
+    }
+
+    /// A held return that can no longer be read again (here its taxpayer is
+    /// gone) is still dismissed: no other call can close it.
+    #[test]
+    fn a_held_return_that_cannot_be_reloaded_is_still_dismissed() {
+        let mut session = session();
+        save_complete(&mut session);
+        store_1701q(&mut session, 1, &graduated_1701q());
+        call(
+            &mut session,
+            "form.open",
+            json!({"code": "1701Q", "year": 2026, "period": 1, "tin": TIN}),
+        )
+        .unwrap();
+        let ask = json!(["frm1701q:optATC", "frm1701q:optTaxRate"]);
+        call(&mut session, "form.fill", json!({"fields": {}, "ask": ask})).unwrap_err();
+        assert!(session.open.as_ref().unwrap().awaiting);
+        session
+            .lock_db()
+            .unwrap()
+            .delete_profile(TIN)
+            .expect("the profile is deleted");
+        let error = call(&mut session, "form.fields", json!({})).unwrap_err();
+        assert!(error.contains("no taxpayer profile"), "{error}");
+        let dismissed = call(&mut session, "form.dismiss", json!({"discard": true})).unwrap();
+        assert_eq!(dismissed["dismissed"], true, "{dismissed}");
+        assert!(session.open.is_none());
+    }
+
+    /// A year or period that is given and cannot be read is refused, never
+    /// taken as "the newest return".
+    #[test]
+    fn recipe_generate_refuses_a_year_or_period_it_cannot_read() {
+        let mut session = session();
+        save_scratch(&mut session);
+        store_1701q(&mut session, 2, &graduated_1701q());
+        for (args, named) in [
+            (json!({"code": "1701Q", "year": 70000}), "args.year"),
+            (json!({"code": "1701Q", "year": "next"}), "args.year"),
+            (
+                json!({"code": "1701Q", "year": 2026, "period": "Q1"}),
+                "args.period",
+            ),
+            (
+                json!({"code": "1701Q", "year": 2026, "period": 4_294_967_298_u64}),
+                "args.period",
+            ),
+        ] {
+            let error = call(&mut session, "recipe.generate", args.clone()).unwrap_err();
+            assert!(error.contains(named), "{args}: {error}");
+        }
+        for args in [
+            json!({"code": "1701Q"}),
+            json!({"code": "1701Q", "year": null, "period": null}),
+            json!({"code": "1701Q", "year": 2026, "period": 3}),
+        ] {
+            call(&mut session, "recipe.generate", args.clone())
+                .unwrap_or_else(|error| panic!("{args}: {error}"));
+        }
+    }
+
+    /// The history a recipe reads ends before the period named. A year
+    /// alone is the end of that year. A period alone names no return and is
+    /// refused, never read as "the newest return".
+    #[test]
+    fn recipe_generate_reads_the_history_before_the_period_named() {
+        let mut session = session();
+        save_scratch(&mut session);
+        store_1701q(&mut session, 1, &graduated_1701q());
+        store_1701q(&mut session, 3, &graduated_1701q());
+        let mut newest = |args: Value| {
+            let made = call(&mut session, "recipe.generate", args.clone())
+                .unwrap_or_else(|error| panic!("{args}: {error}"));
+            made["from"]["previous_returns"][0]["period"].clone()
+        };
+        assert_eq!(newest(json!({"code": "1701Q"})), 3);
+        assert_eq!(newest(json!({"code": "1701Q", "year": 2026})), 3);
+        assert_eq!(
+            newest(json!({"code": "1701Q", "year": 2026, "period": 2})),
+            1
+        );
+        let error = call(
+            &mut session,
+            "recipe.generate",
+            json!({"code": "1701Q", "period": 2}),
+        )
+        .unwrap_err();
+        assert!(error.contains("args.year"), "{error}");
+    }
+
+    /// A box in `ask` the return cannot hold unanswered is refused by name,
+    /// as the window's own fill refuses it: its answer stays, the fill's
+    /// other boxes are taken and the window is not told to drop it.
+    #[test]
+    fn a_fill_refuses_to_drop_a_required_choice_and_keeps_its_fields() {
+        let mut session = session();
+        save_complete(&mut session);
+        store_1701q(&mut session, 1, &graduated_1701q());
+        call(
+            &mut session,
+            "form.open",
+            json!({"code": "1701Q", "year": 2026, "period": 1, "tin": TIN}),
+        )
+        .unwrap();
+        while session.commands.pop().is_some() {}
+        let key = "frm1701q:AmendedRtn";
+        let filled = call(
+            &mut session,
+            "form.fill",
+            json!({"fields": {"frm1701q:txtSheets": "3"}, "ask": [key]}),
+        )
+        .unwrap();
+        assert_eq!(filled["applied"], json!(["frm1701q:txtSheets"]), "{filled}");
+        let why = filled["refused"][key].as_str().unwrap_or_default();
+        assert!(why.contains("cannot be left unanswered"), "{filled}");
+        let choose = session.commands.pop().expect("the window is told");
+        assert_eq!(choose["edits"]["frm1701q:txtSheets"], "3", "{choose}");
+        assert!(choose.get("clear").is_none(), "{choose}");
+        // The dry run names it the same way.
+        let checked = call(
+            &mut session,
+            "form.check",
+            json!({"code": "1701Q", "year": 2026, "period": 2, "tin": TIN, "ask": [key]}),
+        )
+        .unwrap();
+        assert_eq!(checked["ok"], false, "{checked}");
+        let why = checked["refused"][key].as_str().unwrap_or_default();
+        assert!(why.contains("cannot be left unanswered"), "{checked}");
+    }
+
+    #[test]
+    fn form_check_validates_without_writing() {
+        let mut session = session();
+        save_scratch(&mut session);
+        while session.commands.pop().is_some() {}
+        let schema = call(&mut session, "form.schema", json!({"code": "1701Q"})).unwrap();
+        let sales = schema["boxes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["key"] == "frm1701q:txt36A")
+            .unwrap_or_else(|| panic!("{schema}"));
+        assert_eq!(sales["fillable"], true, "{sales}");
+        assert_eq!(sales["carry"], "amount", "{sales}");
+        let checked = call(
+            &mut session,
+            "form.check",
+            json!({"code": "1701Q", "year": 2026, "period": 1, "tin": TIN,
+                   "fields": {"frm1701q:txt36A": "250000.00", "note": "nope"}}),
+        )
+        .unwrap();
+        assert_eq!(checked["saved"], false);
+        assert_eq!(checked["ok"], false, "{checked}");
+        assert_eq!(checked["applied"], json!(["frm1701q:txt36A"]), "{checked}");
+        assert!(checked["refused"]["note"].is_string(), "{checked}");
+        let strict = call(
+            &mut session,
+            "form.check",
+            json!({"code": "1701Q", "year": 2026, "period": 1, "tin": TIN,
+                   "fields": {"note": "nope"}, "strict": true}),
+        )
+        .unwrap_err();
+        assert!(strict.contains("nothing was written"), "{strict}");
+        assert!(session.open.is_none(), "form.check opens nothing");
+        assert!(session.commands.pop().is_none(), "form.check shows nothing");
+        let db = session.lock_db().unwrap();
+        assert!(
+            db.previous_return(TIN, "1701Q", u16::MAX, u32::MAX)
+                .unwrap()
+                .is_none(),
+            "form.check saves no draft"
+        );
     }
 
     #[test]
@@ -1848,6 +3584,47 @@ mod tests {
         .unwrap();
         let error = call(&mut session, "form.dismiss", json!({})).unwrap_err();
         assert!(error.contains("unsaved edits"), "{error}");
+    }
+
+    #[test]
+    fn form_dismiss_discard_keeps_another_sessions_saved_value() {
+        let mut session = session();
+        save_complete(&mut session);
+        store_1701q(&mut session, 1, &graduated_1701q());
+        call(
+            &mut session,
+            "form.open",
+            json!({"code": "1701Q", "year": 2026, "period": 1, "tin": TIN}),
+        )
+        .unwrap();
+        call(
+            &mut session,
+            "form.fill",
+            json!({"fields": {"frm1701q:txt36A": "300000"}}),
+        )
+        .unwrap();
+        assert_eq!(stored_income(&session, 1), "300,000.00");
+
+        let mut other = Session::new(UiQueue::discarding());
+        other.db = session.db.clone();
+        call(
+            &mut other,
+            "form.open",
+            json!({"code": "1701Q", "year": 2026, "period": 1, "tin": TIN}),
+        )
+        .unwrap();
+        call(
+            &mut other,
+            "form.fill",
+            json!({"fields": {"frm1701q:txt36A": "400000"}}),
+        )
+        .unwrap();
+        assert_eq!(stored_income(&session, 1), "400,000.00");
+
+        let dismissed = call(&mut session, "form.dismiss", json!({"discard": true})).unwrap();
+        assert_eq!(dismissed["discarded"], true, "{dismissed}");
+        assert_eq!(stored_income(&session, 1), "400,000.00");
+        assert!(call(&mut session, "form.fields", json!({})).is_err());
     }
 
     #[test]

@@ -19,8 +19,10 @@ import vm from "node:vm";
 const root = new URL("../", import.meta.url);
 
 const served = JSON.parse(fs.readFileSync(new URL("tools/fixtures/form_radio_untick_page.json", root), "utf8"));
+const forms = JSON.parse(fs.readFileSync(new URL("app/forms/forms-schema.json", root), "utf8"));
+const incomeQ = forms.find((form) => form.c === "1701Q");
 let code = "2200S";
-const schemaOf = (form) => ({ c: form, t: form, rev: "2018", freq: "As needed", pages: 1, n: 1, parts: [{ n: "Part", items: served[form].items }] });
+const schemaOf = (form) => form === "1701Q" ? incomeQ : ({ c: form, t: form, rev: "2018", freq: "As needed", pages: 1, n: 1, parts: [{ n: "Part", items: served[form].items }] });
 const field = (form, key) => served[form].items.flatMap((it) => it.f || []).find((f) => f.k === key);
 
 const entities = [], tasks = [], texts = [], timers = [];
@@ -96,6 +98,13 @@ const { FormPageActions, renderFormPage } = mod.namespace;
 
 let hostValues = {};
 let hostOpen = {};
+let storedValues = {};
+let nextRemoval = null;
+const toasts = [];
+const sameValues = (a, b) => {
+  const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
+  return [...keys].every((key) => a?.[key] === b?.[key]);
+};
 const opened = () => ({
   draft: { id: 7 }, status: "Draft", editable: true, values: { ...hostValues }, options: {}, locks: {},
   waits: {}, profile: [], profile_edit: [], sample: false, blank: [], needs: {}, off: {}, penalties: [], pools: {}, errors: [],
@@ -103,19 +112,34 @@ const opened = () => ({
 });
 const app = {
   prefs: {}, branchFor: () => null, taxpayers: () => [], layout: () => ({ column: 1056 }),
-  invalidate() {}, toast() {}, startNewReturn() {}, toastState: null,
+  invalidate() {}, toast(text, _cx, icon) { toasts.push({ text, icon }); }, startNewReturn() {}, bumpRecent() {}, toastState: null,
   toastUndo(what, run) { this.toastState = { text: what, action: { run } }; },
   store: {
     templates: () => [],
-    write(name, ...args) { calls.push([name, ...args]); return { id: 7, status: "Draft", draft: args[1] }; },
+    write(name, ...args) {
+      calls.push([name, ...args]);
+      if (name === "screen_form_save") {
+        if (args[2] != null && !sameValues(storedValues, args[2].values || {})) {
+          throw new Error("changed since Continue: stored field values differ");
+        }
+        storedValues = { ...(args[1].values || {}) };
+        hostValues = { ...storedValues };
+      }
+      return { id: 7, status: "Draft", draft: args[1] };
+    },
     call(name, ...args) {
       calls.push([name, ...args]);
       if (name === "screen_form_schema") return schemaOf(code);
       if (name === "screen_form_open") return Promise.resolve(opened());
       if (name === "screen_form_fill") {
-        const values = { ...(args[1].values || hostValues), ...args[2] };
-        hostValues = values;
-        return { draft: { id: 7, values }, values: { ...values }, options: {}, rejected: {}, penalties: [], pools: {}, removes: null };
+        const removal = nextRemoval;
+        nextRemoval = null;
+        const values = { ...(args[1].values || hostValues) };
+        for (const key of args[4] || []) values[key] = "";
+        for (const key of removal?.cleared || []) values[key] = "";
+        Object.assign(values, args[2]);
+        if (!removal) hostValues = values;
+        return { draft: { id: 7, values }, values: { ...values }, options: {}, rejected: {}, penalties: [], pools: {}, removes: removal ? { done: removal.done } : null };
       }
       if (name === "screen_form_sample_period") return Promise.resolve({ complete: false, existing: null });
       if (name === "screen_form_validate") return Promise.resolve({ draft: args[1], values: { ...(args[1].values || hostValues) }, options: {}, errors: [], off: {}, penalties: [], pools: {} });
@@ -254,4 +278,105 @@ console.log("PASS 2552 item 11: the kept group's untick and grp-scoped pick emit
   assert.equal(calls.length, before, "re-clicking the quarter asks the host nothing");
   assert.equal(ui.state.periodComplete, true, "the sample's set period stays set");
   console.log("PASS 0605 quarters: re-clicking the ticked quarter is a no-op.");
+}
+
+// ---- A clear-only agent choice clears a loaded 1701Q and Save keeps it blank.
+{
+  const method = "frm1701q:optMethodOfDeduction";
+  assert.ok(incomeQ, "the app's form schema includes 1701Q");
+  await openWith("1701Q", { [method]: "O" });
+  assert.equal(ui.state.values[method], "O");
+  ui.choose({}, cx, [method]);
+  const fill = fills().at(-1);
+  assert.deepEqual(JSON.parse(JSON.stringify(fill[3])), {}, "clear-only choose has no edits");
+  assert.deepEqual(JSON.parse(JSON.stringify(fill[5])), [method], "clear-only choose passes forget in the fifth fill argument");
+  assert.equal(hostValues[method], "", "the loaded draft clears the deduction method");
+  ui.save(cx);
+  const saved = calls.filter((call) => call[0] === "screen_form_save").at(-1);
+  assert.equal(saved[2].values[method], "", "page Save writes the cleared deduction method");
+  assert.equal(storedValues[method], "", "the saved draft stores the cleared deduction method");
+  console.log("PASS 1701Q clear-only choice: page Save keeps the deduction method blank.");
+}
+
+// ---- An approved agent clear is saved immediately; Cancel saves nothing.
+{
+  const atc = "frm1701q:optATC";
+  const rate = "frm1701q:optTaxRate";
+  const income = "frm1701q:txt36A";
+  const graduated = { [atc]: "II012", [rate]: "Graduated", [income]: "250000.00" };
+  const errorToastsBefore = toasts.filter((toast) => toast.icon === "triangle-alert").length;
+
+  await openWith("1701Q", graduated);
+  ui.state.draft = { id: 7, values: { ...graduated } };
+  storedValues = { ...graduated };
+  nextRemoval = { done: [income], cleared: [income] };
+  ui.choose({}, cx, [atc, rate], true);
+  assert.equal(app.overlay, "removal", "the host's removal is held for approval");
+  assert.deepEqual(storedValues, graduated, "the held clear has not reached storage");
+  ui.confirmRemoval(cx);
+  await settle();
+  assert.equal(storedValues[atc], "", "Continue saves the cleared ATC");
+  assert.equal(storedValues[rate], "", "Continue saves the cleared rate");
+  assert.equal(storedValues[income], "", "Continue saves the approved removal");
+  const undo = app.toastState?.action?.run;
+  assert.equal(typeof undo, "function", "a successful Continue offers Undo");
+  undo(cx);
+  await settle();
+  assert.deepEqual(storedValues, graduated, "Undo restores and saves the original ATC, rate, and income");
+  assert.equal(ui.removalUndo, null, "the Undo offer is consumed");
+  assert.equal(toasts.filter((toast) => toast.icon === "triangle-alert").length, errorToastsBefore, "Continue and Undo show no error toast");
+
+  await openWith("1701Q", graduated);
+  storedValues = { ...graduated };
+  const savesBeforeCancel = calls.filter((call) => call[0] === "screen_form_save").length;
+  nextRemoval = { done: [income], cleared: [income] };
+  ui.choose({}, cx, [atc, rate], true);
+  assert.equal(app.overlay, "removal");
+  ui.cancelRemoval(cx);
+  await settle();
+  assert.deepEqual(storedValues, graduated, "Cancel leaves the stored draft unchanged");
+  assert.equal(calls.filter((call) => call[0] === "screen_form_save").length, savesBeforeCancel, "Cancel does not save");
+  console.log("PASS 1701Q agent clear approval: Continue saves and Cancel preserves the stored draft.");
+}
+
+// ---- A newer agent write prevents agent-origin Undo from overwriting it.
+{
+  const atc = "frm1701q:optATC";
+  const rate = "frm1701q:optTaxRate";
+  const income = "frm1701q:txt36A";
+  const sheets = "frm1701q:txtSheets";
+  const graduated = { [atc]: "II012", [rate]: "Graduated", [income]: "250000.00" };
+  const errorToastsBefore = toasts.filter((toast) => toast.icon === "triangle-alert").length;
+  await openWith("1701Q", graduated);
+  ui.state.draft = { id: 7, values: { ...graduated } };
+  storedValues = { ...graduated };
+  nextRemoval = { done: [income], cleared: [income] };
+  ui.choose({}, cx, [atc, rate], true);
+  ui.confirmRemoval(cx);
+  await settle();
+  assert.equal(toasts.filter((toast) => toast.icon === "triangle-alert").length, errorToastsBefore, "Continue shows no error toast");
+
+  const undo = app.toastState?.action?.run;
+  assert.equal(typeof undo, "function", "Continue offers Undo before the newer write");
+  const agentDraft = { ...ui.state.draft, values: { ...storedValues, [sheets]: "2" } };
+  app.store.write("screen_form_save", "1701Q", agentDraft);
+  const toastStart = toasts.length;
+  undo(cx);
+  await settle();
+
+  assert.equal(storedValues[sheets], "2", "the newer agent sheet value remains stored");
+  assert.equal(storedValues[atc], "", "the cleared ATC remains stored");
+  assert.equal(storedValues[rate], "", "the cleared rate remains stored");
+  assert.equal(storedValues[income], "", "the cleared income remains stored");
+  assert.equal(ui.state.values[atc], "", "the page still shows the cleared ATC");
+  assert.equal(ui.state.values[rate], "", "the page still shows the cleared rate");
+  assert.equal(ui.state.values[income], "", "the page still shows the cleared income");
+  assert.equal(ui.removalUndo, null, "the stale Undo offer is retired");
+  assert.equal(app.toastState, null, "the stale Undo toast action is retired");
+  assert.deepEqual(
+    toasts.slice(toastStart).filter((toast) => toast.icon === "triangle-alert").map((toast) => toast.text),
+    ["The return changed after Continue, so Undo is no longer available"],
+    "the conflict shows only the expected toast",
+  );
+  console.log("PASS 1701Q agent Undo conflict: newer stored edits are preserved.");
 }

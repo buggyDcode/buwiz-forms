@@ -47,11 +47,26 @@ Validation and queue transitions remain guarded by the same core capabilities
 as the shell UI. `GPUI_AGENT_INSECURE_NO_TOKEN=1` is only for local demos and
 must not be used for remote binds.
 
+`form.dismiss` refuses to close a form with unsaved edits by default. To
+close without writing the agent's copy of the return, invoke `form.dismiss`
+with `{"discard": true}`; the result includes `"discarded": true`. The NSH
+window saves what the filer typed as it leaves. In the classic GPUI shell,
+`enterView` switches views without saving, so unsaved typing there is not
+stored.
+
+`form.fields` lists boxes the agent can fill. Pass `{"locked": true}` to
+include locked boxes as read-only, marked with their lock name; this does not
+make them fillable, and `form.fill` still refuses locked boxes.
+
+An invoke error beginning with `approval required:` means the window is
+holding the change for the filer. It is not an ordinary failure to retry;
+after the filer answers, read the return again with `form.fields`.
+
 ## Where the code lives
 
 The session (every `invoke`), the UI-command queue, the opt-in rules, the batch drain and the headless daemon with its CLI are UI-free and
 live in `crates/bir-app-api/src/agent/` (cargo features `agent`, and `headless` for the daemon): one copy, used by the gpui shell, by
-`bir-headless` and by the NSH app. `bir-shell` keeps only the gpui glue (`src/agent/mod.rs`: the 32 ms timer and the semantic tree of the
+`bir-headless` and by the NSH app. `bir-shell` keeps only the gpui glue (`src/agent/mod.rs`: the drain timer, which waits `bir_app_api::agent::drain_interval`: 1 ms while a request arrived in the last 500 ms and 32 ms when idle, and the semantic tree of the
 script view). Their tests run with `cargo test -p bir-app-api --features headless --lib agent::` (the four safety variables).
 
 ## NSH app

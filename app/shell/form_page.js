@@ -374,6 +374,8 @@ export class FormPageActions {
       inputs: new Map(),
       rowViews: new Map(),
       pending: {},
+      forget: [],
+      agentChoice: false,
       dirty: false,
       saved: false,
       openSelect: null,
@@ -1213,15 +1215,19 @@ export class FormPageActions {
   }
 
   /** Choice controls commit at once. */
-  choose(edits, cx) {
+  choose(edits, cx, clear = [], fromAgent = false) {
     const s = this.state;
     if (!s || !s.editable) return;
+    const clears = [...new Set((Array.isArray(clear) ? clear : []).filter((k) => typeof k === "string" && k.length))];
+    if (!Object.keys(edits).length && !clears.length) return;
+    s.forget = [...new Set([...s.forget, ...clears])];
     const period = Object.fromEntries(Object.entries(edits).filter(([k]) => s.periodParts?.has(k)));
     if (Object.keys(period).length) {
       this.setPeriodPart(period, cx);
       edits = Object.fromEntries(Object.entries(edits).filter(([k]) => !(k in period)));
-      if (!Object.keys(edits).length) return;
+      if (!Object.keys(edits).length && !s.forget.length) return;
     }
+    if (fromAgent) s.agentChoice = true;
     Object.assign(s.pending, edits);
     s.dirty = true;
     this.unquiet(Object.keys(edits));
@@ -1275,13 +1281,13 @@ export class FormPageActions {
    * asked first: the page keeps its draft and shows the old answer until
    * Continue (`confirmRemoval`); Cancel (`cancelRemoval`) leaves both.
    */
-  holdRemoval(r, edits, cx) {
+  holdRemoval(r, edits, cx, agentChoice = false) {
     const s = this.state;
     const chosen = s.chosenFrom || {};
     for (const k of Object.keys(edits)) if (k in chosen) s.values[k] = chosen[k] ?? "";
     // What was typed in the same batch is not the answer: Cancel keeps it.
     const typed = Object.fromEntries(Object.entries(edits).filter(([k]) => !(k in chosen)));
-    s.removal = { r, edits, typed, draft: s.draft };
+    s.removal = { r, edits, typed, draft: s.draft, agentChoice };
     this.app.overlay = "removal";
     this.refreshRows();
     cx.notify();
@@ -1297,11 +1303,20 @@ export class FormPageActions {
     this.applyFill(held.r, held.edits);
     s.dirty = true;
     this.refreshRows();
+    if (held.agentChoice) {
+      this.save(cx);
+      if (!s.dirty) this.offerRemovalUndo(held, s, cx, s.draft);
+      return;
+    }
     this.validate(cx);
+    this.offerRemovalUndo(held, s, cx);
+  }
+
+  offerRemovalUndo(held, s, cx, savedDraft) {
     // Undo belongs to this return's page as it is now: another return, or
     // any later edit here, retires it (it would bring back a stale draft).
-    const undo = (ucx) => this.undoRemoval(held.draft, s, undo, ucx);
-    this.removalUndo = { state: s, undo };
+    const undo = (ucx) => this.undoRemoval(held.draft, s, undo, ucx, held.agentChoice, savedDraft);
+    this.removalUndo = { state: s, undo, savedDraft };
     this.offerUndo(held.r.removes.done, undo, cx);
     cx.notify();
   }
@@ -1365,10 +1380,29 @@ export class FormPageActions {
   }
 
   /** Undo a removal: the draft from before the answer comes back, on the same page only. */
-  undoRemoval(draft, state, undo, cx) {
+  undoRemoval(draft, state, undo, cx, save = false, savedDraft) {
     const s = this.state;
     if (!s || s !== state || this.removalUndo?.undo !== undo) return;
     this.removalUndo = null;
+    const beforeUndo = save ? {
+      draft: s.draft,
+      values: s.values,
+      options: s.options,
+      penalties: s.penalties,
+      poolTexts: s.poolTexts,
+      notesAlways: s.notesAlways,
+      locks: { ...s.locks },
+      lockNotes: { ...s.lockNotes },
+      messages: { ...s.messages },
+      blank: s.blank,
+      dirty: s.dirty,
+      saved: s.saved,
+      status: s.status,
+      pending: s.pending,
+      forget: s.forget,
+      agentChoice: s.agentChoice,
+      quiet: s.quiet,
+    } : null;
     try {
       const r = this.app.store.call("screen_form_fill", s.code, draft, {}, []);
       this.applyFill(r, {});
@@ -1377,6 +1411,21 @@ export class FormPageActions {
     }
     s.dirty = true;
     this.refreshRows();
+    if (save) return this.save(cx, savedDraft, (error) => {
+      if (!error.startsWith("changed since Continue:")) return;
+      const attemptedValues = s.values;
+      Object.assign(s, beforeUndo);
+      this.syncComputed();
+      this.syncChanged(attemptedValues, {});
+      this.livePreview();
+      this.refreshRows();
+      if (this.app.toastState?.action?.run === undo) {
+        this.app.toastState = null;
+        this.app.invalidate?.();
+      }
+      this.app.toast("The return changed after Continue, so Undo is no longer available", cx, "triangle-alert");
+      cx.notify();
+    });
     this.validate(cx);
     cx.notify();
   }
@@ -1386,12 +1435,16 @@ export class FormPageActions {
     const s = this.state;
     if (!s || !s.draft) return;
     const edits = s.pending;
+    const forget = s.forget;
+    const agentChoice = s.agentChoice;
     s.pending = {};
-    if (Object.keys(edits).length) {
+    if (Object.keys(edits).length || forget.length) {
       this.retireRemovalUndo();
       try {
-        const r = this.app.store.call("screen_form_fill", s.code, s.draft, edits, this.unlockedFor(edits));
-        if (r.removes) return this.holdRemoval(r, edits, cx);
+        const r = this.app.store.call("screen_form_fill", s.code, s.draft, edits, this.unlockedFor(edits), forget);
+        s.forget = [];
+        s.agentChoice = false;
+        if (r.removes) return this.holdRemoval(r, edits, cx, agentChoice);
         this.applyFill(r, edits);
       } catch (e) {
         // The draft never took these edits: keep them staged (under anything
@@ -2472,22 +2525,26 @@ export class FormPageActions {
     });
   }
 
-  save(cx) {
+  save(cx, expected, onConflict) {
     const s = this.state;
     if (!s || !s.draft) return;
     if (s.sample) return this.saveSample(cx);
     this.unquiet();
     // Take whatever is staged before saving, without waiting for the debounce.
     let edits = s.pending;
+    const forget = s.forget;
+    const agentChoice = s.agentChoice;
     s.pending = {};
-    const changed = s.dirty || Object.keys(edits).length > 0;
+    const changed = s.dirty || Object.keys(edits).length > 0 || forget.length > 0;
     try {
-      if (Object.keys(edits).length) {
+      if (Object.keys(edits).length || forget.length) {
         this.retireRemovalUndo();
-        const f = this.app.store.call("screen_form_fill", s.code, s.draft, edits, this.unlockedFor(edits));
+        const f = this.app.store.call("screen_form_fill", s.code, s.draft, edits, this.unlockedFor(edits), forget);
+        s.forget = [];
+        s.agentChoice = false;
         // Rows this would remove are never saved without the question:
         // ask, and save nothing until the filer answers.
-        if (f.removes) return this.holdRemoval(f, edits, cx);
+        if (f.removes) return this.holdRemoval(f, edits, cx, agentChoice);
         this.accepted(edits, f.rejected);
         s.draft = f.draft;
         s.values = this.shown(f.values);
@@ -2495,7 +2552,9 @@ export class FormPageActions {
         if (Array.isArray(f.penalties)) s.penalties = f.penalties;
         edits = {};
       }
-      const r = this.app.store.write("screen_form_save", s.code, s.draft);
+      const r = expected === undefined
+        ? this.app.store.write("screen_form_save", s.code, s.draft)
+        : this.app.store.write("screen_form_save", s.code, s.draft, expected);
       // Saved, the return has a new state: a removal's Undo offered before
       // would bring back a draft older than what is saved, so it goes (a
       // save that failed leaves it).
@@ -2514,7 +2573,10 @@ export class FormPageActions {
     } catch (e) {
       // Edits the draft never took stay staged for the next try.
       s.pending = { ...edits, ...s.pending };
-      this.app.toast(message(e), cx, "triangle-alert");
+      s.agentChoice ||= agentChoice;
+      const error = message(e);
+      if (onConflict && error.startsWith("changed since Continue:")) return onConflict(error);
+      this.app.toast(error, cx, "triangle-alert");
     }
   }
 
@@ -2540,11 +2602,13 @@ export class FormPageActions {
     if (s.existing) return this.offerExisting(s.existing, cx);
     if (!s.periodSet) return this.askSamplePeriod(cx, then);
     let edits = s.pending;
+    const forget = s.forget;
     s.pending = {};
     let r;
     try {
-      if (Object.keys(edits).length) {
-        const f = this.app.store.call("screen_form_fill", s.code, s.draft, edits, this.unlockedFor(edits));
+      if (Object.keys(edits).length || forget.length) {
+        const f = this.app.store.call("screen_form_fill", s.code, s.draft, edits, this.unlockedFor(edits), forget);
+        s.forget = [];
         this.accepted(edits, f.rejected);
         s.draft = f.draft;
         s.values = this.shown(f.values);
