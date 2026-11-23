@@ -2,7 +2,8 @@
 param(
     [Parameter(Mandatory = $true)]
     [string] $Installer,
-    [string] $Python = 'python'
+    [string] $Python = 'python',
+    [switch] $Nsh
 )
 
 $ErrorActionPreference = 'Stop'
@@ -67,26 +68,48 @@ try {
         '/VERYSILENT',
         '/SUPPRESSMSGBOXES',
         '/NORESTART',
-        '/CURRENTUSER',
         '/NOICONS',
         '/TASKS=""',
         "/DIR=`"$installRoot`""
     )
+    if (-not $Nsh) { $arguments += '/CURRENTUSER' }
     $setup = Start-Process -FilePath $Installer -ArgumentList $arguments -Wait -PassThru
     if ($setup.ExitCode -ne 0) {
         throw "Setup.exe failed with exit code $($setup.ExitCode)"
     }
     $installSucceeded = $true
-    $binary = Join-Path $installRoot 'bir.exe'
-    $assets = Join-Path $installRoot 'assets'
-    if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) {
-        throw "Installed bir.exe was not found at $binary"
-    }
-    if (-not (Test-Path -LiteralPath $assets -PathType Container)) {
-        throw "Installed assets directory was not found at $assets"
+    if ($Nsh) {
+        $appRoot = Join-Path $installRoot 'eBIRForms-app'
+        foreach ($file in @('eBIRForms.exe', 'nsh/bundle.nshc', 'nsh/app.json')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $appRoot $file) -PathType Leaf)) {
+                throw "Missing installed NSH file: $file"
+            }
+        }
+        if (-not (Test-Path -LiteralPath (Join-Path $appRoot 'print-overrides') -PathType Container)) {
+            throw 'NSH Setup is missing print overrides'
+        }
+        if (Test-Path -LiteralPath (Join-Path $appRoot 'ebirforms-no-self-update')) {
+            throw 'Setup must allow self-update'
+        }
+        $registration = Find-EbirFormsUninstallEntry
+        if ($registration -notlike 'CurrentUser/*') {
+            throw "NSH Setup must register its uninstall entry per user, found: $registration"
+        }
+        # An update can add files that are not in Inno's original uninstall log.
+        New-Item -ItemType File -Path (Join-Path $appRoot 'updater-audit-probe') | Out-Null
+    } else {
+        $appRoot = $installRoot
+        $binary = Join-Path $installRoot 'bir.exe'
+        $assets = Join-Path $installRoot 'assets'
+        if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) {
+            throw "Installed bir.exe was not found at $binary"
+        }
+        if (-not (Test-Path -LiteralPath $assets -PathType Container)) {
+            throw "Installed assets directory was not found at $assets"
+        }
     }
     $auditScript = Join-Path $PSScriptRoot 'audit_no_legacy.py'
-    & $Python $auditScript --package-root $installRoot
+    & $Python $auditScript --package-root $appRoot
     $auditExitCode = $LASTEXITCODE
     if ($auditExitCode -ne 0) {
         throw "Installed-tree legacy audit failed with exit code $auditExitCode"
@@ -108,6 +131,8 @@ finally {
                 $remaining = Find-EbirFormsUninstallEntry
                 if ($remaining) {
                     $uninstallError = "Uninstall registration remains at $remaining"
+                } elseif ($Nsh -and (Test-Path -LiteralPath (Join-Path $installRoot 'eBIRForms-app'))) {
+                    $uninstallError = 'Uninstall left the updater-managed app directory behind'
                 } else {
                     $uninstallSucceeded = $true
                 }
@@ -118,7 +143,7 @@ finally {
     } elseif ($installSucceeded) {
         $uninstallError = 'No generated uninstaller found'
     }
-    if ($uninstallSucceeded) {
+    if ($uninstallSucceeded -and (Test-Path -LiteralPath $installRoot)) {
         Remove-Item -LiteralPath $installRoot -Recurse -Force
     } elseif (Test-Path -LiteralPath $installRoot) {
         Write-Host "Final Setup audit diagnostics retained at $installRoot"

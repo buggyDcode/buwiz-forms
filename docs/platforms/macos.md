@@ -95,7 +95,7 @@ there, but nobody has run it on that platform.
 - The app posts system banners through GPUI's `UNUserNotificationCenter`
   support when it runs from a `.app`. A bare `cargo run` shows only the in-app
   toast.
-- `bir-headless` (the background daemon) posts banners with `osascript`.
+- The headless `bir` daemon posts banners with `osascript`.
 - Database changes made by the daemon reach the window at once through a
   distributed notification. A 5 second poll is the fallback.
 
@@ -107,10 +107,20 @@ there, but nobody has run it on that platform.
   builds a DMG, notarizes it with `notarytool` and checks it with `spctl`.
   It needs the Apple secrets listed in
   [DEVELOPMENT.md](../DEVELOPMENT.md#cicd-secrets--codesigning).
-- `just app` builds the sandboxed Mac App Store package from the standalone
-  `bir-shell` workspace with `mas_build`, and aliases the UI binary as `bir`.
-  The macOS JIT entitlement combination and App Store build remain unverified
-  until checked on macOS. It needs App Store Connect credentials for the build number.
+- `just app` builds the sandboxed Mac App Store package from the NSH app
+  (`nsh/`): `nsh package --target macos --arch universal` with
+  `nsh/mas/cargo-with-mas.sh` as `$CARGO`, which adds the app's `mas_build`
+  feature (no global hotkey, shell cron runner or updater) to the generated
+  host's build. The recipe drops the update archive and the updater's
+  configuration, embeds `assets/macos/embedded.provisionprofile` (it refuses a
+  store build whose profile is missing or expired), signs with `entitlements.plist`
+  (sandbox), adds `print-overrides/` under `Contents/Resources` and wraps the
+  app with `productbuild`. The store build inherits the NSH minimum of macOS 14
+  (the `bir-shell` store build declared macOS 13). It needs App Store Connect
+  credentials for the build number, `CODESIGN_IDENTITY` and
+  `INSTALLER_IDENTITY`. Without `CODESIGN_IDENTITY` the app is ad hoc signed
+  for a local sandbox run, without the profile and without the application and
+  team identifiers, which an ad hoc signature cannot carry.
 - Entitlement files are in `assets/macos/` and at the repository root.
 
 ## Agent control
@@ -118,7 +128,7 @@ there, but nobody has run it on that platform.
 - The gpui-agent build feature is macOS-capable end to end, including
   screenshots (`screencapture -l`). The terminal needs Screen Recording
   permission for that exact binary path. See
-  [AGENT.md](../../crates/bir-shell/docs/AGENT.md).
+  [agent.md](../agent.md).
 
 ## Unverified
 
