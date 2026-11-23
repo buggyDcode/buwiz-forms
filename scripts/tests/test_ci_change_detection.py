@@ -380,6 +380,7 @@ class CiChangeDetectionTests(unittest.TestCase):
                 ".github/workflows/bir.yml",
                 ".github/workflows/html-candidate-certification.yml",
                 "scripts/setup-linux.sh",
+                "scripts/setup-linux-nsh.sh",
                 "scripts/setup-impeccable.sh",
                 "scripts/impeccable.pin",
                 "scripts/setup-windows.ps1",
@@ -402,6 +403,7 @@ class CiChangeDetectionTests(unittest.TestCase):
             "packaging/linux2/x.sh",
             "scripts/tests_helper.py",
             "scripts/setup-linux.sh.orig",
+            "scripts/setup-linux-nsh.sh.orig",
             ".github/workflows/cirelease.yml",
         ):
             with self.subTest(path=path):
