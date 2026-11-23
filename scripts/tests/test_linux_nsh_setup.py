@@ -17,11 +17,11 @@ def function(name):
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "Linux-only Bash setup tests")
 class LinuxNshSetupTests(unittest.TestCase):
-    def test_runtime_requires_current_pin_and_all_artifacts(self):
-        artifacts = ["classes.dex", "nsh-ref"] + [
+    def test_runtime_requires_current_build_settings_and_all_artifacts(self):
+        artifacts = ["classes.dex", "nsh-build"] + [
             f"lib/{abi}/libnsh.so" for abi in ("arm64-v8a", "armeabi-v7a", "x86_64")
         ]
-        for case in ("valid", "empty", "stale", *artifacts):
+        for case in ("valid", "empty", "stale", "other-ndk", "debug", *artifacts):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
                 dest = Path(tmp) / "tools/runtime/android/dev"
                 dest.mkdir(parents=True)
@@ -30,11 +30,16 @@ class LinuxNshSetupTests(unittest.TestCase):
                         if artifact != case:
                             file = dest / artifact
                             file.parent.mkdir(parents=True, exist_ok=True)
-                            file.write_text("old" if artifact == "nsh-ref" and case == "stale"
-                                            else "current")
-                result = self.run_shell(function("nsh_android_runtime_current") + '''
+                            stamp = {"stale": "old\n27\n0\n",
+                                     "other-ndk": "current\n28\n0\n",
+                                     "debug": "current\n27\n2\n"}.get(case, "current\n27\n0\n")
+                            file.write_text(stamp if artifact == "nsh-build" else "built")
+                result = self.run_shell(function("android_runtime_stamp") + "\n" +
+                                        function("nsh_android_runtime_current") + '''
 WORK="$PWD"
 REF=current
+NDK_VERSION=27
+ANDROID_RUNTIME_DEBUG=0
 nsh_android_runtime_current
 ''', tmp)
                 self.assertEqual(result.returncode == 0, case == "valid", result.stderr)
@@ -48,24 +53,30 @@ nsh_android_runtime_current
                 file = runtime / artifact
                 file.parent.mkdir(parents=True, exist_ok=True)
                 file.write_text("built")
-            result = self.run_shell(function("nsh_android_runtime_current") + "\n" +
+            result = self.run_shell(function("android_runtime_stamp") + "\n" +
+                                    function("nsh_android_runtime_current") + "\n" +
                                     function("install_android_runtime") + r'''
 WORK="$PWD"
 NSH="$PWD/nsh"
 REF=current
 ANDROID_HOME="$PWD/sdk"
-JAVA_HOME_IMAGE=jdk17
+NDK_VERSION=27
+ANDROID_RUNTIME_DEBUG=0
 log() { :; }
 die() { echo "$*" >&2; exit 1; }
 sdk_mount() { :; }
-in_image() { echo build >> builds; }
+in_image() {
+    [[ " $* " == *" -e ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27 "* ]]
+    [[ " $* " == *" -e CARGO_PROFILE_DEV_DEBUG=0 "* ]]
+    echo build >> builds
+}
 install_android_runtime
 install_android_runtime
 ''', tmp)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((root / "builds").read_text(), "build\n")
-            self.assertEqual((root / "tools/runtime/android/dev/nsh-ref").read_text(),
-                             "current\n")
+            self.assertEqual((root / "tools/runtime/android/dev/nsh-build").read_text(),
+                             "current\n27\n0\n")
 
     def test_checkout_accepts_git_directory_or_worktree_file(self):
         for linked in (False, True):
@@ -83,12 +94,48 @@ checkout_nsh
 ''', tmp)
                 self.assertEqual(result.returncode, 0, result.stderr)
 
-    def run_shell(self, source, directory):
+    def run_shell(self, source, directory, *args):
         return subprocess.run(
-            ["bash", "-euo", "pipefail", "-c", source],
+            ["bash", "-euo", "pipefail", "-c", source, "test", *args],
             cwd=directory, text=True, capture_output=True,
             env={**os.environ, "JAVA_HOME": "/old-java-11"},
         )
+
+    def test_wrapper_passes_literal_paths_and_pinned_ndk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / 'repo # & "quote" $(false)'
+            sdk = root / 'SDK # & "quote" $HOME'
+            (repo / "nsh").mkdir(parents=True)
+            sdk.mkdir()
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            docker = bin_dir / "docker"
+            docker.write_text('#!/bin/bash\nprintf "%s\\n" "$@"\n')
+            docker.chmod(0o755)
+            result = self.run_shell(
+                "\n".join(function(name) for name in
+                          ("outside_home", "sdk_mount", "write_wrapper")) + r'''
+export HOME="$PWD/home" PATH="$PWD/bin:$PATH"
+REPO="$1"
+ANDROID_HOME="$2"
+NDK_VERSION=27
+WORK="$PWD"
+MOUNTS=(-v "$HOME:$HOME")
+write_wrapper
+bash -n "$WORK/nsh2404.sh"
+bash "$WORK/nsh2404.sh" nsh run --target android
+''',
+                tmp, str(repo), str(sdk),
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            args = result.stdout.splitlines()
+            self.assertIn(str(repo / "nsh"), args)
+            self.assertIn(f"ANDROID_HOME={sdk}", args)
+            self.assertIn(f"{sdk}:{sdk}", args)
+            self.assertIn(f"ANDROID_NDK_HOME={sdk}/ndk/27", args)
+            self.assertIn("BUWIZ_ANDROID_DEV_ENV=EBIR_TEST_ENV=1;"
+                          "BUWIZ_NO_KEYCHAIN=1;BIR_SFTP_DRY_RUN=1", args)
 
     def test_sdk_selects_java_home_then_path_then_install(self):
         for case in ("home", "path", "old", "missing"):
@@ -111,7 +158,6 @@ checkout_nsh
                 emulator.chmod(0o755)
                 result = self.run_shell(function("find_java_home") + "\n" +
                                         function("install_android_sdk") + f'\ncase={case}\n' + r'''
-JAVA_HOME_IMAGE="$PWD/jdk17"
 JAVA_HOME="$PWD/not-installed"
 [ "$case" != home ] || JAVA_HOME="$PWD/custom-jdk"
 command() {
@@ -127,7 +173,11 @@ AVD=buwiz
 SUDO=""
 log() { :; }
 unzip() { :; }
-apt-get() { echo "$*" > apt-called; mkdir -p "$JAVA_HOME_IMAGE/bin"; touch "$JAVA_HOME_IMAGE/bin/java"; chmod +x "$JAVA_HOME_IMAGE/bin/java"; }
+apt-get() {
+    echo "$*" > apt-called
+    mkdir -p "$PWD/jdk17/bin"; touch "$PWD/jdk17/bin/java"; chmod +x "$PWD/jdk17/bin/java"
+}
+dpkg-query() { echo "$PWD/jdk17/bin/javac"; }
 rustup() { :; }
 install_android_sdk
 ''', tmp)
