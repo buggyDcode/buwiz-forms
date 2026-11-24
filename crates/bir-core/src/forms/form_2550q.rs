@@ -2168,6 +2168,106 @@ impl Form2550QDraft {
         for (key, value) in derived {
             fields.insert(format!("derived:{key}"), value);
         }
+        // Emit print-only keys for schedule rows beyond the two printed on Page 2
+        // so `bir-print` renders continuation sheets without changing the upload map.
+        let fmt_date = |d: Option<Form2550QDate>| {
+            d.map(|d| format!("{}/{}/{}", d.month, d.day, d.year))
+                .unwrap_or_default()
+        };
+        let fmt_money = |v: Option<f64>| {
+            v.map(|n| format!("{:.2}", format_currency_cents(n)))
+                .unwrap_or_default()
+        };
+        let fmt_life = |v: Option<u16>| {
+            v.filter(|&n| n != 0)
+                .map(|n| n.to_string())
+                .unwrap_or_default()
+        };
+        for (offset, row) in self.schedule_1.iter().enumerate().skip(2) {
+            if row.is_empty() {
+                continue;
+            }
+            let suffix = 10 + offset;
+            fields.insert(
+                format!("txtDatePurchase{suffix}"),
+                fmt_date(row.purchase_or_import_date),
+            );
+            fields.insert(
+                format!("txtSourceCode{suffix}"),
+                row.source_code.trim().to_string(),
+            );
+            fields.insert(
+                format!("txtDescription{suffix}"),
+                row.description.trim().to_string(),
+            );
+            fields.insert(
+                format!("txtAmountPurchase{suffix}"),
+                fmt_money(row.purchase_or_import_amount),
+            );
+            fields.insert(format!("txtInputTax{suffix}"), fmt_money(row.input_tax));
+            fields.insert(
+                format!("txtEstimatedLife{suffix}"),
+                fmt_life(row.estimated_life_months),
+            );
+            fields.insert(
+                format!("txtRecognizedLife{suffix}"),
+                fmt_life(row.recognized_life_months),
+            );
+            fields.insert(
+                format!("txtAllowedInputTax{suffix}"),
+                fmt_money(row.allowable_input_tax_for_period),
+            );
+            fields.insert(
+                format!("txtBalanceInputTax{suffix}"),
+                fmt_money(row.balance_to_next_period),
+            );
+        }
+        for (offset, row) in self.schedule_3.iter().enumerate().skip(2) {
+            if row.is_empty() {
+                continue;
+            }
+            fields.insert(
+                format!("derived:sched3_period{offset}"),
+                period(row.period_from, row.period_to),
+            );
+            fields.insert(
+                format!("txtNameWithHoldingAgent3{offset}"),
+                row.withholding_agent_name.trim().to_string(),
+            );
+            fields.insert(
+                format!("txtIncomePayment3{offset}"),
+                fmt_money(row.income_payment),
+            );
+            fields.insert(
+                format!("txtTotalTaxWithHeld3{offset}"),
+                fmt_money(row.tax_withheld),
+            );
+        }
+        for (offset, row) in self.schedule_4.iter().enumerate().skip(2) {
+            if row.is_empty() {
+                continue;
+            }
+            fields.insert(
+                format!("derived:sched4_period{offset}"),
+                period(row.period_from, row.period_to),
+            );
+            fields.insert(
+                format!("txtNameOfMiller4{offset}"),
+                row.miller_name.trim().to_string(),
+            );
+            fields.insert(
+                format!("txtNameOfTaxpayer4{offset}"),
+                row.taxpayer_name.trim().to_string(),
+            );
+            fields.insert(
+                format!("txtOfficialReceiptNumber4{offset}"),
+                row.official_receipt_number.trim().to_string(),
+            );
+            fields.insert(
+                format!("txtAmountPaid4{offset}"),
+                fmt_money(row.amount_paid),
+            );
+        }
         fields
     }
 
