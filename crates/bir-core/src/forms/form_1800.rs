@@ -1286,6 +1286,9 @@ mod tests {
         }
     }
 
+    // Note: this asserts the codec="raw" / maxlength=100 lossless-split contract;
+    // the exact official eBIRForms HTA split point could not be replayed because
+    // the Windows eBIRForms 1800 HTA source/runtime is not present on this Linux box.
     #[test]
     fn split_address_does_not_leak_percent_encoding_when_cut_lands_in_escape() {
         let addr = "UNIT 2408 PENTHOUSE TOWER B, AYALA AVENUE CORNER PASEO DE ROXAS, BARANGAY BEL-AIR, MAKATI CITY, METRO MANILA";
