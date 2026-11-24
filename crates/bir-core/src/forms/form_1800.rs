@@ -1294,6 +1294,22 @@ mod tests {
         assert!(!first.contains("%2C"), "first leaked %2C: {first}");
         assert!(!second.contains("%20"), "second leaked %20: {second}");
         assert!(!second.contains("%2C"), "second leaked %2C: {second}");
+        assert!(first.len() <= 100 && second.len() <= 100);
         assert_eq!(format!("{first}{second}"), addr);
+
+        let mut draft = sample();
+        draft.registered_address = addr.to_string();
+        draft.residence_address = addr.to_string();
+        let xml = draft.official_payload().expect("official_payload");
+        assert!(
+            xml.contains(&format!("<div>frm1800v2018:txtRegAddress={first}frm1800v2018:txtRegAddress=</div>")),
+            "txtRegAddress mismatch in upload XML"
+        );
+        assert!(
+            xml.contains(&format!("<div>frm1800v2018:txtRegAddress2={second}frm1800v2018:txtRegAddress2=</div>")),
+            "txtRegAddress2 mismatch in upload XML"
+        );
+        assert!(!xml.contains("%20"), "upload XML leaked %20");
+        assert!(!xml.contains("%2C"), "upload XML leaked %2C");
     }
 }
