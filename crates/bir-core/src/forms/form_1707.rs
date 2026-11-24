@@ -498,6 +498,16 @@ impl Form1707Draft {
             ],
         );
         fields.insert("derived:tin_digits".to_string(), tin_digits);
+        // Items 6A-6C Seller TIN and 7A-7C Buyer TIN print in plain table cells
+        // with no comb ticks or preprinted dashes; upload XML keeps compact digits.
+        for index in 0..FORM_1707_PARTY_ROWS {
+            for prefix in ["6Seller", "7Buyer"] {
+                let key = format!("frm1707:txtPg1I{prefix}TIN{index}");
+                if let Some(value) = fields.get_mut(&key) {
+                    *value = super::print_map::format_tin_dashed(value);
+                }
+            }
+        }
         fields
     }
 
@@ -1611,5 +1621,18 @@ mod tests {
         draft.surcharge = 99.0;
         draft.keep_entered_penalties();
         assert!(draft.revalidate_queued_before_submission().is_err());
+    }
+
+    #[test]
+    fn print_map_formats_party_tins_with_dashes_while_upload_keeps_digits() {
+        let mut draft = sample();
+        draft.sellers[0].tin = "00012345300000".to_string();
+        draft.buyers[0].tin = "987654321000".to_string();
+        let upload = draft.to_bir_field_map();
+        let print = draft.to_print_field_map();
+        assert_eq!(upload["frm1707:txtPg1I6SellerTIN0"], "00012345300000");
+        assert_eq!(upload["frm1707:txtPg1I7BuyerTIN0"], "987654321000");
+        assert_eq!(print["frm1707:txtPg1I6SellerTIN0"], "000-123-453-00000");
+        assert_eq!(print["frm1707:txtPg1I7BuyerTIN0"], "987-654-321-000");
     }
 }

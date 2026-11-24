@@ -37,6 +37,25 @@ pub fn tin_digits(tin: &str) -> String {
     format!("{digits:0<14}")
 }
 
+/// Formats a compact 12–14 digit TIN with standard BIR dashes
+/// (`000-123-453-00000` / `000-123-453-000`) for plain text print cells
+/// that have no comb ticks or preprinted dashes. Leaves blank, already-dashed,
+/// or non-standard values unchanged.
+pub fn format_tin_dashed(tin: &str) -> String {
+    let trimmed = tin.trim();
+    if (12..=14).contains(&trimmed.len()) && trimmed.bytes().all(|b| b.is_ascii_digit()) {
+        format!(
+            "{}-{}-{}-{}",
+            &trimmed[0..3],
+            &trimmed[3..6],
+            &trimmed[6..9],
+            &trimmed[9..]
+        )
+    } else {
+        trimmed.to_string()
+    }
+}
+
 /// A later page's header when the sheet draws its TIN and Taxpayer's Name
 /// boxes as one 40-slot comb: the 14 TIN digits, then the name from slot 14
 /// (under the Taxpayer's Name caption).
