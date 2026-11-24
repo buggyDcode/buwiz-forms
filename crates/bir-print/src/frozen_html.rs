@@ -1636,7 +1636,7 @@ fn money_comb_values(
         return None;
     }
     let (negative, peso, cents) = split_writer_money(trimmed)?;
-    let peso = signed_digits(negative, &peso, &cents);
+    let peso = signed_digits(negative, &peso, &cents, NegativeStyle::Minus, false);
     let peso_values = right_aligned_slot_values(*gap, &peso)?;
     let mut out: Vec<(usize, String)> = ordered[..*gap].iter().copied().zip(peso_values).collect();
     out.extend(
@@ -1824,10 +1824,64 @@ struct MoneyCells {
     point_slot: bool,
 }
 
+/// How a negative amount prints on a money or whole-peso comb, derived from
+/// the official paper caption (`printed` in `writer-cells.json`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum NegativeStyle {
+    #[default]
+    Minus,
+    /// Dual-state `/(Overpayment)`, `/(Overremittance)`, `/(Loss)`, `/(Excess ...)`:
+    /// prints `(digits)` in whole-peso combs (matching 1700/1701A) and `-digits`
+    /// left of pesos in split peso+centavo combs.
+    Parentheses,
+    /// Dedicated single-state overremittance/overpayment/loss line (no `/(...)`):
+    /// prints unsigned magnitude.
+    Unsigned,
+}
+
+impl NegativeStyle {
+    fn from_printed_label(label: Option<&str>) -> Self {
+        let Some(raw) = label else {
+            return Self::Minus;
+        };
+        let lower = raw.to_ascii_lowercase();
+        if [
+            "/(overpay",
+            "/(overremit",
+            "/(loss",
+            "/(deficit",
+            "/(excess",
+            "/(refund",
+            "/ (overpay",
+            "/ (overremit",
+            "/ (loss",
+            "/ (excess",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle))
+        {
+            Self::Parentheses
+        } else if [
+            "overpayment",
+            "overremittance",
+            "net operating loss",
+            "excess tax",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle))
+        {
+            Self::Unsigned
+        } else {
+            Self::Minus
+        }
+    }
+}
+
 /// A `{:.2}` writer amount printed in every listed peso + cents pair.
 struct MoneyJoin {
     writer_key: String,
     cells: Vec<MoneyCells>,
+    negative_style: NegativeStyle,
 }
 
 struct XboxJoin {
@@ -1840,6 +1894,7 @@ struct XboxJoin {
 struct PesoJoin {
     writer_key: String,
     html_ids: Vec<String>,
+    negative_style: NegativeStyle,
 }
 
 /// One writer date printed across the sheet's separate MM / DD / YYYY combs
@@ -2110,6 +2165,7 @@ fn parse_writer_cells(json: &str) -> Result<WriterCells, String> {
         cells.money_joins.push(MoneyJoin {
             writer_key: key.to_string(),
             cells: pairs,
+            negative_style: NegativeStyle::from_printed_label(required_str(row, "printed")),
         });
     }
 
@@ -2130,6 +2186,7 @@ fn parse_writer_cells(json: &str) -> Result<WriterCells, String> {
         cells.peso_joins.push(PesoJoin {
             writer_key: key.to_string(),
             html_ids,
+            negative_style: NegativeStyle::from_printed_label(required_str(row, "printed")),
         });
     }
 
@@ -2754,14 +2811,23 @@ fn split_writer_money(value: &str) -> Option<(bool, String, String)> {
     Some((negative, peso.to_string(), format!("{cents:0<2}")))
 }
 
-/// Puts the minus sign immediately left of the peso digits; a zero amount
-/// (`-0`, `-0.00`) prints unsigned.
-fn signed_digits(negative: bool, digits: &str, cents: &str) -> String {
+/// Formats the peso digits for a money or whole-peso comb according to the
+/// line's official `NegativeStyle`; a zero amount (`-0`, `-0.00`) prints unsigned.
+fn signed_digits(
+    negative: bool,
+    digits: &str,
+    cents: &str,
+    style: NegativeStyle,
+    whole_peso_comb: bool,
+) -> String {
     let zero = digits.chars().chain(cents.chars()).all(|ch| ch == '0');
-    if negative && !zero {
-        format!("-{digits}")
-    } else {
-        digits.to_string()
+    if !negative || zero {
+        return digits.to_string();
+    }
+    match style {
+        NegativeStyle::Unsigned => digits.to_string(),
+        NegativeStyle::Parentheses if whole_peso_comb => format!("({digits})"),
+        NegativeStyle::Parentheses | NegativeStyle::Minus => format!("-{digits}"),
     }
 }
 
@@ -2798,7 +2864,7 @@ fn fill_money_joins(
         let Some((negative, peso, cents)) = split_writer_money(value) else {
             continue;
         };
-        let peso = signed_digits(negative, &peso, &cents);
+        let peso = signed_digits(negative, &peso, &cents, join.negative_style, false);
         for cells in &join.cells {
             let Some(peso_indices) = grouped.get(cells.peso_html_id.as_str()) else {
                 continue;
@@ -2871,7 +2937,12 @@ fn fill_money_joins(
 /// `1234.49` -> `1234`, `1234.50` -> `1235`: the sheets' "49 centavos or
 /// less drop down; 50 or more round up". Negatives round the absolute value
 /// and keep the sign (`-1234.50` -> `-1235`); `-0` prints as `0`.
+#[cfg(test)]
 fn whole_pesos(value: &str) -> Option<String> {
+    whole_pesos_with_style(value, NegativeStyle::Minus)
+}
+
+fn whole_pesos_with_style(value: &str, style: NegativeStyle) -> Option<String> {
     let (negative, peso, cents) = split_writer_money(value)?;
     let peso = peso.trim_start_matches('0');
     let mut digits: Vec<u8> = if peso.is_empty() {
@@ -2896,7 +2967,7 @@ fn whole_pesos(value: &str) -> Option<String> {
         }
     }
     let digits = String::from_utf8(digits).ok()?;
-    Some(signed_digits(negative, &digits, ""))
+    Some(signed_digits(negative, &digits, "", style, true))
 }
 
 fn fill_peso_joins(
@@ -2914,7 +2985,7 @@ fn fill_peso_joins(
         let Some(value) = fields.get(&join.writer_key) else {
             continue;
         };
-        let Some(pesos) = whole_pesos(value) else {
+        let Some(pesos) = whole_pesos_with_style(value, join.negative_style) else {
             continue;
         };
         for html_id in &join.html_ids {
@@ -4026,6 +4097,7 @@ mod tests {
                 cent_html_id: Some("c".into()),
                 point_slot: false,
             }],
+            negative_style: super::NegativeStyle::Minus,
         }];
         let doc = super::fill_money_joins(&html, &fields, &joins);
         assert_eq!(
@@ -4055,6 +4127,7 @@ mod tests {
                 cent_html_id: Some("c".into()),
                 point_slot: false,
             }],
+            negative_style: super::NegativeStyle::Parentheses,
         }];
         let doc = super::fill_money_joins(&html, &fields, &joins);
         assert_eq!(
@@ -4084,6 +4157,7 @@ mod tests {
                 cent_html_id: None,
                 point_slot: true,
             }],
+            negative_style: super::NegativeStyle::Minus,
         }];
         let doc = super::fill_money_joins(&html, &fields, &joins);
         assert_eq!(
@@ -4222,9 +4296,50 @@ mod tests {
         let joins = [super::PesoJoin {
             writer_key: "k".into(),
             html_ids: vec!["p".into()],
+            negative_style: super::NegativeStyle::Minus,
         }];
         let doc = super::fill_peso_joins(&html, &fields, &joins);
         assert_eq!(comb_values(&doc, "p"), ["", "-", "1", "2", "3"]);
+    }
+
+    #[test]
+    fn negative_style_follows_official_line_wording() {
+        use std::collections::BTreeMap;
+        assert_eq!(
+            super::NegativeStyle::from_printed_label(Some("24 Tax Payable/(Overpayment)")),
+            super::NegativeStyle::Parentheses
+        );
+        assert_eq!(
+            super::NegativeStyle::from_printed_label(Some("12 Total Amount of Overremittance")),
+            super::NegativeStyle::Unsigned
+        );
+        assert_eq!(
+            super::NegativeStyle::from_printed_label(Some("3 Net Operating Loss (Item 1 Less Item 2)")),
+            super::NegativeStyle::Unsigned
+        );
+        assert_eq!(
+            super::NegativeStyle::from_printed_label(Some("22 Tax Payable, 1st installment")),
+            super::NegativeStyle::Minus
+        );
+
+        let html = comb("p", 8);
+        let mut fields = BTreeMap::new();
+        fields.insert("k".to_string(), "-122.50".to_string());
+        let paren = [super::PesoJoin {
+            writer_key: "k".into(),
+            html_ids: vec!["p".into()],
+            negative_style: super::NegativeStyle::Parentheses,
+        }];
+        let doc = super::fill_peso_joins(&html, &fields, &paren);
+        assert_eq!(comb_values(&doc, "p"), ["", "", "", "(", "1", "2", "3", ")"]);
+
+        let unsigned = [super::PesoJoin {
+            writer_key: "k".into(),
+            html_ids: vec!["p".into()],
+            negative_style: super::NegativeStyle::Unsigned,
+        }];
+        let doc = super::fill_peso_joins(&html, &fields, &unsigned);
+        assert_eq!(comb_values(&doc, "p"), ["", "", "", "", "", "1", "2", "3"]);
     }
 
     #[test]
