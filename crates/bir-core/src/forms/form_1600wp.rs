@@ -575,6 +575,23 @@ impl Form1600WpDraft {
                 },
             );
         }
+        super::print_map::blank_unset_date_parts(
+            &mut fields,
+            &[
+                "frm1600WP:DateWithholdingMonth",
+                "frm1600WP:DateWithholdingDay",
+                "frm1600WP:DateWithholdingYear",
+                "frm1600WP:DateWithholdingToMonth",
+                "frm1600WP:DateWithholdingToDay",
+                "frm1600WP:DateWithholdingToYear",
+                "derived:att_from_mm",
+                "derived:att_from_dd",
+                "derived:att_from_yyyy",
+                "derived:att_to_mm",
+                "derived:att_to_dd",
+                "derived:att_to_yyyy",
+            ],
+        );
         fields
     }
 

@@ -750,6 +750,14 @@ impl Form1706Draft {
             "frm1706:txtTotalN".to_string(),
             super::print_map::format_count(self.installment.number_of_installments),
         );
+        super::print_map::blank_unset_date_parts(
+            &mut fields,
+            &[
+                "frm1706:txtDateMonth",
+                "frm1706:txtDateDay",
+                "frm1706:txtDateYear",
+            ],
+        );
         fields
     }
 

@@ -8071,8 +8071,10 @@ mod donor_estate_print_tests {
         blank.death_month = 0;
         blank.death_day = 0;
         blank.death_year = 0;
+        let upload = blank.to_bir_field_map();
+        assert_eq!(upload["frm1801v2018:txtDateMonth"], "00");
         let fields = blank.to_print_field_map();
-        assert_eq!(fields["frm1801v2018:txtDateMonth"], "00");
+        assert_eq!(fields["frm1801v2018:txtDateMonth"], "");
         let html = filled_document("1801-2018", &fields).unwrap();
         assert_eq!(comb_text(&html, "p1c4"), "");
     }
@@ -8173,7 +8175,7 @@ mod donor_estate_print_tests {
                 &fresh["frm1800v2018:txtDate"],
                 &fresh["frm1800v2018:txtYear"]
             ],
-            ["00", "00", "0"]
+            ["", "", ""]
         );
         assert_eq!(parts(&fresh), ["", "", ""]);
         assert_eq!(parts(&donor(6, 0, 0)), ["06", "", ""]);

@@ -522,6 +522,14 @@ impl Form1707Draft {
                 );
             }
         }
+        super::print_map::blank_unset_date_parts(
+            &mut fields,
+            &[
+                "frm1707:txtPg1I1Month",
+                "frm1707:txtPg1I1Day",
+                "frm1707:txtPg1I1Year",
+            ],
+        );
         fields
     }
 

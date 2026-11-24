@@ -943,6 +943,14 @@ impl Form1606Draft {
                 super::print_map::format_count(Some(self.number_of_installments)),
             );
         }
+        super::print_map::blank_unset_date_parts(
+            &mut fields,
+            &[
+                "frm1606:txtDateMonth",
+                "frm1606:txtDateDay",
+                "frm1606:txtDateYear",
+            ],
+        );
         fields
     }
 
