@@ -522,6 +522,18 @@ impl Form1707Draft {
                 );
             }
         }
+        if self.shares_popup() {
+            for (k, row) in self.shares[FORM_1707_SCHEDULE_ROWS - 1..]
+                .iter()
+                .enumerate()
+            {
+                let k = k + 1;
+                fields.insert(
+                    format!("frm1707:txtPg2Pt4S2_{k}Col2"),
+                    super::print_map::format_count(row.number_of_shares),
+                );
+            }
+        }
         super::print_map::blank_unset_date_parts(
             &mut fields,
             &[

@@ -363,9 +363,16 @@ fn match_schedule_to_bands(
                     if let Some(hid) = item.get("html_id").and_then(Value::as_str) {
                         html_to_col.insert(
                             hid.to_string(),
-                            CellJoinKind::Text {
-                                col_idx,
-                                orig_writer_key: orig_writer_key.clone(),
+                            if orig_writer_key.starts_with("derived:amount_") {
+                                CellJoinKind::Peso {
+                                    col_idx,
+                                    orig_writer_key: orig_writer_key.clone(),
+                                }
+                            } else {
+                                CellJoinKind::Text {
+                                    col_idx,
+                                    orig_writer_key: orig_writer_key.clone(),
+                                }
                             },
                         );
                         if row_num == 1 {
@@ -555,6 +562,27 @@ fn parse_non_schedule_band_caption(
     None
 }
 
+/// Match `needle` inside `haystack` on a trailing word boundary so `"schedule 2"`
+/// does not falsely match `"schedule 2a"`.
+fn contains_schedule_word(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let mut start = 0;
+    while let Some(rel) = haystack[start..].find(needle) {
+        let end = start + rel + needle.len();
+        let next_is_alnum = haystack[end..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric());
+        if !next_is_alnum {
+            return true;
+        }
+        start = end;
+    }
+    false
+}
+
 fn find_schedule_total_joins(
     sched: &OverflowSchedule,
     wc: &Value,
@@ -634,7 +662,7 @@ fn find_schedule_total_joins(
                 continue;
             }
             let same_ns = ns_prefixes.iter().any(|p| wk.starts_with(p));
-            let mentions_sched = pr_lower.contains(&sched_lower);
+            let mentions_sched = contains_schedule_word(&pr_lower, &sched_lower);
             if !same_ns && !mentions_sched {
                 continue;
             }
@@ -937,8 +965,30 @@ fn render_band_continuation_for_schedule(
 
     // 3. Locate the official TOTAL row strip and ALL total cells on that same row
     //    (e.g. 1600WP Amount + Tax Withheld; 1801 Exclusive + Conjugal).
-    let total_strip: Option<(f64, f64, Vec<&TotalJoinInfo>)> =
-        plan.total_joins.first().and_then(|primary| {
+    //    Always pick the candidate immediately below this schedule's last band
+    //    (`cell.top >= last_band_y_end - 2.0`, minimum `cell.top`) so sibling
+    //    schedules on the same page (e.g. 1707 Schedule 1 above Schedule 3, or
+    //    1801 Schedule 2A below Schedule 2) can never steal the total row.
+    let last_band_y_end = plan
+        .bands
+        .last()
+        .and_then(|mb| mb.band.row_y.last().copied())
+        .unwrap_or(0.0);
+    let total_strip: Option<(f64, f64, Vec<&TotalJoinInfo>)> = plan
+        .total_joins
+        .iter()
+        .filter_map(|tj| {
+            let cell = page.cells.get(&tj.html_id)?;
+            if cell.top >= last_band_y_end - 2.0 {
+                Some((cell.top, tj))
+            } else {
+                None
+            }
+        })
+        .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(_, primary)| primary)
+        .or_else(|| plan.total_joins.first())
+        .and_then(|primary| {
             let cell = page.cells.get(&primary.html_id)?;
             let row_joins: Vec<&TotalJoinInfo> = plan
                 .total_joins
@@ -1515,11 +1565,26 @@ fn build_single_band_continuation_page(
                     >= 2
             })
             .map(|(i, _)| i);
+        let first_tot_left = total_joins
+            .iter()
+            .filter_map(|tj| {
+                page.cells
+                    .get(&tj.html_id)
+                    .and_then(|c| extract_style_pt(&c.raw_html, "left:"))
+            })
+            .fold(f64::INFINITY, f64::min);
         for (idx, t) in tot_texts.into_iter().enumerate() {
             let mut shifted = shift_top_in_tag(&t.raw_html, dy_tot);
             if Some(idx) == label_idx {
                 let marked = format!("{} (as on page {official_page_num})", t.plain_text);
                 shifted = replace_inner_text(&shifted, &marked);
+                // Keep the appended "(as on page N)" inside the label column so it
+                // never crosses into the first total amount cell (e.g. 1600WP).
+                let est_w = marked.len() as f64 * 3.4;
+                if first_tot_left.is_finite() && t.left + est_w > first_tot_left - 6.0 {
+                    let new_left = (first_tot_left - 6.0 - est_w).max(20.0);
+                    shifted = set_left_in_tag(&shifted, new_left);
+                }
             }
             body_texts.push_str(&shifted);
         }
@@ -1759,6 +1824,28 @@ fn shift_top_in_tag(elem: &str, dy: f64) -> String {
         "{}top:{}pt{}{}",
         &open[..top_pos],
         new_top,
+        &open[val_start + pt_rel + 2..],
+        rest
+    )
+}
+
+fn set_left_in_tag(elem: &str, new_left: f64) -> String {
+    let Some(gt) = elem.find('>') else {
+        return elem.to_string();
+    };
+    let open = &elem[..=gt];
+    let rest = &elem[gt + 1..];
+    let Some(left_pos) = open.find("left:") else {
+        return elem.to_string();
+    };
+    let val_start = left_pos + 5;
+    let Some(pt_rel) = open[val_start..].find("pt") else {
+        return elem.to_string();
+    };
+    format!(
+        "{}left:{}pt{}{}",
+        &open[..left_pos],
+        fmt_pt(new_left),
         &open[val_start + pt_rel + 2..],
         rest
     )
@@ -2249,9 +2336,10 @@ mod tests {
             "frm1707:txtPg2RegisteredName".into(),
             "SANTOS, JUANA".into(),
         );
+        f1707.insert("frm1707:txtPg2P4Sch2TotAmount".into(), "550000.00".into());
         for k in 1..=3 {
             f1707.insert(format!("frm1707:txtPg2Pt4S2_{k}Col1"), format!("CORP {k}"));
-            f1707.insert(format!("frm1707:txtPg2Pt4S2_{k}Col2"), "100".into());
+            f1707.insert(format!("frm1707:txtPg2Pt4S2_{k}Col2"), "400.000".into());
             f1707.insert(format!("frm1707:txtPg2Pt4S2_{k}Col3"), format!("CERT-{k}"));
             f1707.insert(format!("frm1707:txtPg2Pt4S2_{k}Col4"), "10000.00".into());
             f1707.insert(
@@ -2275,6 +2363,8 @@ mod tests {
             .unwrap();
         assert_eq!(s2.printed_capacity, 4);
         assert_eq!(s3.printed_capacity, 4);
+        assert!(s2.row_label_lettered);
+        assert!(s3.row_label_lettered);
         assert_eq!(
             s2.rows[0].row_number, 5,
             "Schedule 2 first continuation row must follow D (4)"
@@ -2284,13 +2374,48 @@ mod tests {
             "Schedule 3 first continuation row must follow D (4)"
         );
 
+        // Plain fallback for Schedule 2 must use lettered labels E, F, G (not 5, 6, 7),
+        // format No. of Shares as whole numbers ("400", not "400.000"), and repeat the
+        // official total beneath "Subtotal (additional rows)".
+        let plain_pos = doc1707
+            .html
+            .find("<div class=\"page page-continuation\"")
+            .unwrap();
+        let plain = &doc1707.html[plain_pos..];
+        assert!(
+            plain.contains("Rows E–G (continuing after 4 printed rows)"),
+            "plain fallback subtitle must use lettered rows E–G"
+        );
+        assert!(plain.contains(">E</td>"));
+        assert!(plain.contains(">F</td>"));
+        assert!(plain.contains(">G</td>"));
+        assert!(!plain.contains(">5</td>"));
+        assert!(
+            plain.contains(">400</td>") && !plain.contains("400.000"),
+            "plain fallback No. of Shares must match official print format (400, not 400.000)"
+        );
+        assert!(plain.contains("Subtotal (additional rows)"));
+        assert!(
+            plain.contains("Total Taxable Base (To Part II Item 10) (as on page 2)"),
+            "plain fallback must repeat the official total label"
+        );
+        assert!(
+            plain.contains("550,000.00"),
+            "plain fallback must repeat the official total value"
+        );
+
         // Cloned band for Schedule 3 must label rows E, F, G (not D), preserve decorative
-        // vertical group ticks + grey decimal box + decimal dot, and fill cloned header TIN/Name.
+        // vertical group ticks + grey decimal box + decimal dot, spell <=24-char Particulars
+        // one character per comb slot, and fill cloned header TIN/Name.
         let band_pos = doc1707
             .html
             .find("<div class=\"page page-continuation-band\"")
             .unwrap();
-        let cont = &doc1707.html[band_pos..];
+        let cont = &doc1707.html[band_pos..plain_pos];
+        assert!(
+            cont.contains("data-slot-index=\"0\"") && cont.contains("value=\"E\""),
+            "short Particulars (<=24 chars) must spell into individual comb slots"
+        );
         assert!(
             cont.contains(">E</div>"),
             "1707 Schedule 3 first continuation row must be E"

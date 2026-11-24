@@ -41,9 +41,29 @@ pub struct OverflowSchedule {
     pub columns: Vec<OverflowColumn>,
     pub rows: Vec<OverflowRow>,
     pub has_total: bool,
+    /// True when the official schedule labels its rows with letters (A, B, C, D, ...)
+    /// rather than numbers (1, 2, 3, ...).
+    pub row_label_lettered: bool,
+    /// Official schedule total label repeated on plain continuation sheets, e.g.
+    /// `"Total Taxable Base (To Part II Item 10) (as on page 2)"`.
+    pub official_total_label: Option<String>,
+    /// Official schedule total values aligned with `columns` (`Some(formatted)` for
+    /// total columns, `None` for non-total columns).
+    pub official_total_values: Vec<Option<String>>,
 }
 
 impl OverflowSchedule {
+    /// Format a 1-based row number using the official schedule's own labelling
+    /// scheme: letters (`A..Z, AA..`) when `row_label_lettered` is true, or
+    /// decimal numbers otherwise.
+    pub fn format_row_label(&self, row_number: usize) -> String {
+        if self.row_label_lettered {
+            format_letter_ordinal(row_number)
+        } else {
+            row_number.to_string()
+        }
+    }
+
     /// Human-readable warning line for print preview banners.
     pub fn warning_line(&self) -> String {
         let count = self.rows.len();
@@ -53,6 +73,20 @@ impl OverflowSchedule {
             format!("{}: {count} rows are on an additional sheet", self.heading)
         }
     }
+}
+
+fn format_letter_ordinal(mut n: usize) -> String {
+    if n == 0 {
+        return "0".to_string();
+    }
+    let mut chars = Vec::new();
+    while n > 0 {
+        n -= 1;
+        chars.push((b'A' + (n % 26) as u8) as char);
+        n /= 26;
+    }
+    chars.reverse();
+    chars.into_iter().collect()
 }
 
 /// Structured overflow report for one filled return.
@@ -259,7 +293,7 @@ pub fn detect_overflow(
             continue;
         }
 
-        let columns = spec
+        let columns: Vec<OverflowColumn> = spec
             .columns
             .iter()
             .enumerate()
@@ -277,19 +311,29 @@ pub fn detect_overflow(
             })
             .collect();
 
+        let row_label_lettered = schedule_uses_lettered_rows(&parsed, &spec.heading);
+        let (official_total_label, official_total_values) = if spec.has_total {
+            resolve_official_total(&parsed, fields, &spec.heading, &columns)
+        } else {
+            (None, Vec::new())
+        };
+
         schedules.push(OverflowSchedule {
             heading: spec.heading,
             printed_capacity,
             columns,
             rows,
             has_total: spec.has_total,
+            row_label_lettered,
+            official_total_label,
+            official_total_values,
         });
     }
 
     // Also detect popup/modal overflow rows whose writer keys use a separate
     // popup naming scheme from the printed rows (1700, 1701A, 1702EX, 1702MX,
     // 1702RT, 1707, 1707A).
-    for popup_sched in detect_popup_overflow(slug, fields, &unprinted) {
+    for popup_sched in detect_popup_overflow(slug, &parsed, fields, &unprinted) {
         if !schedules
             .iter()
             .any(|s| s.heading.eq_ignore_ascii_case(&popup_sched.heading))
@@ -376,8 +420,14 @@ pub fn continuation_pages_html(
         for chunk in page_chunks {
             let sched = chunk.schedule;
             let rows = chunk.rows;
-            let first_row = rows.first().map(|r| r.row_number).unwrap_or(0);
-            let last_row = rows.last().map(|r| r.row_number).unwrap_or(0);
+            let first_row = rows
+                .first()
+                .map(|r| sched.format_row_label(r.row_number))
+                .unwrap_or_default();
+            let last_row = rows
+                .last()
+                .map(|r| sched.format_row_label(r.row_number))
+                .unwrap_or_default();
 
             out.push_str("<div style=\"margin-bottom:14pt\">");
             out.push_str(&format!(
@@ -386,8 +436,8 @@ pub fn continuation_pages_html(
                  <div style=\"font-size:7.5pt;color:#444\">Rows {}–{} (continuing after {} printed rows)</div>\
                  </div>",
                 escape_html(&sched.heading),
-                first_row,
-                last_row,
+                escape_html(&first_row),
+                escape_html(&last_row),
                 sched.printed_capacity,
             ));
 
@@ -410,16 +460,10 @@ pub fn continuation_pages_html(
                 out.push_str("<tr>");
                 out.push_str(&format!(
                     "<td style=\"border:0.75pt solid #000;padding:3pt 3pt;text-align:center;vertical-align:top;color:#333\">{}</td>",
-                    row.row_number,
+                    escape_html(&sched.format_row_label(row.row_number)),
                 ));
                 for (col, val) in sched.columns.iter().zip(row.values.iter()) {
-                    let display = if col.is_amount {
-                        parse_amount(val)
-                            .map(format_amount)
-                            .unwrap_or_else(|| val.clone())
-                    } else {
-                        val.clone()
-                    };
+                    let display = format_plain_cell_value(col, val);
                     let style = if col.is_amount {
                         "border:0.75pt solid #000;padding:3pt 4pt;text-align:right;vertical-align:top;white-space:nowrap;font-variant-numeric:tabular-nums"
                     } else {
@@ -437,29 +481,94 @@ pub fn continuation_pages_html(
                 && sched.has_total
                 && sched.columns.iter().any(|c| c.subtotal.is_some())
             {
+                let first_sub_idx = sched
+                    .columns
+                    .iter()
+                    .position(|c| c.subtotal.is_some())
+                    .unwrap_or(0);
                 out.push_str("<tr style=\"background:#f7f7f7;font-weight:700\">");
                 out.push_str(
                     "<td style=\"border:0.75pt solid #000;padding:3.5pt 3pt;text-align:center\"></td>",
                 );
-                let mut labeled = false;
-                for col in &sched.columns {
-                    if let Some(sub) = &col.subtotal {
-                        out.push_str(&format!(
-                            "<td style=\"border:0.75pt solid #000;padding:3.5pt 4pt;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums\">{}</td>",
-                            escape_html(sub),
-                        ));
-                    } else if !labeled {
-                        labeled = true;
-                        out.push_str(
-                            "<td style=\"border:0.75pt solid #000;padding:3.5pt 4pt;text-align:left\">Subtotal (additional rows)</td>",
-                        );
-                    } else {
-                        out.push_str(
-                            "<td style=\"border:0.75pt solid #000;padding:3.5pt 4pt\"></td>",
-                        );
+                if first_sub_idx > 0 {
+                    out.push_str(&format!(
+                        "<td colspan=\"{first_sub_idx}\" style=\"border:0.75pt solid #000;padding:3.5pt 4pt;text-align:left\">Subtotal (additional rows)</td>"
+                    ));
+                    for col in &sched.columns[first_sub_idx..] {
+                        if let Some(sub) = &col.subtotal {
+                            out.push_str(&format!(
+                                "<td style=\"border:0.75pt solid #000;padding:3.5pt 4pt;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums\">{}</td>",
+                                escape_html(sub),
+                            ));
+                        } else {
+                            out.push_str(
+                                "<td style=\"border:0.75pt solid #000;padding:3.5pt 4pt\"></td>",
+                            );
+                        }
+                    }
+                } else {
+                    for col in &sched.columns {
+                        if let Some(sub) = &col.subtotal {
+                            out.push_str(&format!(
+                                "<td style=\"border:0.75pt solid #000;padding:3.5pt 4pt;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums\">{}</td>",
+                                escape_html(sub),
+                            ));
+                        } else {
+                            out.push_str(
+                                "<td style=\"border:0.75pt solid #000;padding:3.5pt 4pt\"></td>",
+                            );
+                        }
                     }
                 }
                 out.push_str("</tr>");
+
+                if let Some(ref total_label) = sched.official_total_label {
+                    if sched.official_total_values.len() == sched.columns.len()
+                        && sched.official_total_values.iter().any(|v| v.is_some())
+                    {
+                        let first_tot_idx = sched
+                            .official_total_values
+                            .iter()
+                            .position(|v| v.is_some())
+                            .unwrap_or(0);
+                        out.push_str("<tr style=\"background:#ececec;font-weight:700\">");
+                        out.push_str(
+                            "<td style=\"border:0.75pt solid #000;padding:3.5pt 3pt;text-align:center\"></td>",
+                        );
+                        if first_tot_idx > 0 {
+                            out.push_str(&format!(
+                                "<td colspan=\"{first_tot_idx}\" style=\"border:0.75pt solid #000;padding:3.5pt 4pt;text-align:left\">{}</td>",
+                                escape_html(total_label),
+                            ));
+                            for val in &sched.official_total_values[first_tot_idx..] {
+                                if let Some(tot) = val {
+                                    out.push_str(&format!(
+                                        "<td style=\"border:0.75pt solid #000;padding:3.5pt 4pt;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums\">{}</td>",
+                                        escape_html(tot),
+                                    ));
+                                } else {
+                                    out.push_str(
+                                        "<td style=\"border:0.75pt solid #000;padding:3.5pt 4pt\"></td>",
+                                    );
+                                }
+                            }
+                        } else {
+                            for val in &sched.official_total_values {
+                                if let Some(tot) = val {
+                                    out.push_str(&format!(
+                                        "<td style=\"border:0.75pt solid #000;padding:3.5pt 4pt;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums\">{}</td>",
+                                        escape_html(tot),
+                                    ));
+                                } else {
+                                    out.push_str(
+                                        "<td style=\"border:0.75pt solid #000;padding:3.5pt 4pt\"></td>",
+                                    );
+                                }
+                            }
+                        }
+                        out.push_str("</tr>");
+                    }
+                }
             }
 
             out.push_str("</tbody></table></div>");
@@ -889,6 +998,154 @@ struct PopupScheduleDef {
 ///   Schedule 3 (`txtPg2Pt4S3_{k}Col1..2`)
 /// - `1707a-2021` (`form_1707a.rs`): Schedule 1 (`txtS1C*_{k}`) & Schedule 2 (`txtS2C*_{k}`)
 const POPUP_SCHEDULES: &[PopupScheduleDef] = &[
+    // 2552 (Part V Schedules 1, 2, 3 popup rows when > 5 rows)
+    PopupScheduleDef {
+        slug: "2552-2018",
+        heading: "Schedule 1",
+        printed_capacity: 5,
+        row_num_base: 5,
+        has_total: true,
+        columns: &[
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch1_{n}Col1",
+                heading: "(a) Date",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch1_{n}Col2",
+                heading: "(b) Seller",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch1_{n}Col3",
+                heading: "(c) Buyer",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch1_{n}Col4",
+                heading: "(d) Issuing Corporation",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch1_{n}Col5",
+                heading: "(e) Number of Shares",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch1_{n}Col6",
+                heading: "(f) Tax Base",
+                is_amount: true,
+            },
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch1_{n}Col7",
+                heading: "(g) Tax Rate",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch1_{n}Col8",
+                heading: "(h) Tax Due",
+                is_amount: true,
+            },
+        ],
+    },
+    PopupScheduleDef {
+        slug: "2552-2018",
+        heading: "Schedule 2",
+        printed_capacity: 5,
+        row_num_base: 5,
+        has_total: true,
+        columns: &[
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch2_{n}Col1",
+                heading: "(a) Date",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch2_{n}Col2",
+                heading: "(b) Seller",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch2_{n}Col3",
+                heading: "(c) Buyer",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch2_{n}Col4",
+                heading: "(d) Issuing Corporation",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch2_{n}Col5",
+                heading: "(e) Number of Shares",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch2_{n}Col6",
+                heading: "(f) Tax Base",
+                is_amount: true,
+            },
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch2_{n}Col7",
+                heading: "(g) Tax Rate",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch2_{n}Col8",
+                heading: "(h) Tax Due",
+                is_amount: true,
+            },
+        ],
+    },
+    PopupScheduleDef {
+        slug: "2552-2018",
+        heading: "Schedule 3",
+        printed_capacity: 5,
+        row_num_base: 5,
+        has_total: true,
+        columns: &[
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch3_{n}Col1",
+                heading: "(a) Date",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch3_{n}Col2",
+                heading: "(b) Seller",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch3_{n}Col3",
+                heading: "(c) Buyer",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch3_{n}Col4",
+                heading: "(d) Issuing Corporation",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch3_{n}Col5",
+                heading: "(e) Number of Shares",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch3_{n}Col6",
+                heading: "(f) Tax Base",
+                is_amount: true,
+            },
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch3_{n}Col7",
+                heading: "(g) Tax Rate",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2552:txtPg2Pt5Sch3_{n}Col8",
+                heading: "(h) Tax Due",
+                is_amount: true,
+            },
+        ],
+    },
     // 1707
     PopupScheduleDef {
         slug: "1707-2021",
@@ -1390,6 +1647,7 @@ fn match_template_index(key: &str, template: &str) -> Option<usize> {
 
 fn detect_popup_overflow(
     slug: &str,
+    wc: &Value,
     fields: &BTreeMap<String, String>,
     unprinted: &BTreeSet<String>,
 ) -> Vec<OverflowSchedule> {
@@ -1446,7 +1704,7 @@ fn detect_popup_overflow(
         if rows.is_empty() {
             continue;
         }
-        let columns = def
+        let columns: Vec<OverflowColumn> = def
             .columns
             .iter()
             .enumerate()
@@ -1463,15 +1721,195 @@ fn detect_popup_overflow(
                 }
             })
             .collect();
+        let row_label_lettered = schedule_uses_lettered_rows(wc, def.heading);
+        let (official_total_label, official_total_values) = if def.has_total {
+            resolve_official_total(wc, fields, def.heading, &columns)
+        } else {
+            (None, Vec::new())
+        };
         out.push(OverflowSchedule {
             heading: def.heading.to_string(),
             printed_capacity: def.printed_capacity,
             columns,
             rows,
             has_total: def.has_total,
+            row_label_lettered,
+            official_total_label,
+            official_total_values,
         });
     }
     out
+}
+
+/// Format one cell value in a plain-fallback continuation table through the
+/// same formatting rules as its official twin: amounts with thousands commas
+/// and 2 decimals, share/installment counts via `bir_core::forms::print_map::format_count`
+/// (whole numbers unless fractional), and plain text as stored.
+fn format_plain_cell_value(col: &OverflowColumn, raw: &str) -> String {
+    if col.is_amount {
+        return parse_amount(raw)
+            .map(format_amount)
+            .unwrap_or_else(|| raw.to_string());
+    }
+    let lower = col.heading.to_ascii_lowercase();
+    if lower.contains("no. of shares")
+        || lower.contains("number of shares")
+        || lower.contains("no. of installment")
+    {
+        if let Some(n) = parse_amount(raw) {
+            return bir_core::forms::print_map::format_count(Some(n));
+        }
+    }
+    raw.to_string()
+}
+
+/// True when `writer-cells.json` labels the official rows of `heading` with
+/// letters (e.g. `"Schedule 2 row A ..."` on Form 1707).
+fn schedule_uses_lettered_rows(wc: &Value, heading: &str) -> bool {
+    let heading_lower = heading.to_ascii_lowercase();
+    for sec in ["joins", "money_joins", "peso_joins"] {
+        let Some(arr) = wc.get(sec).and_then(Value::as_array) else {
+            continue;
+        };
+        for item in arr {
+            let Some(printed) = item.get("printed").and_then(Value::as_str) else {
+                continue;
+            };
+            let lower = printed.to_ascii_lowercase();
+            let Some(row_pos) = lower.find(" row ") else {
+                continue;
+            };
+            let before = strip_trailing_word_ci(printed[..row_pos].trim(), "continuation").trim();
+            if !before.eq_ignore_ascii_case(&heading_lower) {
+                continue;
+            }
+            let after = printed[row_pos + 5..].trim_start();
+            if after
+                .as_bytes()
+                .first()
+                .is_some_and(|b| b.is_ascii_uppercase())
+                && after
+                    .as_bytes()
+                    .get(1)
+                    .is_none_or(|b| !b.is_ascii_alphanumeric())
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Find the official schedule total (printed caption + page number + formatted
+/// value from `fields`) so plain-fallback continuation tables can repeat the
+/// official total beneath `Subtotal (additional rows)`.
+fn resolve_official_total(
+    wc: &Value,
+    fields: &BTreeMap<String, String>,
+    heading: &str,
+    columns: &[OverflowColumn],
+) -> (Option<String>, Vec<Option<String>>) {
+    let heading_lower = heading.to_ascii_lowercase();
+    // Derive a compact token like "sch2" / "sched1" / "scheda" / "s1" from the heading.
+    let sched_token = heading_lower.strip_prefix("schedule ").map(|rest| {
+        rest.split_whitespace()
+            .next()
+            .unwrap_or("")
+            .replace('.', "")
+    });
+
+    let mut best: Option<(usize, String, String, Option<usize>)> = None;
+    for sec in ["money_joins", "peso_joins", "joins"] {
+        let Some(arr) = wc.get(sec).and_then(Value::as_array) else {
+            continue;
+        };
+        for item in arr {
+            let Some(wk) = item.get("writer_key").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(printed) = item.get("printed").and_then(Value::as_str) else {
+                continue;
+            };
+            let pr_lower = printed.to_ascii_lowercase();
+            let wk_lower = wk.to_ascii_lowercase();
+            let is_total = (pr_lower.contains("total") && !pr_lower.contains("sub-total"))
+                || (wk_lower.contains("tot") && !wk_lower.contains("subtot"));
+            if !is_total {
+                continue;
+            }
+            // Skip per-row entries.
+            if pr_lower.contains(" row ") {
+                continue;
+            }
+            let mut score = 0usize;
+            if pr_lower.contains(&heading_lower) {
+                score += 10;
+            }
+            if let Some(ref tok) = sched_token {
+                if !tok.is_empty() {
+                    let needles = [
+                        format!("sch{tok}tot"),
+                        format!("sched{tok}tot"),
+                        format!("sched{tok}_tot"),
+                        format!("sched{tok}:tot"),
+                        format!("s{tok}tot"),
+                        format!("schedule {tok}"),
+                    ];
+                    if needles
+                        .iter()
+                        .any(|n| wk_lower.contains(n) || pr_lower.contains(n))
+                    {
+                        score += 8;
+                    }
+                }
+            }
+            if score == 0 {
+                continue;
+            }
+            let Some(raw_val) = fields.get(wk).map(|s| s.trim()).filter(|s| !s.is_empty()) else {
+                continue;
+            };
+            let formatted = parse_amount(raw_val)
+                .map(format_amount)
+                .unwrap_or_else(|| raw_val.to_string());
+            let html_id = item
+                .get("peso_html_id")
+                .or_else(|| item.get("html_id"))
+                .and_then(Value::as_str)
+                .or_else(|| {
+                    item.get("peso_html_ids")
+                        .or_else(|| item.get("html_ids"))
+                        .and_then(Value::as_array)
+                        .and_then(|a| a.first())
+                        .and_then(Value::as_str)
+                });
+            let page_num = html_id.and_then(|id| {
+                let rest = id.strip_prefix('p')?;
+                let end = rest.bytes().take_while(|b| b.is_ascii_digit()).count();
+                if end == 0 {
+                    None
+                } else {
+                    rest[..end].parse::<usize>().ok()
+                }
+            });
+            if best.as_ref().is_none_or(|b| score > b.0) {
+                best = Some((score, printed.trim().to_string(), formatted, page_num));
+            }
+        }
+    }
+
+    let Some((_, caption, formatted, page_num)) = best else {
+        return (None, Vec::new());
+    };
+    let label = match page_num {
+        Some(p) => format!("{caption} (as on page {p})"),
+        None => caption,
+    };
+    let mut vals: Vec<Option<String>> = vec![None; columns.len()];
+    if let Some(last_amt) = columns.iter().rposition(|c| c.is_amount) {
+        vals[last_amt] = Some(formatted);
+    }
+    (Some(label), vals)
 }
 
 fn strip_trailing_word_ci<'a>(s: &'a str, word: &str) -> &'a str {
@@ -1626,6 +2064,7 @@ fn extract_header_meta(slug: &str, fields: &BTreeMap<String, String>) -> HeaderM
             "txtDecedentName",
             "txtSellerName",
             "txtPg1I6SellerName0",
+            "txtPg1Pt1I6Name",
             "txtAgentName",
             "txtWithholdingAgentName",
         ],
@@ -1660,11 +2099,17 @@ fn extract_tin(fields: &BTreeMap<String, String>) -> String {
             return format_tin_digits(d);
         }
     }
-    let t1 = first_matching_field(fields, &["txtTIN1", "txtTin1"]).unwrap_or_default();
-    let t2 = first_matching_field(fields, &["txtTIN2", "txtTin2"]).unwrap_or_default();
-    let t3 = first_matching_field(fields, &["txtTIN3", "txtTin3"]).unwrap_or_default();
-    let br = first_matching_field(fields, &["txtBranchCode", "txtTIN4", "txtBranch"])
-        .unwrap_or_default();
+    let t1 =
+        first_matching_field(fields, &["txtTIN1", "txtTin1", "txtPg1TIN1"]).unwrap_or_default();
+    let t2 =
+        first_matching_field(fields, &["txtTIN2", "txtTin2", "txtPg1TIN2"]).unwrap_or_default();
+    let t3 =
+        first_matching_field(fields, &["txtTIN3", "txtTin3", "txtPg1TIN3"]).unwrap_or_default();
+    let br = first_matching_field(
+        fields,
+        &["txtBranchCode", "txtTIN4", "txtPg1TIN4", "txtBranch"],
+    )
+    .unwrap_or_default();
     if !t1.is_empty() && !t2.is_empty() && !t3.is_empty() {
         if br.is_empty() {
             return format!("{t1}-{t2}-{t3}");

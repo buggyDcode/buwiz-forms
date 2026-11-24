@@ -3550,12 +3550,13 @@ pub(crate) fn fill_continuation_fragment(
     });
     let plan = line_group_plan(&filled, fields, &cells, &sheet);
     let filled = fill_by_name_set(&filled, fields, &cells.joins, &plan, &sheet);
-    let filled = fill_money_joins(&filled, fields, &cells.money_joins);
-    let filled = fill_peso_joins(&filled, fields, &cells.peso_joins);
+    let filled = fill_money_joins_with_sheet(&filled, fields, &cells.money_joins, &sheet);
+    let filled = fill_peso_joins_with_sheet(&filled, fields, &cells.peso_joins, &sheet);
     let filled = fill_date_joins(&filled, fields, &cells.date_joins);
-    Ok(split_single_character_cells(
+    Ok(split_single_character_cells_with_aliases(
         slug,
         &fill_xbox_joins(&filled, fields, &cells.xbox_joins),
+        caption_aliases,
     ))
 }
 
@@ -3647,13 +3648,27 @@ const SPLIT_REWRITES_UNFILLED: &[&str] = &["2550m-2007"];
 /// characters other than letters and digits, was printed by the fill as a
 /// line across the cell, its boxes empty, and is left as it is.
 fn split_single_character_cells(slug: &str, html: &str) -> String {
+    split_single_character_cells_with_aliases(slug, html, &BTreeMap::new())
+}
+
+fn split_single_character_cells_with_aliases(
+    slug: &str,
+    html: &str,
+    aliases: &BTreeMap<String, String>,
+) -> String {
     let Some((_, cells)) = SINGLE_CHARACTER_CELLS.iter().find(|(s, _)| *s == slug) else {
         return html.to_string();
     };
     let tags = input_tags(html);
     let grouped = grouped_input_indices(&tags);
+    let mut targets: Vec<(&str, bool)> = cells.to_vec();
+    for (syn_id, orig_id) in aliases {
+        if let Some((_, right)) = cells.iter().find(|(c, _)| *c == orig_id.as_str()) {
+            targets.push((syn_id.as_str(), *right));
+        }
+    }
     let mut replacements = Vec::new();
-    for (cell, right) in *cells {
+    for (cell, right) in targets {
         let Some(indices) = grouped.get(cell) else {
             continue;
         };
@@ -3674,7 +3689,7 @@ fn split_single_character_cells(slug: &str, html: &str) -> String {
         if !fits_one_per_box(value, boxes) {
             continue;
         }
-        let pad = if *right {
+        let pad = if right {
             boxes.saturating_sub(chars.len())
         } else {
             0
