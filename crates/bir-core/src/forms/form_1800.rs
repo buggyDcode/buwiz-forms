@@ -182,12 +182,36 @@ pub struct Form1800Draft {
 }
 
 /// `loadBGData` splits the *escaped* profile address at 100 characters.
+/// Back the cut off before any `%XX` or `%uXXXX` escape sequence so neither
+/// half ends with a truncated escape and `js_unescape` never falls back to raw
+/// percent-encoding.
 fn split_address(address: &str) -> (String, String) {
     let escaped = js_escape(address);
     if escaped.len() <= 100 {
         return (address.to_string(), String::new());
     }
-    let (first, second) = escaped.split_at(100);
+    let bytes = escaped.as_bytes();
+    let mut cut: usize = 100;
+    // Check whether `cut` splits a `%XX` (3 bytes) or `%uXXXX` (6 bytes) token.
+    let window_start = cut.saturating_sub(5);
+    let mut i = window_start;
+    while i < cut {
+        if bytes[i] == b'%' {
+            let token_len = if i + 1 < bytes.len() && bytes[i + 1] == b'u' {
+                6
+            } else {
+                3
+            };
+            if i + token_len > cut {
+                cut = i;
+                break;
+            }
+            i += token_len;
+        } else {
+            i += 1;
+        }
+    }
+    let (first, second) = escaped.split_at(cut);
     (
         js_unescape(first).unwrap_or_else(|| first.to_string()),
         js_unescape(second).unwrap_or_else(|| second.to_string()),
@@ -1260,5 +1284,16 @@ mod tests {
 
             assert!(submit(&db, &reverted.draft).is_ok());
         }
+    }
+
+    #[test]
+    fn split_address_does_not_leak_percent_encoding_when_cut_lands_in_escape() {
+        let addr = "UNIT 2408 PENTHOUSE TOWER B, AYALA AVENUE CORNER PASEO DE ROXAS, BARANGAY BEL-AIR, MAKATI CITY, METRO MANILA";
+        let (first, second) = split_address(addr);
+        assert!(!first.contains("%20"), "first leaked %20: {first}");
+        assert!(!first.contains("%2C"), "first leaked %2C: {first}");
+        assert!(!second.contains("%20"), "second leaked %20: {second}");
+        assert!(!second.contains("%2C"), "second leaked %2C: {second}");
+        assert_eq!(format!("{first}{second}"), addr);
     }
 }
