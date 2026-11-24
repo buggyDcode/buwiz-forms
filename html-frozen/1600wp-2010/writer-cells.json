@@ -488,6 +488,42 @@
    "html_id": "p1c141",
    "printed": "Schedule 1.1 row 6 Tax Required to be Withheld",
    "reason": "geometry: the only fillable cell for this printed item on the 1600-WP (January 2010) sheet"
+  },
+  {
+   "writer_key": "derived:sched_seq1",
+   "html_id": "p1c94",
+   "printed": "Schedule 1.1 row 1 Seq. No.",
+   "reason": "print-only value derived by the model (to_print_field_map); not part of the submitted XML"
+  },
+  {
+   "writer_key": "derived:sched_seq2",
+   "html_id": "p1c102",
+   "printed": "Schedule 1.1 row 2 Seq. No.",
+   "reason": "print-only value derived by the model (to_print_field_map); not part of the submitted XML"
+  },
+  {
+   "writer_key": "derived:sched_seq3",
+   "html_id": "p1c110",
+   "printed": "Schedule 1.1 row 3 Seq. No.",
+   "reason": "print-only value derived by the model (to_print_field_map); not part of the submitted XML"
+  },
+  {
+   "writer_key": "derived:sched_seq4",
+   "html_id": "p1c118",
+   "printed": "Schedule 1.1 row 4 Seq. No.",
+   "reason": "print-only value derived by the model (to_print_field_map); not part of the submitted XML"
+  },
+  {
+   "writer_key": "derived:sched_seq5",
+   "html_id": "p1c126",
+   "printed": "Schedule 1.1 row 5 Seq. No.",
+   "reason": "print-only value derived by the model (to_print_field_map); not part of the submitted XML"
+  },
+  {
+   "writer_key": "derived:sched_seq6",
+   "html_id": "p1c134",
+   "printed": "Schedule 1.1 row 6 Seq. No.",
+   "reason": "print-only value derived by the model (to_print_field_map); not part of the submitted XML"
   }
  ],
  "money_joins": [],

@@ -431,6 +431,11 @@ impl Form1600WpDraft {
         put("txtTaxpayerName", text(&self.agent_name));
         put("txtAddress", text(&self.registered_address));
         put("txtZipCode", self.zip_code.trim().to_string());
+        // Item 11 (Tax relief under Special Law/Treaty) is fixed to "No" in
+        // eBIRForms 1600WP; emitting both flags matches the official XML
+        // defaults and lets the print sheet tick the "No" box.
+        put("SpecialLaw_1", flag(false));
+        put("SpecialLaw_2", flag(true));
 
         for (index, row) in self.atc_rows.iter().enumerate() {
             let n = index + 1;
@@ -556,6 +561,20 @@ impl Form1600WpDraft {
         put("att_tin2", b);
         put("att_tin3", c);
         put("att_branch", d);
+        // Schedule 1.1 prints 6 rows with a Seq. No. column not carried in the
+        // upload XML.
+        for index in 0..6 {
+            let n = index + 1;
+            let has_row = self.schedule.get(index).is_some_and(|row| !row.is_blank());
+            put(
+                &format!("sched_seq{n}"),
+                if has_row {
+                    n.to_string()
+                } else {
+                    String::new()
+                },
+            );
+        }
         fields
     }
 
@@ -1175,5 +1194,21 @@ mod tests {
                 .any(|(field, _)| field == "surcharge"),
             "a three-decimal amount must still be refused"
         );
+    }
+
+    #[test]
+    fn field_and_print_maps_include_item_11_no_and_schedule_seq_numbers() {
+        let mut draft = sample();
+        draft.schedule.push(draft.schedule[0].clone());
+        let upload = draft.to_bir_field_map();
+        let print = draft.to_print_field_map();
+        assert_eq!(upload["frm1600WP:SpecialLaw_1"], "false");
+        assert_eq!(upload["frm1600WP:SpecialLaw_2"], "true");
+        assert_eq!(print["frm1600WP:SpecialLaw_1"], "false");
+        assert_eq!(print["frm1600WP:SpecialLaw_2"], "true");
+        assert!(!upload.contains_key("derived:sched_seq1"));
+        assert_eq!(print["derived:sched_seq1"], "1");
+        assert_eq!(print["derived:sched_seq2"], "2");
+        assert_eq!(print["derived:sched_seq3"], "");
     }
 }
