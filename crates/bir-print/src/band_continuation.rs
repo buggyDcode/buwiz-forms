@@ -242,6 +242,12 @@ enum CellJoinKind {
         col_idx: usize,
         orig_writer_key: String,
     },
+    /// Print-only sequence/ordinal cell (e.g. `1600WP`'s `derived:sched_seq*`),
+    /// filled with the continuing row number (`7`, `8`, `9`, …) through the
+    /// normal text fill path.
+    Ordinal {
+        orig_writer_key: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -283,6 +289,7 @@ fn match_schedule_to_bands(
     // We also track row-1 html_ids per column to locate the schedule's heading strip.
     let mut html_to_col: BTreeMap<String, CellJoinKind> = BTreeMap::new();
     let mut col_row1_ids: Vec<Vec<String>> = vec![Vec::new(); sched.columns.len()];
+    let mut ord_row1_ids: Vec<String> = Vec::new();
 
     for (section, kind_tag) in [
         ("joins", "text"),
@@ -296,14 +303,41 @@ fn match_schedule_to_bands(
             let Some(printed) = item.get("printed").and_then(Value::as_str) else {
                 continue;
             };
-            let Some((sched_name, row_num, col_heading)) =
-                continuation::parse_schedule_row_and_column_pub(printed)
-            else {
+            let orig_writer_key = item
+                .get("writer_key")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+
+            let parsed_row = continuation::parse_schedule_row_and_column_pub(printed)
+                .or_else(|| parse_non_schedule_band_caption(printed, &orig_writer_key));
+            let Some((sched_name, row_num, col_heading)) = parsed_row else {
                 continue;
             };
             if !sched_name.eq_ignore_ascii_case(&sched.heading) {
                 continue;
             }
+
+            // Print-only sequence/ordinal column (e.g. 1600WP `derived:sched_seq*`).
+            if kind_tag == "text"
+                && orig_writer_key.starts_with("derived:")
+                && (orig_writer_key.to_ascii_lowercase().contains("seq")
+                    || col_heading.to_ascii_lowercase().contains("seq"))
+            {
+                if let Some(hid) = item.get("html_id").and_then(Value::as_str) {
+                    html_to_col.insert(
+                        hid.to_string(),
+                        CellJoinKind::Ordinal {
+                            orig_writer_key: orig_writer_key.clone(),
+                        },
+                    );
+                    if row_num == 1 {
+                        ord_row1_ids.push(hid.to_string());
+                    }
+                }
+                continue;
+            }
+
             // Match column by heading (exact or prefix match for row-1 fuller captions)
             let Some(col_idx) = sched.columns.iter().position(|c| {
                 c.heading.eq_ignore_ascii_case(&col_heading)
@@ -316,12 +350,6 @@ fn match_schedule_to_bands(
             }) else {
                 continue;
             };
-
-            let orig_writer_key = item
-                .get("writer_key")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
 
             match kind_tag {
                 "text" => {
@@ -352,7 +380,11 @@ fn match_schedule_to_bands(
                             col_row1_ids[col_idx].push(pid.to_string());
                         }
                     }
-                    if let Some(cid) = item.get("cents_html_id").and_then(Value::as_str) {
+                    if let Some(cid) = item
+                        .get("cent_html_id")
+                        .or_else(|| item.get("cents_html_id"))
+                        .and_then(Value::as_str)
+                    {
                         html_to_col.insert(
                             cid.to_string(),
                             CellJoinKind::Money {
@@ -388,24 +420,32 @@ fn match_schedule_to_bands(
 
     // Match bands whose template_row cells overlap `html_to_col`.
     let mut matched_bands: Vec<MatchedBand> = Vec::new();
+    let mut covered_cols: BTreeSet<usize> = BTreeSet::new();
     for band in bands {
         let Some(trow) = band.rows.get(band.template_row) else {
             continue;
         };
         let mut cell_map = BTreeMap::new();
         let mut row1_ids = Vec::new();
+        let mut has_data_col = false;
         for cell in &trow.cells {
             if let Some(kind) = html_to_col.get(&cell.id) {
-                let col_idx = match kind {
+                match kind {
                     CellJoinKind::Text { col_idx, .. }
                     | CellJoinKind::Money { col_idx, .. }
-                    | CellJoinKind::Peso { col_idx, .. } => *col_idx,
-                };
+                    | CellJoinKind::Peso { col_idx, .. } => {
+                        has_data_col = true;
+                        covered_cols.insert(*col_idx);
+                        row1_ids.extend(col_row1_ids[*col_idx].iter().cloned());
+                    }
+                    CellJoinKind::Ordinal { .. } => {
+                        row1_ids.extend(ord_row1_ids.iter().cloned());
+                    }
+                }
                 cell_map.insert(cell.id.clone(), kind.clone());
-                row1_ids.extend(col_row1_ids[col_idx].iter().cloned());
             }
         }
-        if !cell_map.is_empty() {
+        if has_data_col {
             matched_bands.push(MatchedBand {
                 band: band.clone(),
                 cell_map,
@@ -415,6 +455,13 @@ fn match_schedule_to_bands(
     }
 
     if matched_bands.is_empty() {
+        return None;
+    }
+
+    // Never silently drop a column: if the official formgen-bands metadata
+    // omits one or more columns of this schedule (e.g. 1707 Schedule 2's
+    // upper Name of Corporate Stock rows), fall back to the plain table.
+    if covered_cols.len() < sched.columns.len() {
         return None;
     }
 
@@ -438,6 +485,66 @@ fn match_schedule_to_bands(
         bands: matched_bands,
         total_join,
     })
+}
+
+/// Handle repeating-band captions that don't use `"Schedule X row N"` wording
+/// (currently `1701A` Part IV-A items 41–42 and Part IV-B items 50–51).
+fn parse_non_schedule_band_caption(
+    printed: &str,
+    writer_key: &str,
+) -> Option<(String, usize, String)> {
+    let trimmed = printed.trim();
+    if writer_key.starts_with("frm1701A:txt41")
+        || writer_key.starts_with("frm1701A:txt42")
+        || writer_key.starts_with("derived:amount_41")
+        || writer_key.starts_with("derived:amount_42")
+    {
+        let row_num = if writer_key.contains("41") { 1 } else { 2 };
+        let col = trimmed
+            .strip_prefix("41 ")
+            .or_else(|| trimmed.strip_prefix("42 "))
+            .unwrap_or(trimmed);
+        let col = col
+            .strip_prefix("Other Non-Operating Income ")
+            .unwrap_or(col)
+            .trim();
+        let col = if col == "(specify)" {
+            "Other Non-Operating Income (specify)"
+        } else {
+            col
+        };
+        return Some((
+            "Part IV-A Other Non-Operating Income".to_string(),
+            row_num,
+            col.to_string(),
+        ));
+    }
+    if writer_key.starts_with("frm1701A:txt50")
+        || writer_key.starts_with("frm1701A:txt51")
+        || writer_key.starts_with("derived:amount_50")
+        || writer_key.starts_with("derived:amount_51")
+    {
+        let row_num = if writer_key.contains("50") { 1 } else { 2 };
+        let col = trimmed
+            .strip_prefix("50 ")
+            .or_else(|| trimmed.strip_prefix("51 "))
+            .unwrap_or(trimmed);
+        let col = col
+            .strip_prefix("Other Non-Operating Income ")
+            .unwrap_or(col)
+            .trim();
+        let col = if col == "(specify)" {
+            "Other Non-Operating Income (specify)"
+        } else {
+            col
+        };
+        return Some((
+            "Part IV-B Other Non-Operating Income".to_string(),
+            row_num,
+            col.to_string(),
+        ));
+    }
+    None
 }
 
 fn find_schedule_total_join(
@@ -510,7 +617,8 @@ fn find_schedule_total_join(
                 continue;
             };
             let cents_html_id = item
-                .get("cents_html_id")
+                .get("cent_html_id")
+                .or_else(|| item.get("cents_html_id"))
                 .and_then(Value::as_str)
                 .map(String::from);
             let info = TotalJoinInfo {
@@ -964,14 +1072,19 @@ fn build_single_band_continuation_page(
         }
 
         // 2b. Heading strip `.t` labels (mark schedule title with "(continued)"
-        //     without colliding with any adjacent "(Attach additional sheet/s…)" span)
-        let mut marked_continued = false;
-        let sched_lower = sched.heading.to_ascii_lowercase();
+        //     without colliding with any adjacent "(Attach additional sheet/s…)" span
+        //     or duplicating a heading that already says "continuation"/"continued")
         let hdr_texts: Vec<&TextNode> = page
             .texts
             .iter()
             .filter(|t| t.top >= hdr_top - 0.5 && t.top < hdr_bottom - 0.5)
             .collect();
+        let already_continued = hdr_texts.iter().any(|t| {
+            let lower = t.plain_text.to_ascii_lowercase();
+            lower.contains("continuation") || lower.contains("continued")
+        });
+        let mut marked_continued = already_continued;
+        let sched_lower = sched.heading.to_ascii_lowercase();
         let has_attach_note = hdr_texts.iter().any(|t| {
             t.plain_text
                 .to_ascii_lowercase()
@@ -1065,7 +1178,14 @@ fn build_single_band_continuation_page(
             // Continuing row number (ordinal)
             if let Some(ord_t) = template_ord_text {
                 let shifted = shift_top_in_tag(&ord_t.raw_html, dy);
-                body_texts.push_str(&replace_inner_text(&shifted, &row.row_number.to_string()));
+                let is_letter_ord = ord_t.plain_text.len() == 1
+                    && ord_t.plain_text.as_bytes()[0].is_ascii_uppercase();
+                let ord_label = if is_letter_ord && row.row_number >= 1 && row.row_number <= 26 {
+                    ((b'A' + (row.row_number as u8) - 1) as char).to_string()
+                } else {
+                    row.row_number.to_string()
+                };
+                body_texts.push_str(&replace_inner_text(&shifted, &ord_label));
             }
 
             // Collect peso/cents synthetic ids per money column in this row
@@ -1118,6 +1238,11 @@ fn build_single_band_continuation_page(
                                 syn_fields.insert(syn_key.clone(), val);
                                 extra_peso_joins.push((syn_key, syn_id));
                             }
+                        }
+                        CellJoinKind::Ordinal { orig_writer_key } => {
+                            let syn_key = format!("{orig_writer_key}__cont_{syn_id}");
+                            syn_fields.insert(syn_key.clone(), row.row_number.to_string());
+                            extra_joins.entry(syn_key).or_default().push(syn_id);
                         }
                     }
                 }
@@ -1559,7 +1684,12 @@ mod tests {
         let b1600wp = parse_formgen_bands(
             include_str!("../../../html-frozen/1600wp-2010/index.html"),
         );
-        assert!(b1600wp.is_empty(), "1600WP has growables: []");
+        assert!(!b1600wp.is_empty(), "1600WP now carries metadata-only formgen-bands");
+
+        let b2200m = parse_formgen_bands(
+            include_str!("../../../html-frozen/2200m-2018/index.html"),
+        );
+        assert!(b2200m.is_empty(), "2200M stays on plain fallback (growables: [])");
     }
 
     #[test]
@@ -1636,5 +1766,118 @@ mod tests {
         assert!(doc.html.contains("3600.00"));
         assert!(doc.html.contains("18000.00"));
         assert!(doc.html.contains("(as on page 2)"));
+    }
+
+    #[test]
+    fn band_continuation_1600wp_continues_sequence_numbers_7_to_10() {
+        let mut fields = BTreeMap::new();
+        fields.insert("derived:tin".into(), "00012345300000".into());
+        fields.insert("frm1600WP:txtTaxpayerName".into(), "JUANA SANTOS".into());
+        for i in 1..=10 {
+            if i <= 6 {
+                fields.insert(format!("derived:sched_seq{i}"), i.to_string());
+            }
+            fields.insert(format!("frm1600WP:dtSched:txtFullname{i}"), format!("PAYEE {i}"));
+            fields.insert(format!("frm1600WP:dtSched:amount{i}"), format!("{}.00", i * 1000));
+            fields.insert(format!("frm1600WP:dtSched:taxWithheld{i}"), format!("{}.00", i * 100));
+        }
+        let doc = frozen_html::filled_document_with_report("1600wp-2010", &fields, None).unwrap();
+        assert_eq!(doc.overflow.schedules.len(), 1);
+        let cont_pos = doc.html.find("<div class=\"page page-continuation-band\"").unwrap();
+        let cont = &doc.html[cont_pos..];
+        for n in 7..=10 {
+            assert!(
+                cont.contains(&format!("value=\"{n}\"")),
+                "1600WP continuation must populate sequence number {n}"
+            );
+            assert!(cont.contains(&format!("PAYEE {n}")));
+        }
+    }
+
+    #[test]
+    fn band_continuation_1801_does_not_duplicate_continued_on_continuation_heading() {
+        let mut fields = BTreeMap::new();
+        fields.insert("derived:tin".into(), "00012345300000".into());
+        fields.insert("frm1801v2018:txtTaxpayerName".into(), "JUANA SANTOS".into());
+        for i in 1..=4 {
+            fields.insert(format!("frm1801v2018:sched1Oct_{i}"), format!("TCT-{i:03}"));
+            fields.insert(format!("frm1801v2018:sched1Class_{i}'"), "RES".into());
+            fields.insert(format!("frm1801v2018:sched1Fmv_{i}"), format!("{}.00", i * 100_000));
+        }
+        let doc = frozen_html::filled_document_with_report("1801-2018", &fields, None).unwrap();
+        assert_eq!(doc.overflow.schedules.len(), 1);
+        let cont_pos = doc.html.find("<div class=\"page page-continuation-band\"").unwrap();
+        let cont = &doc.html[cont_pos..];
+        assert!(cont.contains("TCT-003"));
+        assert!(cont.contains("TCT-004"));
+        assert!(
+            !cont.contains("continuation) (continued)") && !cont.contains("Continuation) (continued)"),
+            "1801 Schedule 1 continuation heading must not duplicate (continued)"
+        );
+    }
+
+    #[test]
+    fn popup_overflow_works_for_1707_1701a_and_other_popup_forms() {
+        // 1707: Schedule 2 (falls back to plain table because p2g0 omits col 1) + Schedule 3 (cloned band p2g1)
+        let mut f1707 = BTreeMap::new();
+        f1707.insert("derived:tin".into(), "00012345300000".into());
+        f1707.insert("frm1707:txtSellerName".into(), "JUANA SANTOS".into());
+        for k in 1..=3 {
+            f1707.insert(format!("frm1707:txtPg2Pt4S2_{k}Col1"), format!("CORP {k}"));
+            f1707.insert(format!("frm1707:txtPg2Pt4S2_{k}Col2"), format!("{}00", k));
+            f1707.insert(format!("frm1707:txtPg2Pt4S2_{k}Col3"), format!("CERT-{k}"));
+            f1707.insert(format!("frm1707:txtPg2Pt4S2_{k}Col4"), format!("{k}0000.00"));
+            f1707.insert(format!("frm1707:txtPg2Pt4S3_{k}Col1"), format!("EXPENSE {k}"));
+            f1707.insert(format!("frm1707:txtPg2Pt4S3_{k}Col2"), format!("{k}500.25"));
+        }
+        let doc1707 = frozen_html::filled_document_with_report("1707-2021", &f1707, None).unwrap();
+        assert_eq!(doc1707.overflow.schedules.len(), 2);
+        assert!(doc1707.html.contains("CORP 1") && doc1707.html.contains("CORP 3"));
+        assert!(doc1707.html.contains("page-continuation-band"), "1707 Schedule 3 uses cloned band p2g1");
+        assert!(doc1707.html.contains("EXPENSE 1") || doc1707.html.contains("value=\"E\""));
+
+        // 1701A: Part IV-A & Part IV-B popup rows -> cloned bands p2g0 & p2g1
+        let mut f1701a = BTreeMap::new();
+        f1701a.insert("derived:tin".into(), "00012345300000".into());
+        f1701a.insert("frm1701A:txtTaxpayerName".into(), "JUANA SANTOS".into());
+        for n in 1..=3 {
+            f1701a.insert(format!("frm1701A:txtmodalPartIVADesc_{n}C1"), format!("OTHER INC A {n}"));
+            f1701a.insert(format!("frm1701A:txtmodalPartIVA_{n}C2"), format!("{n}0000.00"));
+            f1701a.insert(format!("frm1701A:txtmodalPartIVA_{n}C3"), format!("{n}500.00"));
+            f1701a.insert(format!("frm1701A:txtmodalPartIVBDesc_{n}C1"), format!("OTHER INC B {n}"));
+            f1701a.insert(format!("frm1701A:txtmodalPartIVB_{n}C2"), format!("{n}2000.00"));
+            f1701a.insert(format!("frm1701A:txtmodalPartIVB_{n}C3"), format!("{n}300.00"));
+        }
+        let doc1701a = frozen_html::filled_document_with_report("1701a-2018", &f1701a, None).unwrap();
+        assert_eq!(doc1701a.overflow.schedules.len(), 2);
+        assert!(doc1701a.html.contains("page-continuation-band"), "1701A uses cloned bands");
+        assert!(!doc1701a.html.contains("class=\"page page-continuation\""));
+        assert!(doc1701a.html.contains("OTHER INC A 1") && doc1701a.html.contains("OTHER INC B 3"));
+
+        // 1707A, 1700, 1702EX, 1702MX, 1702RT popup detection
+        let mut f1707a = BTreeMap::new();
+        f1707a.insert("frm1707Av2021:txtS1C2NameOfCorporateStock_1".into(), "ALPHA CORP".into());
+        f1707a.insert("frm1707Av2021:txtS1C3SellingPrice_1".into(), "50000.00".into());
+        assert_eq!(continuation::detect_overflow("1707a-2021", &f1707a).unwrap().schedules.len(), 1);
+
+        let mut f1700 = BTreeMap::new();
+        f1700.insert("frm1700:txtPg2I4_1PartVIEmployerName1".into(), "ACME INC".into());
+        f1700.insert("frm1700:txtPg2ISched1c_4_1REG".into(), "120000.00".into());
+        assert_eq!(continuation::detect_overflow("1700-2018", &f1700).unwrap().schedules.len(), 1);
+
+        let mut f1702ex = BTreeMap::new();
+        f1702ex.insert("frm1702EX:txtPg3Pt6S2I4_1Col1".into(), "SPECIAL DED".into());
+        f1702ex.insert("frm1702EX:txtPg3Pt6S2I4_1Col3".into(), "9000.00".into());
+        assert_eq!(continuation::detect_overflow("1702ex-2018", &f1702ex).unwrap().schedules.len(), 1);
+
+        let mut f1702mx = BTreeMap::new();
+        f1702mx.insert("frm1702MX:txtPg6Sc6_1Col1".into(), "MX DED".into());
+        f1702mx.insert("frm1702MX:txtPg6Sc6_1Col3".into(), "8000.00".into());
+        assert_eq!(continuation::detect_overflow("1702mx-2018c", &f1702mx).unwrap().schedules.len(), 1);
+
+        let mut f1702rt = BTreeMap::new();
+        f1702rt.insert("frm1702RT:txtPg3Sc2I4.1C1".into(), "RT DED".into());
+        f1702rt.insert("frm1702RT:txtPg3Sc2I4.1C3".into(), "7000.00".into());
+        assert_eq!(continuation::detect_overflow("1702rt-2018c", &f1702rt).unwrap().schedules.len(), 1);
     }
 }
