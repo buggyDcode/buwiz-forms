@@ -6426,6 +6426,14 @@ mod tests {
         assert_eq!(comb_text(&html, "p1c141"), aggregate);
         assert_eq!(comb_text(&html, "p2c5"), "123456788");
         assert_eq!(comb_text(&html, "p2c6"), "SAMPLE DUMMY TAXPAYER");
+        // Comma-formatted taxpayer name prints only the last name on page 2,
+        // and a joint return with an empty spouse TIN prints blank (not "---00000").
+        let mut c9_draft = draft.clone();
+        c9_draft.taxpayer_name = "Santos, Juana".to_string();
+        c9_draft.spouse_info.tin.clear();
+        let c9_html = filled_document("1701ms-2024", &c9_draft.to_print_field_map()).unwrap();
+        assert_eq!(comb_text(&c9_html, "p2c6"), "SANTOS");
+        assert_eq!(comb_text(&c9_html, "p1c24"), "");
         for x in [
             "p1c9", "p1c11", "p1c15", "p1c44", "p1c46", "p1c52", "p1c81", "p1c153",
         ] {
