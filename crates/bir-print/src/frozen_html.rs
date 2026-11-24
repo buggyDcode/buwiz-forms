@@ -72,7 +72,15 @@ fn fill_by_name_with_cells(
     cells: &BTreeMap<String, Vec<String>>,
     plan: &BTreeMap<String, CellFill>,
 ) -> String {
-    fill_by_name_set(html, fields, cells, plan, &SheetType::plain())
+    let empty_captions = BTreeMap::new();
+    fill_by_name_set(
+        html,
+        fields,
+        cells,
+        &empty_captions,
+        plan,
+        &SheetType::plain(),
+    )
 }
 
 /// [`fill_by_name_with_cells`] with a value longer than its boxes measured
@@ -81,6 +89,7 @@ fn fill_by_name_set(
     html: &str,
     fields: &BTreeMap<String, String>,
     cells: &BTreeMap<String, Vec<String>>,
+    captions: &BTreeMap<String, String>,
     plan: &BTreeMap<String, CellFill>,
     sheet: &SheetType,
 ) -> String {
@@ -113,6 +122,9 @@ fn fill_by_name_set(
                 input_name,
                 value,
                 via_cell,
+                caption: via_cell
+                    .then(|| captions.get(input_name).map(String::as_str))
+                    .flatten(),
                 sheet,
             };
             fill_text_input(html, &tags, indices, &target, &mut replacements);
@@ -132,6 +144,7 @@ fn fill_by_name_set(
                     input_name: cell,
                     value: line,
                     via_cell: true,
+                    caption: captions.get(cell).map(String::as_str),
                     sheet,
                 };
                 fill_text_input(html, &tags, indices, &target, &mut replacements);
@@ -1569,8 +1582,130 @@ struct TextTarget<'a> {
     input_name: &'a str,
     value: &'a str,
     via_cell: bool,
+    caption: Option<&'a str>,
     /// The sheet's type, which a value longer than its boxes is measured in.
     sheet: &'a SheetType,
+}
+
+fn is_percentage_rate_cell(writer_key: &str, caption: Option<&str>) -> bool {
+    if writer_key.starts_with("derived:")
+        || writer_key.starts_with("frm2200")
+        || writer_key.starts_with("frm2000")
+    {
+        return false;
+    }
+    let Some(caption) = caption else {
+        return false;
+    };
+    let kl = writer_key.to_ascii_lowercase();
+    let pl = caption.to_ascii_lowercase();
+    if [
+        "export", "taxable", "due", "stock", "payment", "excise", "vat", "amount", "income",
+    ]
+    .iter()
+    .any(|bad| kl.contains(bad))
+    {
+        return false;
+    }
+    if [
+        "amount",
+        "income",
+        "tax due",
+        "payment",
+        "export",
+        "taxable",
+        "stock",
+        "(whole)",
+        "(tenths)",
+        "(decimals)",
+    ]
+    .iter()
+    .any(|bad| pl.contains(bad))
+    {
+        return false;
+    }
+    pl.contains("tax rate")
+        || pl.contains("schedule 2 rate")
+        || pl.contains("schedule 3 rate")
+        || pl.ends_with(" rate")
+}
+
+fn has_preprinted_percent_beside(html: &str, cell: &str) -> bool {
+    let Some(open) = html.find(&format!("<div id=\"{cell}\"")) else {
+        return false;
+    };
+    let Some(end) = html[open..].find('>') else {
+        return false;
+    };
+    let tag = &html[open..open + end];
+    let parse_pt = |s: &str, prop: &str| -> Option<f64> {
+        let needle = format!("{prop}:");
+        let start = s.find(&needle)? + needle.len();
+        s[start..].split("pt").next()?.trim().parse().ok()
+    };
+    let (Some(left), Some(top), Some(width), Some(height)) = (
+        parse_pt(tag, "left"),
+        parse_pt(tag, "top"),
+        parse_pt(tag, "width"),
+        parse_pt(tag, "height"),
+    ) else {
+        return false;
+    };
+    let page_start = html[..open].rfind("<div class=\"page ").unwrap_or(0);
+    let page_end = html[open..]
+        .find("<div class=\"page ")
+        .map(|rel| open + rel)
+        .unwrap_or(html.len());
+    let page = &html[page_start..page_end];
+    let mut cursor = 0;
+    while let Some(rel) = page[cursor..].find("<div class=\"t\"") {
+        let start = cursor + rel;
+        let Some(tag_end_rel) = page[start..].find('>') else {
+            break;
+        };
+        let tag_end = start + tag_end_rel;
+        let Some(close_rel) = page[tag_end + 1..].find("</div>") else {
+            break;
+        };
+        let text = page[tag_end + 1..tag_end + 1 + close_rel].trim();
+        if text == "%" {
+            let t_tag = &page[start..tag_end];
+            if let (Some(tl), Some(tt)) = (parse_pt(t_tag, "left"), parse_pt(t_tag, "top")) {
+                if (tt - top).abs() <= height.max(14.0) && tl >= left && tl <= left + width + 22.0 {
+                    return true;
+                }
+            }
+        }
+        cursor = tag_end + 1 + close_rel + "</div>".len();
+    }
+    false
+}
+
+fn format_percentage_rate(raw: &str, preprinted_percent: bool) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty()
+        || !trimmed.chars().all(|c| c.is_ascii_digit() || c == '.')
+        || !trimmed.chars().any(|c| c.is_ascii_digit())
+        || trimmed.matches('.').count() > 1
+    {
+        return None;
+    }
+    let normalized = if let Some((whole, frac)) = trimmed.split_once('.') {
+        let frac = frac.trim_end_matches('0');
+        let whole = if whole.is_empty() { "0" } else { whole };
+        if frac.is_empty() {
+            whole.to_string()
+        } else {
+            format!("{whole}.{frac}")
+        }
+    } else {
+        trimmed.to_string()
+    };
+    if preprinted_percent {
+        Some(normalized)
+    } else {
+        Some(format!("{normalized}%"))
+    }
 }
 
 /// One text value into one cell: a comb gets a character per slot, a plain
@@ -1587,6 +1722,7 @@ fn fill_text_input(
         input_name,
         value,
         via_cell,
+        caption,
         sheet,
     } = *target;
     // Writer-cell text joins print as BIR CAPITAL LETTERS. Stamped
@@ -1692,18 +1828,26 @@ fn fill_text_input(
         let width = via_cell
             .then(|| plain_cell_width(html, input_name))
             .flatten();
-        let right_align_numeric = via_cell
+        let is_rate_cell = via_cell && !split && is_percentage_rate_cell(name, caption);
+        let formatted_rate = is_rate_cell
+            .then(|| format_percentage_rate(print, has_preprinted_percent_beside(html, input_name)))
+            .flatten();
+        let display = formatted_rate.as_deref().unwrap_or(print);
+        let right_align_numeric = !is_rate_cell
+            && via_cell
             && !split
             && ((is_amount_typed_key(name) && is_formatted_money_amount(print))
                 || (is_quantity_typed_key(name) && is_formatted_numeric_quantity(print)));
         for &index in indices {
             let writer = via_cell.then_some(print);
-            let tag = set_value(tags[index].tag, print, writer);
+            let tag = set_value(tags[index].tag, display, writer);
             let size = width
                 .filter(|_| !split)
-                .and_then(|width| plain_input_size(sheet, width, tags[index].tag, print));
+                .and_then(|width| plain_input_size(sheet, width, tags[index].tag, display));
             let tag = size.map_or_else(|| tag.clone(), |size| with_font_size(&tag, size));
-            let tag = if right_align_numeric {
+            let tag = if is_rate_cell && !display.is_empty() {
+                with_style_declaration(&tag, "text-align:center;justify-content:center")
+            } else if right_align_numeric {
                 with_style_declaration(
                     &tag,
                     "text-align:right;justify-content:flex-end;padding-right:2pt",
@@ -3536,7 +3680,14 @@ fn fill_bundle(
         SheetType::of_sheet(slug, loaded.css)
     });
     let plan = line_group_plan(&filled, fields, &cells, &sheet);
-    let filled = fill_by_name_set(&filled, fields, &cells.joins, &plan, &sheet);
+    let filled = fill_by_name_set(
+        &filled,
+        fields,
+        &cells.joins,
+        &cells.captions,
+        &plan,
+        &sheet,
+    );
     let filled = fill_money_joins_with_sheet(&filled, fields, &cells.money_joins, &sheet);
     let filled = fill_peso_joins_with_sheet(&filled, fields, &cells.peso_joins, &sheet);
     let filled = fill_date_joins(&filled, fields, &cells.date_joins);
@@ -6859,7 +7010,7 @@ mod tests {
     }
 
     /// Every frozen sheet slug with a writer-cells file.
-    fn sheet_slugs() -> Vec<String> {
+    pub(super) fn sheet_slugs() -> Vec<String> {
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../html-frozen");
         let mut slugs: Vec<String> = std::fs::read_dir(root)
             .unwrap()
@@ -8932,5 +9083,96 @@ mod donor_estate_print_tests {
             !rate_tag.contains("text-align:right"),
             "1600WP tax rate (non-money) must stay left-aligned: {rate_tag}"
         );
+    }
+
+    #[test]
+    fn c13_percentage_rate_formatting_and_centering() {
+        assert_eq!(
+            super::format_percentage_rate("5.00", false).as_deref(),
+            Some("5%")
+        );
+        assert_eq!(
+            super::format_percentage_rate(" 10.0", false).as_deref(),
+            Some("10%")
+        );
+        assert_eq!(
+            super::format_percentage_rate("15.00", false).as_deref(),
+            Some("15%")
+        );
+        assert_eq!(
+            super::format_percentage_rate("2.50", false).as_deref(),
+            Some("2.5%")
+        );
+        assert_eq!(
+            super::format_percentage_rate("0.75", false).as_deref(),
+            Some("0.75%")
+        );
+        assert_eq!(
+            super::format_percentage_rate("5.00", true).as_deref(),
+            Some("5")
+        );
+        assert_eq!(super::format_percentage_rate("6/10 of 1%", false), None);
+
+        for (slug, key, cell, raw, expected) in [
+            ("2553-1999", "frm2553:txt17D", "p1c54", "3.00", "3%"),
+            (
+                "1600-pt-2018",
+                "frm1600PT:Pg2Sc1TaxRate1",
+                "p2c20",
+                "5.00",
+                "5%",
+            ),
+            (
+                "1600-vt-2018",
+                "frm1600VT:Pg2Sc1TaxRate1",
+                "p2c20",
+                "5.00",
+                "5%",
+            ),
+            ("1601-fq-2020", "txtRate0", "p2c21", "15.00", "15%"),
+            (
+                "1602q-2019",
+                "frm1602Q:txtSched2TaxRate1",
+                "p2c166",
+                "10.00",
+                "10%",
+            ),
+        ] {
+            let mut fields = BTreeMap::new();
+            fields.insert(key.to_string(), raw.to_string());
+            let html = filled_document(slug, &fields).unwrap();
+            let tag = super::input_tags(&html)
+                .into_iter()
+                .find(|t| t.name == cell)
+                .expect("rate cell input")
+                .tag
+                .to_string();
+            assert!(
+                tag.contains(&format!("value=\"{expected}\"")),
+                "{slug} {cell}: expected value=\"{expected}\" in {tag}"
+            );
+            assert!(
+                tag.contains("text-align:center;justify-content:center"),
+                "{slug} {cell}: expected centered style in {tag}"
+            );
+        }
+    }
+
+    #[test]
+    fn c13_rate_classifier_never_matches_amount_cells() {
+        for slug in super::tests::sheet_slugs() {
+            let cells = super::writer_cells(&slug).unwrap();
+            for (key, ids) in &cells.joins {
+                for id in ids {
+                    let cap = cells.captions.get(id).map(String::as_str);
+                    if super::is_percentage_rate_cell(key, cap) {
+                        assert!(
+                            !super::is_amount_typed_key(key),
+                            "{slug} {id} ({key}) classified as both rate and amount"
+                        );
+                    }
+                }
+            }
+        }
     }
 }
