@@ -1566,7 +1566,7 @@ fn money_comb_values(
     if trimmed.is_empty()
         || !trimmed
             .chars()
-            .all(|c| c.is_ascii_digit() || matches!(c, ',' | '.' | '-' | ' '))
+            .all(|c| c.is_ascii_digit() || matches!(c, ',' | '.' | '-' | '(' | ')' | ' '))
         || !trimmed.chars().any(|c| c.is_ascii_digit())
     {
         return None;
@@ -2667,9 +2667,12 @@ fn split_writer_money(value: &str) -> Option<(bool, String, String)> {
         .chars()
         .filter(|ch| *ch != ',' && !ch.is_whitespace())
         .collect();
-    let (negative, cleaned) = match cleaned.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => (false, cleaned.as_str()),
+    let (negative, cleaned) = if let Some(rest) = cleaned.strip_prefix('-') {
+        (true, rest)
+    } else if let Some(inner) = cleaned.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
+        (true, inner)
+    } else {
+        (false, cleaned.as_str())
     };
     if cleaned.is_empty() {
         return None;
@@ -3973,6 +3976,35 @@ mod tests {
             vec![String::new(); 8],
             "no room for '-'"
         );
+    }
+
+    #[test]
+    fn parenthesized_negative_money_join_puts_minus_left_of_pesos() {
+        use std::collections::BTreeMap;
+        let html = format!("{}{}", comb("p", 8), comb("c", 2));
+        let mut fields = BTreeMap::new();
+        fields.insert("k".to_string(), "(799,061.01)".to_string());
+        let joins = [super::MoneyJoin {
+            writer_key: "k".into(),
+            cells: vec![super::MoneyCells {
+                peso_html_id: "p".into(),
+                cent_html_id: Some("c".into()),
+                point_slot: false,
+            }],
+        }];
+        let doc = super::fill_money_joins(&html, &fields, &joins);
+        assert_eq!(
+            comb_values(&doc, "p"),
+            ["", "-", "7", "9", "9", "0", "6", "1"]
+        );
+        assert_eq!(comb_values(&doc, "c"), ["0", "1"]);
+        fields.insert("k".to_string(), "(0.00)".to_string());
+        let doc = super::fill_money_joins(&html, &fields, &joins);
+        assert_eq!(
+            comb_values(&doc, "p"),
+            ["", "", "", "", "", "", "", "0"]
+        );
+        assert_eq!(comb_values(&doc, "c"), ["0", "0"]);
     }
 
     #[test]
