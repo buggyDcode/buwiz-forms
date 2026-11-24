@@ -95,12 +95,47 @@ pub struct FilledDocument {
 }
 
 impl FilledDocument {
+    /// Structured cell-level overflow warnings from the rendered document
+    /// (official pages and cloned continuation pages alike), such as amounts
+    /// wider than their comb slots printed as one fitted line.
+    pub fn cell_overflow_warnings(&self) -> Vec<frozen_html::OverflowWarning> {
+        frozen_html::overflow_warnings(&self.html)
+    }
+
+    /// Unified warning lines for the preview: schedule rows moved to additional
+    /// pages plus any over-wide amounts printed as a fitted line instead of in boxes.
     pub fn warning_lines(&self) -> Vec<String> {
-        self.overflow.warning_lines()
+        let mut lines = self.overflow.warning_lines();
+        let cell_warnings = self.cell_overflow_warnings();
+        if !cell_warnings.is_empty() {
+            let amount_count = cell_warnings
+                .iter()
+                .filter(|w| w.kind == "amount-comb")
+                .count();
+            if amount_count == 1 {
+                lines.push("1 amount printed as a fitted line instead of in boxes".to_string());
+            } else if amount_count > 1 {
+                lines.push(format!(
+                    "{amount_count} amounts printed as fitted lines instead of in boxes"
+                ));
+            }
+            let other_count = cell_warnings.len() - amount_count;
+            if other_count == 1 {
+                lines.push("1 value overflowed its official box".to_string());
+            } else if other_count > 1 {
+                lines.push(format!("{other_count} values overflowed their official boxes"));
+            }
+        }
+        lines
     }
 
     pub fn warning_summary(&self) -> Option<String> {
-        self.overflow.summary()
+        let lines = self.warning_lines();
+        if lines.is_empty() {
+            None
+        } else {
+            Some(lines.join("; "))
+        }
     }
 }
 
@@ -1845,8 +1880,11 @@ mod tests {
         )
         .unwrap();
 
-        // 5. 1600WP (growables: []) with 10 payees in Schedule 1.1 (plain fallback)
+        // 5. 1600WP (now with metadata-only formgen-bands + derived:sched_seq* ordinal continuation)
         let mut f1600wp = sample_1600wp_10_rows();
+        for seq in 1..=6 {
+            f1600wp.insert(format!("derived:sched_seq{seq}"), seq.to_string());
+        }
         f1600wp.insert("frm1600WP:txtRDOCode".into(), "044".into());
         f1600wp.insert("frm1600WP:txtAddress".into(), "123 RIZAL AVE, BRGY. SAN ANTONIO, MAKATI CITY".into());
         f1600wp.insert("derived:WB191_base".into(), "2750000.00".into());
@@ -1858,5 +1896,357 @@ mod tests {
             serde_json::to_string_pretty(&doc_1600wp.overflow).unwrap(),
         )
         .unwrap();
+
+        // 6. 1707 (Schedule 2 + Schedule 3 popup rows; Schedule 3 cloned band + white knockout band)
+        let mut f1707 = BTreeMap::new();
+        f1707.insert("derived:tin".into(), "00012345300000".into());
+        f1707.insert("frm1707:txtSellerName".into(), "JUANA SANTOS".into());
+        f1707.insert("frm1707:txtBuyerName".into(), "PEDRO REYES".into());
+        f1707.insert("frm1707:txtRDO".into(), "044".into());
+        for (idx, letter) in [(1, "A"), (2, "B"), (3, "C"), (4, "D")] {
+            f1707.insert(format!("frm1707:txtPg2Pt4S2Col1{letter}"), format!("OFFICIAL CORP {idx}"));
+            f1707.insert(format!("frm1707:txtPg2Pt4S2Col2{letter}"), format!("{idx}00"));
+            f1707.insert(format!("frm1707:txtPg2Pt4S2Col3{letter}"), format!("CERT-00{idx}"));
+            f1707.insert(format!("frm1707:txtPg2Pt4S2Col4{letter}"), format!("{idx}00000.00"));
+            f1707.insert(format!("frm1707:txtPg2Pt4S3Col1{letter}"), format!("OFFICIAL EXPENSE {idx}"));
+            f1707.insert(format!("frm1707:txtPg2Pt4S3Col2{letter}"), format!("{idx}500.00"));
+        }
+        for k in 1..=4 {
+            f1707.insert(format!("frm1707:txtPg2Pt4S2_{k}Col1"), format!("OVERFLOW CORP {k}"));
+            f1707.insert(format!("frm1707:txtPg2Pt4S2_{k}Col2"), format!("{}50", k));
+            f1707.insert(format!("frm1707:txtPg2Pt4S2_{k}Col3"), format!("CERT-10{k}"));
+            f1707.insert(format!("frm1707:txtPg2Pt4S2_{k}Col4"), format!("{k}25000.00"));
+            f1707.insert(format!("frm1707:txtPg2Pt4S3_{k}Col1"), format!("OVERFLOW EXPENSE {k}"));
+            f1707.insert(format!("frm1707:txtPg2Pt4S3_{k}Col2"), format!("{k}750.50"));
+        }
+        f1707.insert("frm1707:txtPg2Pt4S3Total".into(), "29002.00".into());
+        let doc_1707 = frozen_html::filled_document_with_report("1707-2021", &f1707, None).unwrap();
+        std::fs::write(out_dir.join("1707-popup-rows.html"), &doc_1707.html).unwrap();
+        std::fs::write(
+            out_dir.join("1707-popup-rows-report.json"),
+            serde_json::to_string_pretty(&doc_1707.overflow).unwrap(),
+        )
+        .unwrap();
+
+        // 7. 1801 (Schedule 1 + Schedule 2 cloned bands; no duplicate "(continued)" on Schedule 1)
+        let mut f1801 = BTreeMap::new();
+        f1801.insert("derived:tin".into(), "00012345300000".into());
+        f1801.insert("frm1801v2018:txtTaxpayerName".into(), "JUANA SANTOS".into());
+        f1801.insert("frm1801v2018:txtRDO".into(), "044".into());
+        for i in 1..=5 {
+            f1801.insert(format!("frm1801v2018:sched1Oct_{i}"), format!("TCT-{i:04}"));
+            f1801.insert(format!("frm1801v2018:sched1Td_{i}"), format!("TD-{i:04}"));
+            f1801.insert(format!("frm1801v2018:sched1Loc_{i}"), format!("MAKATI CITY LOT {i}"));
+            f1801.insert(format!("frm1801v2018:sched1Lot_{i}"), format!("LOT {i} BLK 2"));
+            f1801.insert(format!("frm1801v2018:sched1Area_{i}"), format!("{}.00", 120 * i));
+            f1801.insert(format!("frm1801v2018:sched1Class_{i}'"), "RES".into());
+            f1801.insert(format!("frm1801v2018:sched1Fmv_{i}"), format!("{}.00", 1_000_000 * i));
+            f1801.insert(format!("frm1801v2018:sched2Oct_{i}"), format!("FAM-TCT-{i:03}"));
+            f1801.insert(format!("frm1801v2018:sched2Td_{i}"), format!("FAM-TD-{i:03}"));
+            f1801.insert(format!("frm1801v2018:sched2Loc_{i}"), format!("TAGUIG HOME {i}"));
+            f1801.insert(format!("frm1801v2018:sched2Fmv_{i}"), format!("{}.00", 500_000 * i));
+        }
+        let doc_1801 = frozen_html::filled_document_with_report("1801-2018", &f1801, None).unwrap();
+        std::fs::write(out_dir.join("1801-two-schedules.html"), &doc_1801.html).unwrap();
+        std::fs::write(
+            out_dir.join("1801-two-schedules-report.json"),
+            serde_json::to_string_pretty(&doc_1801.overflow).unwrap(),
+        )
+        .unwrap();
+
+        // 8. 2550Q (Schedule 1 cloned band)
+        let mut f2550q = BTreeMap::new();
+        f2550q.insert("derived:tin".into(), "00012345300000".into());
+        f2550q.insert("derived:pg2_tin".into(), "00012345300000".into());
+        f2550q.insert("frm2550q:txtTaxpayerName".into(), "JUANA SANTOS".into());
+        f2550q.insert("frm2550q:txtPg2TaxpayerName".into(), "JUANA SANTOS".into());
+        f2550q.insert("frm2550q:txtRDOCode".into(), "044".into());
+        for i in 0..6 {
+            let n = i + 1;
+            f2550q.insert(format!("txtDatePurchase1{i}"), format!("01/1{n}/2026"));
+            f2550q.insert(format!("txtSourceCode1{i}"), "D".into());
+            f2550q.insert(format!("txtDescription1{i}"), format!("CAPITAL EQUIPMENT {n}"));
+            f2550q.insert(format!("txtAmountPurchase1{i}"), format!("{}.00", 1_500_000 * n));
+            f2550q.insert(format!("txtInputTax1{i}"), format!("{}.00", 180_000 * n));
+            f2550q.insert(format!("txtEstimatedLife1{i}"), "60".into());
+            f2550q.insert(format!("txtRecognizedLife1{i}"), "48".into());
+            f2550q.insert(format!("txtAllowedInputTax1{i}"), format!("{}.00", 9_000 * n));
+            f2550q.insert(format!("txtBalanceInputTax1{i}"), format!("{}.00", 171_000 * n));
+        }
+        let doc_2550q = frozen_html::filled_document_with_report("2550q-2024", &f2550q, None).unwrap();
+        std::fs::write(out_dir.join("2550q-sched1-overflow.html"), &doc_2550q.html).unwrap();
+        std::fs::write(
+            out_dir.join("2550q-sched1-overflow-report.json"),
+            serde_json::to_string_pretty(&doc_2550q.overflow).unwrap(),
+        )
+        .unwrap();
+
+        // 9. 1701A (Part IV-A & Part IV-B popup rows on cloned bands p2g0 & p2g1)
+        let mut f1701a = BTreeMap::new();
+        f1701a.insert("derived:tin".into(), "00012345300000".into());
+        f1701a.insert("frm1701A:txtTaxpayerName".into(), "JUANA SANTOS".into());
+        f1701a.insert("frm1701A:txtRDO".into(), "044".into());
+        f1701a.insert("frm1701A:txt41OtherDesc".into(), "RENTAL INCOME".into());
+        f1701a.insert("frm1701A:txt41A".into(), "120000.00".into());
+        f1701a.insert("frm1701A:txt42OtherDesc".into(), "ROYALTY INCOME".into());
+        f1701a.insert("frm1701A:txt42A".into(), "80000.00".into());
+        for n in 1..=4 {
+            f1701a.insert(format!("frm1701A:txtmodalPartIVADesc_{n}C1"), format!("OTHER NON-OP A {n}"));
+            f1701a.insert(format!("frm1701A:txtmodalPartIVA_{n}C2"), format!("{n}5000.00"));
+            f1701a.insert(format!("frm1701A:txtmodalPartIVA_{n}C3"), format!("{n}200.00"));
+            f1701a.insert(format!("frm1701A:txtmodalPartIVBDesc_{n}C1"), format!("OTHER NON-OP B {n}"));
+            f1701a.insert(format!("frm1701A:txtmodalPartIVB_{n}C2"), format!("{n}8000.00"));
+            f1701a.insert(format!("frm1701A:txtmodalPartIVB_{n}C3"), format!("{n}400.00"));
+        }
+        let doc_1701a = frozen_html::filled_document_with_report("1701a-2018", &f1701a, None).unwrap();
+        std::fs::write(out_dir.join("1701a-popup-rows.html"), &doc_1701a.html).unwrap();
+        std::fs::write(
+            out_dir.join("1701a-popup-rows-report.json"),
+            serde_json::to_string_pretty(&doc_1701a.overflow).unwrap(),
+        )
+        .unwrap();
+    }
+
+    /// Extract all printed text from a filled HTML document: both plain/overflow
+    /// `<input ... value="...">`, comb-split single-character `<input name="..." value="X">`
+    /// concatenated in order, and plain continuation table `<td>...</td>` text.
+    fn extract_printed_corpus(html: &str) -> String {
+        let mut out = String::new();
+        // 1. All <input ... value="..."> concatenated (comb chars join seamlessly!)
+        //    plus space-separated copies so full tokens also match cleanly.
+        let mut comb_buf = String::new();
+        let mut last_name = String::new();
+        let mut pos = 0;
+        while let Some(rel) = html[pos..].find("<input ") {
+            let start = pos + rel;
+            let Some(end_rel) = html[start..].find('>') else {
+                break;
+            };
+            let tag = &html[start..=start + end_rel];
+            pos = start + end_rel + 1;
+            let val = extract_attr(tag, "value").unwrap_or_default();
+            if val.is_empty() {
+                continue;
+            }
+            let name = extract_attr(tag, "name").unwrap_or_default();
+            if !name.is_empty() && name == last_name {
+                comb_buf.push_str(&val);
+            } else {
+                if !comb_buf.is_empty() {
+                    out.push(' ');
+                    out.push_str(&comb_buf);
+                    comb_buf.clear();
+                }
+                last_name = name;
+                comb_buf.push_str(&val);
+            }
+            out.push(' ');
+            out.push_str(&val);
+        }
+        if !comb_buf.is_empty() {
+            out.push(' ');
+            out.push_str(&comb_buf);
+        }
+        // 2. Plain continuation table cells <td>...</td>
+        pos = 0;
+        while let Some(rel) = html[pos..].find("<td") {
+            let start = pos + rel;
+            let Some(gt) = html[start..].find('>') else {
+                break;
+            };
+            let content_start = start + gt + 1;
+            let Some(close) = html[content_start..].find("</td>") else {
+                break;
+            };
+            out.push(' ');
+            out.push_str(&html[content_start..content_start + close]);
+            pos = content_start + close + 5;
+        }
+        out.to_ascii_uppercase()
+    }
+
+    fn extract_attr(tag: &str, attr_name: &str) -> Option<String> {
+        let needle = format!("{attr_name}=\"");
+        let at = tag.find(&needle)? + needle.len();
+        let end = at + tag[at..].find('"')?;
+        Some(tag[at..end].to_string())
+    }
+
+    fn corpus_contains_value(corpus: &str, corpus_no_commas: &str, val: &str, is_amount: bool) -> bool {
+        let up = val.trim().to_ascii_uppercase();
+        if up.is_empty() {
+            return true;
+        }
+        if corpus.contains(&up) {
+            return true;
+        }
+        if is_amount {
+            let stripped = up.replace(',', "");
+            let whole = stripped.split('.').next().unwrap_or(&stripped);
+            if !whole.is_empty() && corpus_no_commas.contains(whole) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Safety net across all 43 forms: for every form, fills every repeatable
+    /// schedule with more rows than print (`printed_capacity + 3`) and asserts
+    /// that every filled row's values appear somewhere in the printed document
+    /// (official pages or continuation pages). No allow-list: any failing form
+    /// is reported in the test output.
+    #[test]
+    fn every_form_repeatable_schedule_prints_all_filled_rows() {
+        let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../html-frozen"));
+        let mut slugs: Vec<String> = std::fs::read_dir(root)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().join("writer-cells.json").exists())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        slugs.sort();
+        assert_eq!(slugs.len(), 43, "expected all 43 forms in html-frozen/");
+
+        let mut failures: Vec<String> = Vec::new();
+        let mut checked_schedules = 0usize;
+
+        for slug in &slugs {
+            let Some(wc_json) = frozen_html::writer_cells_json(slug) else {
+                failures.push(format!("{slug}: missing writer-cells.json"));
+                continue;
+            };
+            let parsed: Value = serde_json::from_str(wc_json).unwrap();
+            let stem_specs = discover_schedules(&parsed);
+            let popup_defs: Vec<&PopupScheduleDef> = POPUP_SCHEDULES
+                .iter()
+                .filter(|d| d.slug == slug)
+                .collect();
+
+            if stem_specs.is_empty() && popup_defs.is_empty() {
+                continue;
+            }
+
+            let mut fields: BTreeMap<String, String> = BTreeMap::new();
+            // Expected (schedule_heading, row_num, col_heading, value, is_amount)
+            let mut expected: Vec<(String, usize, String, String, bool)> = Vec::new();
+
+            // 1. Fill all stem-based repeatable schedules with printed_capacity + 3 rows.
+            for (si, spec) in stem_specs.iter().enumerate() {
+                // Skip stem specs whose heading is handled by a popup def for this slug
+                // (popup forms put extra rows in popup keys, not higher stem indices).
+                if popup_defs
+                    .iter()
+                    .any(|p| p.heading.eq_ignore_ascii_case(&spec.heading))
+                {
+                    continue;
+                }
+                checked_schedules += 1;
+                let min_idx = spec.columns.iter().map(|c| c.start_idx).min().unwrap_or(1);
+                let max_idx = spec.columns.iter().map(|c| c.end_idx).max().unwrap_or(1);
+                let extra_start = max_idx + 1;
+                let extra_end = max_idx + 3;
+                for raw_idx in min_idx..=extra_end {
+                    let row_num = if min_idx == 0 { raw_idx + 1 } else { raw_idx };
+                    for (ci, col) in spec.columns.iter().enumerate() {
+                        // On official rows, only fill columns that actually exist on this row
+                        // (e.g. 2200M Schedule 1 has different column subsets per mineral row).
+                        // On overflowing rows (raw_idx >= extra_start), fill every column.
+                        if raw_idx < extra_start
+                            && (raw_idx < col.start_idx || raw_idx > col.end_idx)
+                        {
+                            continue;
+                        }
+                        let key = format!("{}{}", col.stem, raw_idx);
+                        let is_date = col.heading.to_ascii_lowercase().contains("date");
+                        let val = if col.is_amount {
+                            format!("{}.00", 10_000 + si * 1000 + row_num * 17 + ci)
+                        } else if is_date {
+                            format!("01/{:02}/2026", ((row_num + ci) % 28) + 1)
+                        } else {
+                            format!("S{si}R{row_num}C{ci}")
+                        };
+                        fields.insert(key, val.clone());
+                        // Always verify every overflowing row (and official rows for non-date).
+                        if raw_idx >= extra_start || !is_date {
+                            expected.push((
+                                spec.heading.clone(),
+                                row_num,
+                                col.heading.clone(),
+                                val,
+                                col.is_amount,
+                            ));
+                        }
+                    }
+                }
+            }
+
+            // 2. Fill all popup schedules with 3 popup overflow rows.
+            for (pi, def) in popup_defs.iter().enumerate() {
+                checked_schedules += 1;
+                for n in 1..=3 {
+                    let row_num = def.row_num_base + n;
+                    for (ci, col) in def.columns.iter().enumerate() {
+                        let key = col.key_template.replace("{n}", &n.to_string());
+                        let is_date = col.heading.to_ascii_lowercase().contains("date");
+                        let val = if col.is_amount {
+                            format!("{}.00", 50_000 + pi * 1000 + n * 19 + ci)
+                        } else if is_date {
+                            format!("02/{:02}/2026", (n % 28) + 1)
+                        } else {
+                            format!("P{pi}R{row_num}C{ci}")
+                        };
+                        fields.insert(key, val.clone());
+                        expected.push((
+                            def.heading.to_string(),
+                            row_num,
+                            col.heading.to_string(),
+                            val,
+                            col.is_amount,
+                        ));
+                    }
+                }
+            }
+
+            let doc = match frozen_html::filled_document_with_report(slug, &fields, None) {
+                Ok(d) => d,
+                Err(e) => {
+                    failures.push(format!("{slug}: filled_document_with_report error: {e}"));
+                    continue;
+                }
+            };
+
+            let corpus = extract_printed_corpus(&doc.html);
+            let corpus_no_commas = corpus.replace(',', "");
+
+            // Group missing values per (schedule, row) so the failure list is readable.
+            let mut missing_per_sched: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            for (sched, row_num, col_heading, val, is_amount) in &expected {
+                if !corpus_contains_value(&corpus, &corpus_no_commas, val, *is_amount) {
+                    missing_per_sched
+                        .entry(sched.clone())
+                        .or_default()
+                        .push(format!("row {row_num} [{col_heading}]={val}"));
+                }
+            }
+            for (sched, missing) in missing_per_sched {
+                let sample: Vec<&str> = missing.iter().take(4).map(String::as_str).collect();
+                failures.push(format!(
+                    "{slug} / {sched}: {} missing value(s) (e.g. {})",
+                    missing.len(),
+                    sample.join(", ")
+                ));
+            }
+        }
+
+        assert!(
+            checked_schedules > 0,
+            "safety-net test must exercise repeatable schedules across the 43 forms"
+        );
+        assert!(
+            failures.is_empty(),
+            "43-form continuation safety-net failures ({} total):\n  - {}",
+            failures.len(),
+            failures.join("\n  - ")
+        );
     }
 }

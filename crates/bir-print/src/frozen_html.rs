@@ -3690,6 +3690,8 @@ pub(crate) fn fill_continuation_fragment(
         cells.joins.entry(k.clone()).or_default().extend(v.clone());
     }
     for (k, peso_id, cents_id) in extra_money_joins {
+        let negative_style =
+            NegativeStyle::from_printed_label(cells.captions.get(peso_id).map(String::as_str));
         cells.money_joins.push(MoneyJoin {
             writer_key: k.clone(),
             cells: vec![MoneyCells {
@@ -3697,12 +3699,16 @@ pub(crate) fn fill_continuation_fragment(
                 cent_html_id: cents_id.clone(),
                 point_slot: false,
             }],
+            negative_style,
         });
     }
     for (k, html_id) in extra_peso_joins {
+        let negative_style =
+            NegativeStyle::from_printed_label(cells.captions.get(html_id).map(String::as_str));
         cells.peso_joins.push(PesoJoin {
             writer_key: k.clone(),
             html_ids: vec![html_id.clone()],
+            negative_style,
         });
     }
     let fields = &with_donor_estate_values(slug, fields);
