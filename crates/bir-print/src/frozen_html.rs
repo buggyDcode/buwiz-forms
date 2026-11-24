@@ -3982,13 +3982,23 @@ pub fn filled_document_with_report(
     let (width, height) = page_size_from_css(loaded.css);
     let cont = if !overflow.is_empty() {
         Some(crate::band_continuation::build_continuation_pages(
-            slug, loaded.html, fields, &overflow, &width, &height,
+            slug,
+            loaded.html,
+            fields,
+            &overflow,
+            &width,
+            &height,
         )?)
     } else {
         None
     };
 
-    let official_filled = fill_bundle(loaded.html, fields, slug)?;
+    let mut official_filled = fill_bundle(loaded.html, fields, slug)?;
+    if let Some(c) = &cont {
+        if !c.official_page_1_overlay.is_empty() {
+            official_filled = inject_into_page_one(&official_filled, &c.official_page_1_overlay);
+        }
+    }
     let mut document = inline_local_assets(&official_filled, &loaded);
     if let Some(c) = cont {
         if !c.pages_html.is_empty() {
@@ -4038,6 +4048,41 @@ fn append_before_body_end(document: &str, fragment: &str) -> String {
         Some(at) => format!("{}{}{}", &document[..at], fragment, &document[at..]),
         None => format!("{document}{fragment}"),
     }
+}
+
+fn inject_into_page_one(document: &str, fragment: &str) -> String {
+    let Some(p1_start) = document.find("id=\"page-1\"") else {
+        return document.to_string();
+    };
+    let Some(gt_rel) = document[p1_start..].find('>') else {
+        return document.to_string();
+    };
+    let mut pos = p1_start + gt_rel + 1;
+    let mut depth = 1usize;
+    let bytes = document.as_bytes();
+    while pos < bytes.len() && depth > 0 {
+        if bytes[pos] == b'<' {
+            if document[pos..].starts_with("<div")
+                && document
+                    .as_bytes()
+                    .get(pos + 4)
+                    .is_some_and(|b| b.is_ascii_whitespace() || *b == b'>')
+            {
+                depth += 1;
+                pos += 4;
+                continue;
+            } else if document[pos..].starts_with("</div>") {
+                depth -= 1;
+                if depth == 0 {
+                    return format!("{}{}{}", &document[..pos], fragment, &document[pos..]);
+                }
+                pos += 6;
+                continue;
+            }
+        }
+        pos += 1;
+    }
+    document.to_string()
 }
 
 /// A `div` like the form pages on purpose: `.page:last-of-type` in base.css
