@@ -508,6 +508,20 @@ impl Form1707Draft {
                 }
             }
         }
+        // Official upload XML writes `0.00` for empty Schedule 2 rows and 3
+        // decimals (`1,000.000`) for filled rows; print shows blank for empty
+        // rows and trims trailing zeros for share counts.
+        for index in 0..FORM_1707_SCHEDULE_ROWS {
+            let popup_row = index == FORM_1707_SCHEDULE_ROWS - 1 && self.shares_popup();
+            if !popup_row {
+                let n = index + 1;
+                let row = self.main_share_row(index);
+                fields.insert(
+                    format!("frm1707:txtPg2P4Sch2NoOfShares{n}"),
+                    super::print_map::format_count(row.number_of_shares),
+                );
+            }
+        }
         fields
     }
 
@@ -1634,5 +1648,33 @@ mod tests {
         assert_eq!(upload["frm1707:txtPg1I7BuyerTIN0"], "987654321000");
         assert_eq!(print["frm1707:txtPg1I6SellerTIN0"], "000-123-453-00000");
         assert_eq!(print["frm1707:txtPg1I7BuyerTIN0"], "987-654-321-000");
+    }
+
+    #[test]
+    fn print_map_formats_share_counts_without_money_zeros_while_upload_matches_official() {
+        let mut draft = sample();
+        draft.shares = vec![
+            Form1707Shares {
+                corporation: "ACME CORP".into(),
+                number_of_shares: Some(1000.0),
+                certificate_number: "CERT-1".into(),
+                selling_price: 50_000.0,
+            },
+            Form1707Shares {
+                corporation: "BETA CORP".into(),
+                number_of_shares: Some(12345.678),
+                certificate_number: "CERT-2".into(),
+                selling_price: 60_000.0,
+            },
+        ];
+        let upload = draft.to_bir_field_map();
+        let print = draft.to_print_field_map();
+        assert_eq!(upload["frm1707:txtPg2P4Sch2NoOfShares1"], "1,000.000");
+        assert_eq!(upload["frm1707:txtPg2P4Sch2NoOfShares2"], "12,345.678");
+        assert_eq!(upload["frm1707:txtPg2P4Sch2NoOfShares3"], "0.00");
+        assert_eq!(print["frm1707:txtPg2P4Sch2NoOfShares1"], "1,000");
+        assert_eq!(print["frm1707:txtPg2P4Sch2NoOfShares2"], "12,345.678");
+        assert_eq!(print["frm1707:txtPg2P4Sch2NoOfShares3"], "");
+        assert_eq!(print["frm1707:txtPg2P4Sch2NoOfShares4"], "");
     }
 }

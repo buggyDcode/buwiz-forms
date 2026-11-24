@@ -932,6 +932,17 @@ impl Form1606Draft {
             }
             .to_string(),
         );
+        // Official upload XML keeps two decimals (`48.00`), matching eBIRForms,
+        // while print displays the installment count as a plain number (`48`).
+        if !fields
+            .get("frm1606:txtTotalN")
+            .is_none_or(String::is_empty)
+        {
+            fields.insert(
+                "frm1606:txtTotalN".to_string(),
+                super::print_map::format_count(Some(self.number_of_installments)),
+            );
+        }
         fields
     }
 

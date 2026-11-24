@@ -744,6 +744,12 @@ impl Form1706Draft {
                 },
             ),
         );
+        // Official upload XML keeps two decimals (`12.00`), matching eBIRForms,
+        // while print displays the installment count as a plain number (`12`).
+        fields.insert(
+            "frm1706:txtTotalN".to_string(),
+            super::print_map::format_count(self.installment.number_of_installments),
+        );
         fields
     }
 
@@ -1691,5 +1697,15 @@ mod tests {
         draft.surcharge = 99.0;
         draft.keep_entered_penalties();
         assert!(draft.revalidate_queued_before_submission().is_err());
+    }
+
+    #[test]
+    fn print_map_formats_installment_count_without_money_decimals_while_upload_matches_official() {
+        let mut draft = sample();
+        draft.installment.number_of_installments = Some(12.0);
+        let upload = draft.to_bir_field_map();
+        let print = draft.to_print_field_map();
+        assert_eq!(upload["frm1706:txtTotalN"], "12.00");
+        assert_eq!(print["frm1706:txtTotalN"], "12");
     }
 }

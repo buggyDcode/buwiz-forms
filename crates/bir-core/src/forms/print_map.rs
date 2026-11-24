@@ -56,6 +56,41 @@ pub fn format_tin_dashed(tin: &str) -> String {
     }
 }
 
+/// Formats a count (installments, share count) for print without spurious
+/// money decimals: `None` prints blank (`""`), whole numbers print without a
+/// decimal point (`"12"`, `"1,000"`), and fractional values keep up to three
+/// significant decimals (`"12,345.678"`, `"10.5"`). Upload XML is unaffected.
+pub fn format_count(value: Option<f64>) -> String {
+    let Some(v) = value else {
+        return String::new();
+    };
+    if !v.is_finite() {
+        return String::new();
+    }
+    let sign = if v < 0.0 { "-" } else { "" };
+    let fixed = format!("{:.3}", v.abs());
+    let (int_part, frac_part) = fixed.split_once('.').unwrap_or((fixed.as_str(), ""));
+    let grouped = group_thousands_int(int_part);
+    let frac = frac_part.trim_end_matches('0');
+    if frac.is_empty() {
+        format!("{sign}{grouped}")
+    } else {
+        format!("{sign}{grouped}.{frac}")
+    }
+}
+
+fn group_thousands_int(digits: &str) -> String {
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (idx, ch) in digits.chars().enumerate() {
+        let remaining = digits.len() - idx;
+        if idx > 0 && remaining % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
 /// A later page's header when the sheet draws its TIN and Taxpayer's Name
 /// boxes as one 40-slot comb: the 14 TIN digits, then the name from slot 14
 /// (under the Taxpayer's Name caption).
