@@ -250,6 +250,18 @@ pub fn detect_overflow(
         });
     }
 
+    // Also detect popup/modal overflow rows whose writer keys use a separate
+    // popup naming scheme from the printed rows (1700, 1701A, 1702EX, 1702MX,
+    // 1702RT, 1707, 1707A).
+    for popup_sched in detect_popup_overflow(slug, fields, &unprinted) {
+        if !schedules
+            .iter()
+            .any(|s| s.heading.eq_ignore_ascii_case(&popup_sched.heading))
+        {
+            schedules.push(popup_sched);
+        }
+    }
+
     Ok(OverflowReport { schedules })
 }
 
@@ -784,17 +796,393 @@ fn extract_schedule_row_and_after(s: &str) -> Option<(String, usize, &str)> {
         .bytes()
         .take_while(|b| b.is_ascii_digit())
         .count();
-    if digits_end == 0 {
+    let (row_num, rest) = if digits_end > 0 {
+        let n = after[..digits_end].parse::<usize>().ok()?;
+        (n, after[digits_end..].trim_start())
+    } else if after.as_bytes().first().is_some_and(|b| b.is_ascii_uppercase())
+        && after
+            .as_bytes()
+            .get(1)
+            .is_none_or(|b| !b.is_ascii_alphanumeric())
+    {
+        // Lettered rows such as "Schedule 2 row A Name of Corporate Stock" (1707).
+        let n = (after.as_bytes()[0] - b'A') as usize + 1;
+        (n, after[1..].trim_start())
+    } else {
         return None;
-    }
-    let row_num = after[..digits_end].parse::<usize>().ok()?;
-    let rest = after[digits_end..].trim_start();
+    };
     // Normalize trailing "continuation" so Schedule 1 and Schedule 1 continuation merge
     let sched = strip_trailing_word_ci(before, "continuation").trim().to_string();
     if sched.is_empty() {
         return None;
     }
     Some((sched, row_num, rest))
+}
+
+struct PopupColDef {
+    /// Key template with `{n}` replaced by the 1-based popup row index.
+    key_template: &'static str,
+    heading: &'static str,
+    is_amount: bool,
+}
+
+struct PopupScheduleDef {
+    slug: &'static str,
+    heading: &'static str,
+    printed_capacity: usize,
+    /// Continuing row number for popup index `n = 1` is `row_num_base + n`.
+    row_num_base: usize,
+    has_total: bool,
+    columns: &'static [PopupColDef],
+}
+
+/// Complete registry of forms in `crates/bir-core/src/forms/` whose overflow
+/// ("Add more..." / popup / modal) rows are emitted under keys distinct from
+/// the printed row stems (`extend_layout` and friends):
+/// - `1700-2018` (`form_1700.rs`): Schedule 1 (`4_{n}` employer & comp keys)
+/// - `1701a-2018` (`form_1701a.rs`): Part IV-A (`txtmodalPartIVA*_{n}C1..3`) &
+///   Part IV-B (`txtmodalPartIVB*_{n}C1..3`)
+/// - `1702ex-2018` (`form_1702ex.rs`): 5 popups (`txtPg3Pt6{S1I17,S2I4,S3I3,S3I6,S3I8}_{n}Col*`)
+/// - `1702mx-2018c` (`form_1702mx_official.rs`): Schedule 6 (`txtPg6Sc6_{n}Col1..6`)
+/// - `1702rt-2018c` (`form_1702rt_official.rs`): 6 modals (`<rowName>.{n}C1..3`)
+/// - `1707-2021` (`form_1707.rs`): Schedule 2 (`txtPg2Pt4S2_{k}Col1..4`) &
+///   Schedule 3 (`txtPg2Pt4S3_{k}Col1..2`)
+/// - `1707a-2021` (`form_1707a.rs`): Schedule 1 (`txtS1C*_{k}`) & Schedule 2 (`txtS2C*_{k}`)
+const POPUP_SCHEDULES: &[PopupScheduleDef] = &[
+    // 1707
+    PopupScheduleDef {
+        slug: "1707-2021",
+        heading: "Schedule 2",
+        printed_capacity: 4,
+        row_num_base: 3,
+        has_total: true,
+        columns: &[
+            PopupColDef { key_template: "frm1707:txtPg2Pt4S2_{n}Col1", heading: "Name of Corporate Stock", is_amount: false },
+            PopupColDef { key_template: "frm1707:txtPg2Pt4S2_{n}Col2", heading: "No. of Shares", is_amount: false },
+            PopupColDef { key_template: "frm1707:txtPg2Pt4S2_{n}Col3", heading: "Stock Certificate Number", is_amount: false },
+            PopupColDef { key_template: "frm1707:txtPg2Pt4S2_{n}Col4", heading: "Taxable Base/Selling Price", is_amount: true },
+        ],
+    },
+    PopupScheduleDef {
+        slug: "1707-2021",
+        heading: "Schedule 3",
+        printed_capacity: 4,
+        row_num_base: 3,
+        has_total: true,
+        columns: &[
+            PopupColDef { key_template: "frm1707:txtPg2Pt4S3_{n}Col1", heading: "Particulars", is_amount: false },
+            PopupColDef { key_template: "frm1707:txtPg2Pt4S3_{n}Col2", heading: "Amount", is_amount: true },
+        ],
+    },
+    // 1701A
+    PopupScheduleDef {
+        slug: "1701a-2018",
+        heading: "Part IV-A Other Non-Operating Income",
+        printed_capacity: 2,
+        row_num_base: 41,
+        has_total: true,
+        columns: &[
+            PopupColDef { key_template: "frm1701A:txtmodalPartIVADesc_{n}C1", heading: "Other Non-Operating Income (specify)", is_amount: false },
+            PopupColDef { key_template: "frm1701A:txtmodalPartIVA_{n}C2", heading: "A) Taxpayer/Filer", is_amount: true },
+            PopupColDef { key_template: "frm1701A:txtmodalPartIVA_{n}C3", heading: "B) Spouse", is_amount: true },
+        ],
+    },
+    PopupScheduleDef {
+        slug: "1701a-2018",
+        heading: "Part IV-B Other Non-Operating Income",
+        printed_capacity: 2,
+        row_num_base: 50,
+        has_total: true,
+        columns: &[
+            PopupColDef { key_template: "frm1701A:txtmodalPartIVBDesc_{n}C1", heading: "Other Non-Operating Income (specify)", is_amount: false },
+            PopupColDef { key_template: "frm1701A:txtmodalPartIVB_{n}C2", heading: "A) Taxpayer/Filer", is_amount: true },
+            PopupColDef { key_template: "frm1701A:txtmodalPartIVB_{n}C3", heading: "B) Spouse", is_amount: true },
+        ],
+    },
+    // 1707A
+    PopupScheduleDef {
+        slug: "1707a-2021",
+        heading: "Schedule 1",
+        printed_capacity: 4,
+        row_num_base: 3,
+        has_total: true,
+        columns: &[
+            PopupColDef { key_template: "frm1707Av2021:txtS1C1DateOfTransaction_{n}", heading: "(A) Date of Transaction (MM/DD/YYYY)", is_amount: false },
+            PopupColDef { key_template: "frm1707Av2021:txtS1C2NameOfCorporateStock_{n}", heading: "(B) Name of Corporate Stock", is_amount: false },
+            PopupColDef { key_template: "frm1707Av2021:txtS1C3SellingPrice_{n}", heading: "(C) Selling Price", is_amount: true },
+            PopupColDef { key_template: "frm1707Av2021:txtS1C4Cost_{n}", heading: "(D) Cost", is_amount: true },
+            PopupColDef { key_template: "frm1707Av2021:txtS1C5CapitalGains_{n}", heading: "(E = C-D) Capital Gains", is_amount: true },
+            PopupColDef { key_template: "frm1707Av2021:txtS1C6TaxPaid_{n}", heading: "(F) Tax Paid", is_amount: true },
+        ],
+    },
+    PopupScheduleDef {
+        slug: "1707a-2021",
+        heading: "Schedule 2",
+        printed_capacity: 4,
+        row_num_base: 3,
+        has_total: true,
+        columns: &[
+            PopupColDef { key_template: "frm1707Av2021:txtS2C1DateOfTransaction_{n}", heading: "(A) Date of Transaction (MM/DD/YYYY)", is_amount: false },
+            PopupColDef { key_template: "frm1707Av2021:txtS2C2NameOfCorporateStock_{n}", heading: "(B) Name of Corporate Stock", is_amount: false },
+            PopupColDef { key_template: "frm1707Av2021:txtS2C3SellingPrice_{n}", heading: "(C) Selling Price", is_amount: true },
+            PopupColDef { key_template: "frm1707Av2021:txtS2C4Cost_{n}", heading: "(D) Cost", is_amount: true },
+            PopupColDef { key_template: "frm1707Av2021:txtS2C5CapitalLoss_{n}", heading: "(E = C-D) Capital Loss", is_amount: true },
+        ],
+    },
+    // 1700
+    PopupScheduleDef {
+        slug: "1700-2018",
+        heading: "Schedule 1",
+        printed_capacity: 4,
+        row_num_base: 3,
+        has_total: true,
+        columns: &[
+            PopupColDef { key_template: "frm1700:txtPg2I4_{n}PartVIEmployerName1", heading: "Name of Employer", is_amount: false },
+            PopupColDef { key_template: "frm1700:txtPg2I4_{n}PartVIEmployerName2", heading: "Name of Employer (line 2)", is_amount: false },
+            PopupColDef { key_template: "frm1700:txtPg2I4_{n}PartVIEmployerTIN1", heading: "TIN (1)", is_amount: false },
+            PopupColDef { key_template: "frm1700:txtPg2I4_{n}PartVIEmployerTIN2", heading: "TIN (2)", is_amount: false },
+            PopupColDef { key_template: "frm1700:txtPg2I4_{n}PartVIEmployerTIN3", heading: "TIN (3)", is_amount: false },
+            PopupColDef { key_template: "frm1700:txtPg2I4_{n}PartVIEmployerBranchCode", heading: "Branch Code", is_amount: false },
+            PopupColDef { key_template: "frm1700:txtPg2ISched1c_4_{n}REG", heading: "Gross Compensation Income (Regular)", is_amount: true },
+            PopupColDef { key_template: "frm1700:txtPg2ISched1d_4_{n}CIFR", heading: "Compensation Income (Subject to Final/Other)", is_amount: true },
+            PopupColDef { key_template: "frm1700:txtPg2ISched1e_4_{n}TW", heading: "Tax Withheld", is_amount: true },
+        ],
+    },
+    // 1702EX
+    PopupScheduleDef {
+        slug: "1702ex-2018",
+        heading: "Schedule 1 Item 17",
+        printed_capacity: 6,
+        row_num_base: 5,
+        has_total: true,
+        columns: &[
+            PopupColDef { key_template: "frm1702EX:txtPg3Pt6S1I17_{n}Col1", heading: "Description", is_amount: false },
+            PopupColDef { key_template: "frm1702EX:txtPg3Pt6S1I17_{n}Col2", heading: "Amount", is_amount: true },
+        ],
+    },
+    PopupScheduleDef {
+        slug: "1702ex-2018",
+        heading: "Schedule 2",
+        printed_capacity: 4,
+        row_num_base: 3,
+        has_total: true,
+        columns: &[
+            PopupColDef { key_template: "frm1702EX:txtPg3Pt6S2I4_{n}Col1", heading: "Description", is_amount: false },
+            PopupColDef { key_template: "frm1702EX:txtPg3Pt6S2I4_{n}Col2", heading: "Legal Basis", is_amount: false },
+            PopupColDef { key_template: "frm1702EX:txtPg3Pt6S2I4_{n}Col3", heading: "Amount", is_amount: true },
+        ],
+    },
+    PopupScheduleDef {
+        slug: "1702ex-2018",
+        heading: "Schedule 3 Item 3",
+        printed_capacity: 2,
+        row_num_base: 1,
+        has_total: true,
+        columns: &[
+            PopupColDef { key_template: "frm1702EX:txtPg3Pt6S3I3_{n}Col1", heading: "Description", is_amount: false },
+            PopupColDef { key_template: "frm1702EX:txtPg3Pt6S3I3_{n}Col2", heading: "Amount", is_amount: true },
+        ],
+    },
+    PopupScheduleDef {
+        slug: "1702ex-2018",
+        heading: "Schedule 3 Item 6",
+        printed_capacity: 2,
+        row_num_base: 1,
+        has_total: true,
+        columns: &[
+            PopupColDef { key_template: "frm1702EX:txtPg3Pt6S3I6_{n}Col1", heading: "Description", is_amount: false },
+            PopupColDef { key_template: "frm1702EX:txtPg3Pt6S3I6_{n}Col2", heading: "Amount", is_amount: true },
+        ],
+    },
+    PopupScheduleDef {
+        slug: "1702ex-2018",
+        heading: "Schedule 3 Item 8",
+        printed_capacity: 2,
+        row_num_base: 1,
+        has_total: true,
+        columns: &[
+            PopupColDef { key_template: "frm1702EX:txtPg3Pt6S3I8_{n}Col1", heading: "Description", is_amount: false },
+            PopupColDef { key_template: "frm1702EX:txtPg3Pt6S3I8_{n}Col2", heading: "Amount", is_amount: true },
+        ],
+    },
+    // 1702MX
+    PopupScheduleDef {
+        slug: "1702mx-2018c",
+        heading: "Schedule 6",
+        printed_capacity: 4,
+        row_num_base: 3,
+        has_total: true,
+        columns: &[
+            PopupColDef { key_template: "frm1702MX:txtPg6Sc6_{n}Col1", heading: "Description", is_amount: false },
+            PopupColDef { key_template: "frm1702MX:txtPg6Sc6_{n}Col2", heading: "Legal Basis", is_amount: false },
+            PopupColDef { key_template: "frm1702MX:txtPg6Sc6_{n}Col3", heading: "Column A", is_amount: true },
+            PopupColDef { key_template: "frm1702MX:txtPg6Sc6_{n}Col4", heading: "Column B", is_amount: true },
+            PopupColDef { key_template: "frm1702MX:txtPg6Sc6_{n}Col5", heading: "Column C", is_amount: true },
+            PopupColDef { key_template: "frm1702MX:txtPg6Sc6_{n}Col6", heading: "Column D", is_amount: true },
+        ],
+    },
+    // 1702RT
+    PopupScheduleDef {
+        slug: "1702rt-2018c",
+        heading: "Part IV Item 54",
+        printed_capacity: 2,
+        row_num_base: 1,
+        has_total: true,
+        columns: &[
+            PopupColDef { key_template: "frm1702RT:txtPg2Pt4I54.{n}C1", heading: "Description", is_amount: false },
+            PopupColDef { key_template: "frm1702RT:txtPg2Pt4I54.{n}C2", heading: "Amount", is_amount: true },
+        ],
+    },
+    PopupScheduleDef {
+        slug: "1702rt-2018c",
+        heading: "Schedule I Item 17i",
+        printed_capacity: 6,
+        row_num_base: 5,
+        has_total: true,
+        columns: &[
+            PopupColDef { key_template: "frm1702RT:txtPg3Sc1I17i.{n}C1", heading: "Description", is_amount: false },
+            PopupColDef { key_template: "frm1702RT:txtPg3Sc1I17i.{n}C2", heading: "Amount", is_amount: true },
+        ],
+    },
+    PopupScheduleDef {
+        slug: "1702rt-2018c",
+        heading: "Schedule II",
+        printed_capacity: 4,
+        row_num_base: 3,
+        has_total: true,
+        columns: &[
+            PopupColDef { key_template: "frm1702RT:txtPg3Sc2I4.{n}C1", heading: "Description", is_amount: false },
+            PopupColDef { key_template: "frm1702RT:txtPg3Sc2I4.{n}C2", heading: "Legal Basis", is_amount: false },
+            PopupColDef { key_template: "frm1702RT:txtPg3Sc2I4.{n}C3", heading: "Amount", is_amount: true },
+        ],
+    },
+    PopupScheduleDef {
+        slug: "1702rt-2018c",
+        heading: "Schedule V Item 3",
+        printed_capacity: 2,
+        row_num_base: 1,
+        has_total: true,
+        columns: &[
+            PopupColDef { key_template: "frm1702RT:txtPg4Sc5I3.{n}C1", heading: "Description", is_amount: false },
+            PopupColDef { key_template: "frm1702RT:txtPg4Sc5I3.{n}C2", heading: "Amount", is_amount: true },
+        ],
+    },
+    PopupScheduleDef {
+        slug: "1702rt-2018c",
+        heading: "Schedule V Item 6",
+        printed_capacity: 2,
+        row_num_base: 1,
+        has_total: true,
+        columns: &[
+            PopupColDef { key_template: "frm1702RT:txtPg4Sc5I6.{n}C1", heading: "Description", is_amount: false },
+            PopupColDef { key_template: "frm1702RT:txtPg4Sc5I6.{n}C2", heading: "Amount", is_amount: true },
+        ],
+    },
+    PopupScheduleDef {
+        slug: "1702rt-2018c",
+        heading: "Schedule V Item 8",
+        printed_capacity: 2,
+        row_num_base: 1,
+        has_total: true,
+        columns: &[
+            PopupColDef { key_template: "frm1702RT:txtPg4Sc5I8.{n}C1", heading: "Description", is_amount: false },
+            PopupColDef { key_template: "frm1702RT:txtPg4Sc5I8.{n}C2", heading: "Amount", is_amount: true },
+        ],
+    },
+];
+
+fn match_template_index(key: &str, template: &str) -> Option<usize> {
+    let (prefix, suffix) = template.split_once("{n}")?;
+    let rest = key.strip_prefix(prefix)?.strip_suffix(suffix)?;
+    if rest.is_empty() || !rest.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    rest.parse::<usize>().ok()
+}
+
+fn detect_popup_overflow(
+    slug: &str,
+    fields: &BTreeMap<String, String>,
+    unprinted: &BTreeSet<String>,
+) -> Vec<OverflowSchedule> {
+    let mut out = Vec::new();
+    for def in POPUP_SCHEDULES {
+        if def.slug != slug {
+            continue;
+        }
+        let mut indices: BTreeSet<usize> = BTreeSet::new();
+        for col in def.columns {
+            for key in unprinted {
+                if let Some(n) = match_template_index(key, col.key_template) {
+                    indices.insert(n);
+                }
+            }
+        }
+        if indices.is_empty() {
+            continue;
+        }
+        let mut rows = Vec::new();
+        let mut col_sums: Vec<f64> = vec![0.0; def.columns.len()];
+        let mut col_has_numeric: Vec<bool> = vec![false; def.columns.len()];
+        for n in indices {
+            let mut values = Vec::with_capacity(def.columns.len());
+            let mut has_meaningful = false;
+            for col in def.columns {
+                let key = col.key_template.replace("{n}", &n.to_string());
+                let val = fields
+                    .get(&key)
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
+                if is_meaningful_cell(&val) {
+                    has_meaningful = true;
+                }
+                values.push(val);
+            }
+            if !has_meaningful {
+                continue;
+            }
+            for (ci, (col, val)) in def.columns.iter().zip(values.iter()).enumerate() {
+                if col.is_amount {
+                    if let Some(num) = parse_amount(val) {
+                        col_sums[ci] += num;
+                        col_has_numeric[ci] = true;
+                    }
+                }
+            }
+            rows.push(OverflowRow {
+                row_number: def.row_num_base + n,
+                values,
+            });
+        }
+        if rows.is_empty() {
+            continue;
+        }
+        let columns = def
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(ci, col)| {
+                let subtotal = if def.has_total && col.is_amount && col_has_numeric[ci] {
+                    Some(format_amount(col_sums[ci]))
+                } else {
+                    None
+                };
+                OverflowColumn {
+                    heading: col.heading.to_string(),
+                    is_amount: col.is_amount,
+                    subtotal,
+                }
+            })
+            .collect();
+        out.push(OverflowSchedule {
+            heading: def.heading.to_string(),
+            printed_capacity: def.printed_capacity,
+            columns,
+            rows,
+            has_total: def.has_total,
+        });
+    }
+    out
 }
 
 fn strip_trailing_word_ci<'a>(s: &'a str, word: &str) -> &'a str {
