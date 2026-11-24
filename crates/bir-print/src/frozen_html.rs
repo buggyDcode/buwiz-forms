@@ -1074,26 +1074,128 @@ fn is_amount_typed_key(key: &str) -> bool {
     // Exclude non-money numeric/code/text keys even if they contain substrings
     // like "tax" (TaxRate, TaxDec, Taxpayer, TaxAgent) or "value".
     for excluded in [
-        "rate", "percent", "pct", "area", "share", "qty", "quantity", "volume", "metric",
-        "liter", "gram", "kilo", "weight", "ratio", "unit", "count", "taxdec", "taxpayer",
-        "taxagent", "taxableyear", "tin", "zip", "rdo", "date", "month", "year", "day",
-        "name", "title", "addr", "email", "phone", "tel", "atc", "desc", "particular",
-        "location", "class", "oct", "tct", "cct", "sheet", "page", "seq", "memo", "bank",
-        "check", "ror", "drawee", "num", "no_", "code", "kind", "type", "status", "remarks",
+        "rate",
+        "percent",
+        "pct",
+        "area",
+        "share",
+        "qty",
+        "quantity",
+        "volume",
+        "metric",
+        "liter",
+        "gram",
+        "kilo",
+        "weight",
+        "ratio",
+        "unit",
+        "count",
+        "taxdec",
+        "taxpayer",
+        "taxagent",
+        "taxableyear",
+        "tin",
+        "zip",
+        "rdo",
+        "date",
+        "month",
+        "year",
+        "day",
+        "name",
+        "title",
+        "addr",
+        "email",
+        "phone",
+        "tel",
+        "atc",
+        "desc",
+        "particular",
+        "location",
+        "class",
+        "oct",
+        "tct",
+        "cct",
+        "sheet",
+        "page",
+        "seq",
+        "memo",
+        "bank",
+        "check",
+        "ror",
+        "drawee",
+        "num",
+        "no_",
+        "code",
+        "kind",
+        "type",
+        "status",
+        "remarks",
     ] {
         if tail.contains(excluded) {
             return false;
         }
     }
     for money_token in [
-        "_base", "_withheld", "amount", "amt", "fairmarketvalue", "fmv", "zonal", "ftd",
-        "total", "tax", "income", "payment", "payable", "value", "gross", "net", "deduct",
-        "credit", "surcharge", "interest", "compromise", "penalt", "remit", "price", "cost",
-        "sales", "receipt", "purchase", "loss", "claim", "estate", "realprop", "fam_",
-        "personalprop", "business_", "transfer", "gift", "asset", "liab", "equity",
-        "capital", "profit", "expense", "revenue", "allowance", "exemption", "withholding",
-        "base", "due", "paid", "overpay", "refund", "balance", "dividend", "royalt",
-        "compensation", "benefit", "gain", "proceed", "consideration",
+        "_base",
+        "_withheld",
+        "amount",
+        "amt",
+        "fairmarketvalue",
+        "fmv",
+        "zonal",
+        "ftd",
+        "total",
+        "tax",
+        "income",
+        "payment",
+        "payable",
+        "value",
+        "gross",
+        "net",
+        "deduct",
+        "credit",
+        "surcharge",
+        "interest",
+        "compromise",
+        "penalt",
+        "remit",
+        "price",
+        "cost",
+        "sales",
+        "receipt",
+        "purchase",
+        "loss",
+        "claim",
+        "estate",
+        "realprop",
+        "fam_",
+        "personalprop",
+        "business_",
+        "transfer",
+        "gift",
+        "asset",
+        "liab",
+        "equity",
+        "capital",
+        "profit",
+        "expense",
+        "revenue",
+        "allowance",
+        "exemption",
+        "withholding",
+        "base",
+        "due",
+        "paid",
+        "overpay",
+        "refund",
+        "balance",
+        "dividend",
+        "royalt",
+        "compensation",
+        "benefit",
+        "gain",
+        "proceed",
+        "consideration",
     ] {
         if tail.contains(money_token) {
             return true;
@@ -1135,11 +1237,48 @@ fn is_quantity_typed_key(key: &str) -> bool {
     let lower = key.to_ascii_lowercase();
     let tail = lower.rsplit(':').next().unwrap_or(&lower);
     for excluded in [
-        "rate", "percent", "pct", "taxdec", "taxpayer", "taxagent", "taxableyear", "tin", "zip",
-        "rdo", "date", "month", "year", "day", "name", "title", "addr", "email", "phone", "tel",
-        "atc", "desc", "particular", "location", "class", "oct", "tct", "cct", "sheet", "page",
-        "seq", "memo", "bank", "check", "ror", "drawee", "code", "kind", "type", "status",
-        "remarks", "cert",
+        "rate",
+        "percent",
+        "pct",
+        "taxdec",
+        "taxpayer",
+        "taxagent",
+        "taxableyear",
+        "tin",
+        "zip",
+        "rdo",
+        "date",
+        "month",
+        "year",
+        "day",
+        "name",
+        "title",
+        "addr",
+        "email",
+        "phone",
+        "tel",
+        "atc",
+        "desc",
+        "particular",
+        "location",
+        "class",
+        "oct",
+        "tct",
+        "cct",
+        "sheet",
+        "page",
+        "seq",
+        "memo",
+        "bank",
+        "check",
+        "ror",
+        "drawee",
+        "code",
+        "kind",
+        "type",
+        "status",
+        "remarks",
+        "cert",
     ] {
         if tail.contains(excluded) {
             return false;
@@ -3068,8 +3207,7 @@ fn fill_peso_joins_with_sheet(
                         set_value(tags[index].tag, &values[offset], writer),
                     ));
                 }
-            } else if let Some((at, line)) =
-                comb_overflow_amount_line(html, html_id, &pesos, sheet)
+            } else if let Some((at, line)) = comb_overflow_amount_line(html, html_id, &pesos, sheet)
             {
                 replacements.push((at, at, line));
                 for (offset, index) in ordered.into_iter().enumerate() {
@@ -3669,13 +3807,23 @@ pub fn filled_document_with_report(
     let (width, height) = page_size_from_css(loaded.css);
     let cont = if !overflow.is_empty() {
         Some(crate::band_continuation::build_continuation_pages(
-            slug, loaded.html, fields, &overflow, &width, &height,
+            slug,
+            loaded.html,
+            fields,
+            &overflow,
+            &width,
+            &height,
         )?)
     } else {
         None
     };
 
-    let official_filled = fill_bundle(loaded.html, fields, slug)?;
+    let mut official_filled = fill_bundle(loaded.html, fields, slug)?;
+    if let Some(c) = &cont {
+        if !c.official_page_1_overlay.is_empty() {
+            official_filled = inject_into_page_one(&official_filled, &c.official_page_1_overlay);
+        }
+    }
     let mut document = inline_local_assets(&official_filled, &loaded);
     if let Some(c) = cont {
         if !c.pages_html.is_empty() {
@@ -3725,6 +3873,41 @@ fn append_before_body_end(document: &str, fragment: &str) -> String {
         Some(at) => format!("{}{}{}", &document[..at], fragment, &document[at..]),
         None => format!("{document}{fragment}"),
     }
+}
+
+fn inject_into_page_one(document: &str, fragment: &str) -> String {
+    let Some(p1_start) = document.find("id=\"page-1\"") else {
+        return document.to_string();
+    };
+    let Some(gt_rel) = document[p1_start..].find('>') else {
+        return document.to_string();
+    };
+    let mut pos = p1_start + gt_rel + 1;
+    let mut depth = 1usize;
+    let bytes = document.as_bytes();
+    while pos < bytes.len() && depth > 0 {
+        if bytes[pos] == b'<' {
+            if document[pos..].starts_with("<div")
+                && document
+                    .as_bytes()
+                    .get(pos + 4)
+                    .is_some_and(|b| b.is_ascii_whitespace() || *b == b'>')
+            {
+                depth += 1;
+                pos += 4;
+                continue;
+            } else if document[pos..].starts_with("</div>") {
+                depth -= 1;
+                if depth == 0 {
+                    return format!("{}{}{}", &document[..pos], fragment, &document[pos..]);
+                }
+                pos += 6;
+                continue;
+            }
+        }
+        pos += 1;
+    }
+    document.to_string()
 }
 
 /// A `div` like the form pages on purpose: `.page:last-of-type` in base.css
@@ -4415,10 +4598,7 @@ mod tests {
         assert_eq!(comb_values(&doc, "c"), ["0", "1"]);
         fields.insert("k".to_string(), "(0.00)".to_string());
         let doc = super::fill_money_joins(&html, &fields, &joins);
-        assert_eq!(
-            comb_values(&doc, "p"),
-            ["", "", "", "", "", "", "", "0"]
-        );
+        assert_eq!(comb_values(&doc, "p"), ["", "", "", "", "", "", "", "0"]);
         assert_eq!(comb_values(&doc, "c"), ["0", "0"]);
     }
 
@@ -4592,7 +4772,9 @@ mod tests {
             super::NegativeStyle::Unsigned
         );
         assert_eq!(
-            super::NegativeStyle::from_printed_label(Some("3 Net Operating Loss (Item 1 Less Item 2)")),
+            super::NegativeStyle::from_printed_label(Some(
+                "3 Net Operating Loss (Item 1 Less Item 2)"
+            )),
             super::NegativeStyle::Unsigned
         );
         assert_eq!(
@@ -4609,7 +4791,10 @@ mod tests {
             negative_style: super::NegativeStyle::Parentheses,
         }];
         let doc = super::fill_peso_joins(&html, &fields, &paren);
-        assert_eq!(comb_values(&doc, "p"), ["", "", "", "(", "1", "2", "3", ")"]);
+        assert_eq!(
+            comb_values(&doc, "p"),
+            ["", "", "", "(", "1", "2", "3", ")"]
+        );
 
         let unsigned = [super::PesoJoin {
             writer_key: "k".into(),
@@ -4630,7 +4815,11 @@ mod tests {
             )
         };
         // 1. MoneyJoin with separate peso + centavo combs (e.g. 2000OT / 1801)
-        let html = format!("{}{}", comb_div("p1c56", 90.0, 8), comb_div("p1c57", 24.0, 2));
+        let html = format!(
+            "{}{}",
+            comb_div("p1c56", 90.0, 8),
+            comb_div("p1c57", 24.0, 2)
+        );
         let mut fields = BTreeMap::new();
         fields.insert("k".to_string(), "-1,134,107,265.03".to_string());
         let joins = [super::MoneyJoin {
@@ -8705,7 +8894,10 @@ mod donor_estate_print_tests {
     fn plain_money_inputs_right_align_with_inset_while_non_money_stays_left() {
         // 1800 Schedule A Fair Market Value (money) vs Schedule B2 Area (non-money)
         let mut fields = donor(6, 15, 2025);
-        fields.insert("frm1800v2018:schedA:txtFairMarketValue0".into(), "150,000.00".into());
+        fields.insert(
+            "frm1800v2018:schedA:txtFairMarketValue0".into(),
+            "150,000.00".into(),
+        );
         fields.insert("frm1800v2018:schedB2:txtArea0".into(), "250.00".into());
         fields.insert("frm1800v2018:schedB2:txtFTD0".into(), "1,200,000.00".into());
         let html = filled_document("1800-2018", &fields).unwrap();

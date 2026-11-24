@@ -149,6 +149,9 @@ pub(crate) struct BandText {
 pub(crate) struct ContinuationOutput {
     /// HTML fragments (`<div class="page ...">...</div>`) to append before `</body>`.
     pub pages_html: String,
+    /// Optional overlay `.t` divs to inject into `#page-1` ONLY when continuation
+    /// pages exist (used for 1600WP's `Page 1 of N` blanks on the attachment strip).
+    pub official_page_1_overlay: String,
 }
 
 /// Parse `<script type="application/json" id="formgen-bands">...</script>` from
@@ -187,14 +190,16 @@ pub(crate) fn build_continuation_pages(
     if report.is_empty() {
         return Ok(ContinuationOutput {
             pages_html: String::new(),
+            official_page_1_overlay: String::new(),
         });
     }
 
     let bands = parse_formgen_bands(raw_html);
-    let wc_parsed: Option<Value> = frozen_html::writer_cells_json(slug)
-        .and_then(|s| serde_json::from_str::<Value>(s).ok());
+    let wc_parsed: Option<Value> =
+        frozen_html::writer_cells_json(slug).and_then(|s| serde_json::from_str::<Value>(s).ok());
 
     let mut pages_html = String::new();
+    let mut official_page_1_overlay = String::new();
     let mut fallback_schedules: Vec<OverflowSchedule> = Vec::new();
 
     for (sched_idx, sched) in report.schedules.iter().enumerate() {
@@ -203,10 +208,11 @@ pub(crate) fn build_continuation_pages(
             .and_then(|wc| match_schedule_to_bands(sched, &bands, wc));
         match matched {
             Some(plan) => {
-                let html_frag = render_band_continuation_for_schedule(
+                let (html_frag, p1_overlay) = render_band_continuation_for_schedule(
                     slug, raw_html, fields, sched, sched_idx, &plan,
                 )?;
                 pages_html.push_str(&html_frag);
+                official_page_1_overlay.push_str(&p1_overlay);
             }
             None => {
                 fallback_schedules.push(sched.clone());
@@ -223,7 +229,10 @@ pub(crate) fn build_continuation_pages(
         ));
     }
 
-    Ok(ContinuationOutput { pages_html })
+    Ok(ContinuationOutput {
+        pages_html,
+        official_page_1_overlay,
+    })
 }
 
 /// How one cell in a band's template row maps to an `OverflowSchedule` column.
@@ -245,9 +254,7 @@ enum CellJoinKind {
     /// Print-only sequence/ordinal cell (e.g. `1600WP`'s `derived:sched_seq*`),
     /// filled with the continuing row number (`7`, `8`, `9`, …) through the
     /// normal text fill path.
-    Ordinal {
-        orig_writer_key: String,
-    },
+    Ordinal { orig_writer_key: String },
 }
 
 #[derive(Debug, Clone)]
@@ -263,8 +270,8 @@ struct MatchedBand {
 struct ScheduleBandPlan {
     page_num: usize,
     bands: Vec<MatchedBand>,
-    /// Official total writer key and its html_id (or peso+cents ids) if present.
-    total_join: Option<TotalJoinInfo>,
+    /// Official total writer key(s) and their html_id(s) for this schedule's TOTAL row.
+    total_joins: Vec<TotalJoinInfo>,
 }
 
 #[derive(Debug, Clone)]
@@ -477,13 +484,14 @@ fn match_schedule_to_bands(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    // Find the official total join for this schedule (if any).
-    let total_join = find_schedule_total_join(sched, wc, &matched_bands);
+    // Find all official total joins for this schedule (e.g. 1600WP Amount + Tax
+    // Withheld totals, or 1801 Exclusive + Conjugal totals).
+    let total_joins = find_schedule_total_joins(sched, wc, &matched_bands);
 
     Some(ScheduleBandPlan {
         page_num,
         bands: matched_bands,
-        total_join,
+        total_joins,
     })
 }
 
@@ -547,11 +555,11 @@ fn parse_non_schedule_band_caption(
     None
 }
 
-fn find_schedule_total_join(
+fn find_schedule_total_joins(
     sched: &OverflowSchedule,
     wc: &Value,
     matched_bands: &[MatchedBand],
-) -> Option<TotalJoinInfo> {
+) -> Vec<TotalJoinInfo> {
     // Derive namespace prefix from any writer_key that targets one of our band cells.
     let band_cell_ids: BTreeSet<&str> = matched_bands
         .iter()
@@ -559,6 +567,11 @@ fn find_schedule_total_join(
         .collect();
 
     let mut ns_prefixes: BTreeSet<String> = BTreeSet::new();
+    let mut band_writer_keys: Vec<String> = Vec::new();
+    let page_prefix = matched_bands
+        .first()
+        .map(|b| format!("p{}c", b.band.page))
+        .unwrap_or_default();
     for sec in ["joins", "money_joins", "peso_joins"] {
         if let Some(arr) = wc.get(sec).and_then(Value::as_array) {
             for item in arr {
@@ -569,6 +582,7 @@ fn find_schedule_total_join(
                 if let Some(h) = hid {
                     if band_cell_ids.contains(h) {
                         if let Some(wk) = item.get("writer_key").and_then(Value::as_str) {
+                            band_writer_keys.push(wk.to_string());
                             if let Some(colon) = wk.rfind(':') {
                                 ns_prefixes.insert(wk[..=colon].to_string());
                             }
@@ -579,9 +593,14 @@ fn find_schedule_total_join(
         }
     }
 
+    let common_prefix_len = |a: &str, b: &str| -> usize {
+        a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count()
+    };
+
     let sched_lower = sched.heading.to_ascii_lowercase();
-    let mut best_same_ns: Option<TotalJoinInfo> = None;
-    let mut best_mentions: Option<TotalJoinInfo> = None;
+    let mut same_ns_and_mentions: Vec<TotalJoinInfo> = Vec::new();
+    let mut same_ns_scored: Vec<(usize, TotalJoinInfo)> = Vec::new();
+    let mut mentions_only: Vec<TotalJoinInfo> = Vec::new();
     for (sec, is_money, is_peso) in [
         ("joins", false, false),
         ("money_joins", true, false),
@@ -604,11 +623,6 @@ fn find_schedule_total_join(
             if !is_total {
                 continue;
             }
-            let same_ns = ns_prefixes.iter().any(|p| wk.starts_with(p));
-            let mentions_sched = pr_lower.contains(&sched_lower);
-            if !same_ns && !mentions_sched {
-                continue;
-            }
             let Some(html_id) = item
                 .get("html_id")
                 .or_else(|| item.get("peso_html_id"))
@@ -616,6 +630,14 @@ fn find_schedule_total_join(
             else {
                 continue;
             };
+            if !page_prefix.is_empty() && !html_id.starts_with(&page_prefix) {
+                continue;
+            }
+            let same_ns = ns_prefixes.iter().any(|p| wk.starts_with(p));
+            let mentions_sched = pr_lower.contains(&sched_lower);
+            if !same_ns && !mentions_sched {
+                continue;
+            }
             let cents_html_id = item
                 .get("cent_html_id")
                 .or_else(|| item.get("cents_html_id"))
@@ -629,16 +651,33 @@ fn find_schedule_total_join(
                 is_peso,
             };
             if same_ns && mentions_sched {
-                return Some(info);
-            }
-            if same_ns && best_same_ns.is_none() {
-                best_same_ns = Some(info);
-            } else if mentions_sched && best_mentions.is_none() {
-                best_mentions = Some(info);
+                same_ns_and_mentions.push(info);
+            } else if same_ns {
+                let score = band_writer_keys
+                    .iter()
+                    .map(|bk| common_prefix_len(bk, wk))
+                    .max()
+                    .unwrap_or(0);
+                same_ns_scored.push((score, info));
+            } else if mentions_sched {
+                mentions_only.push(info);
             }
         }
     }
-    best_same_ns.or(best_mentions)
+    if !same_ns_and_mentions.is_empty() {
+        return same_ns_and_mentions;
+    }
+    if !same_ns_scored.is_empty() {
+        let max_score = same_ns_scored.iter().map(|(s, _)| *s).max().unwrap_or(0);
+        // Keep all candidates near the best prefix match (e.g. `sched1Exc_Total`
+        // and `sched1Conj_Total` both share `frm1801v2018:sched1`).
+        return same_ns_scored
+            .into_iter()
+            .filter(|(s, _)| *s + 4 >= max_score)
+            .map(|(_, info)| info)
+            .collect();
+    }
+    mentions_only
 }
 
 // ---------------------------------------------------------------------------
@@ -857,13 +896,20 @@ fn render_band_continuation_for_schedule(
     sched: &OverflowSchedule,
     sched_idx: usize,
     plan: &ScheduleBandPlan,
-) -> Result<String, String> {
+) -> Result<(String, String), String> {
     let page = parse_source_page(raw_html, plan.page_num)?;
+    let is_1600wp_attachment = slug == "1600wp-2010" && plan.page_num == 1;
 
     // 1. Locate the official Page N header bottom (`header_bottom_y`):
-    //    the bottom of the TIN/Taxpayer's Name strip above the first band.
+    //    - On 1600WP, the attachment section starts at y = 445.87 (NOT the return
+    //      top), so its cloned header sits at y = 20..(20 + 482.5 - 445.87).
+    //    - On all other forms, use the official Page N header above the first band.
     let first_band_y = plan.bands[0].band.row_y.first().copied().unwrap_or(160.0);
-    let header_bottom_y = detect_page_header_bottom(&page, first_band_y);
+    let header_bottom_y = if is_1600wp_attachment {
+        20.0 + (482.5 - 445.87)
+    } else {
+        detect_page_header_bottom(&page, first_band_y)
+    };
 
     // 2. For each matched band, compute its heading strip `[hdr_top, table_row0_y]`
     //    on the official page so we can clone the exact table title + column headers.
@@ -877,25 +923,40 @@ fn render_band_continuation_for_schedule(
             .filter_map(|id| page.cells.get(id).map(|c| c.top))
             .fold(band_y0, f64::min);
         let table_top_y = row1_min_y.min(band_y0);
-        let hdr_top = find_band_header_top(&page, prev_bottom, table_top_y, &mb.band);
+        let hdr_top = if is_1600wp_attachment {
+            // Includes "Schedule 1.1 …" title + BOTH caption rows + (1)..(8) + sub-captions
+            482.5
+        } else {
+            find_band_header_top(&page, prev_bottom, table_top_y, &mb.band)
+        };
         band_hdr_ranges.push((hdr_top, table_top_y));
         // Next band's header starts right after this band's printed rows.
         let band_y_end = mb.band.row_y.last().copied().unwrap_or(band_y0);
         prev_bottom = band_y_end + 0.5;
     }
 
-    // 3. Locate the official TOTAL row strip if the schedule has a total join.
-    let total_strip: Option<(f64, f64, &TotalJoinInfo)> = plan.total_join.as_ref().and_then(|tj| {
-        let cell = page.cells.get(&tj.html_id)?;
-        Some((cell.top - 1.0, cell.top + cell.height + 1.0, tj))
-    });
+    // 3. Locate the official TOTAL row strip and ALL total cells on that same row
+    //    (e.g. 1600WP Amount + Tax Withheld; 1801 Exclusive + Conjugal).
+    let total_strip: Option<(f64, f64, Vec<&TotalJoinInfo>)> =
+        plan.total_joins.first().and_then(|primary| {
+            let cell = page.cells.get(&primary.html_id)?;
+            let row_joins: Vec<&TotalJoinInfo> = plan
+                .total_joins
+                .iter()
+                .filter(|tj| {
+                    page.cells
+                        .get(&tj.html_id)
+                        .is_some_and(|c| (c.top - cell.top).abs() <= 4.0)
+                })
+                .collect();
+            Some((cell.top - 1.0, cell.top + cell.height + 1.0, row_joins))
+        });
     let total_height = total_strip
+        .as_ref()
         .map(|(t0, t1, _)| (t1 - t0) + 4.0)
         .unwrap_or(0.0);
 
     // 4. Paginate `sched.rows` across as many official-sized pages as needed.
-    //    On each page, all half-tables (`plan.bands`) for the same chunk of rows
-    //    appear together (e.g. on 2000-OT, rows 6–15 top half + rows 6–15 bottom half).
     let usable_height = page.height_pt - PAGE_BOTTOM_MARGIN_PT - (header_bottom_y + 6.0);
     let fixed_headers_height: f64 = band_hdr_ranges
         .iter()
@@ -909,6 +970,9 @@ fn render_band_continuation_for_schedule(
     } else {
         15
     };
+
+    let num_cont_pages = sched.rows.len().div_ceil(max_rows_per_page);
+    let total_att_pages = 1 + num_cont_pages;
 
     let mut all_pages_html = String::new();
     let mut row_offset = 0usize;
@@ -927,11 +991,18 @@ fn render_band_continuation_for_schedule(
             sched,
             sched_idx,
             cont_page_idx,
+            total_att_pages,
             header_bottom_y,
             &plan.bands,
             &band_hdr_ranges,
             row_slice,
-            if is_last_page { total_strip } else { None },
+            if is_last_page {
+                total_strip
+                    .as_ref()
+                    .map(|(t0, t1, js)| (*t0, *t1, js.as_slice()))
+            } else {
+                None
+            },
         )?;
         all_pages_html.push_str(&page_html);
 
@@ -939,7 +1010,18 @@ fn render_band_continuation_for_schedule(
         cont_page_idx += 1;
     }
 
-    Ok(all_pages_html)
+    // For 1600WP, stamp "Page 1 of N" into the official Page 1 attachment strip
+    // ONLY when continuation pages exist (left blank when there is no overflow).
+    let official_page_1_overlay = if is_1600wp_attachment && num_cont_pages > 0 {
+        format!(
+            "<div class=\"t\" style=\"left:536.83pt;top:447.80pt;width:13.69pt;text-align:center;font-family:Arial,Helvetica,sans-serif;font-size:6.5pt;font-weight:700;color:#000000\">1</div>\
+             <div class=\"t\" style=\"left:558.65pt;top:447.80pt;width:13.70pt;text-align:center;font-family:Arial,Helvetica,sans-serif;font-size:6.5pt;font-weight:700;color:#000000\">{total_att_pages}</div>"
+        )
+    } else {
+        String::new()
+    };
+
+    Ok((all_pages_html, official_page_1_overlay))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -951,11 +1033,12 @@ fn build_single_band_continuation_page(
     sched: &OverflowSchedule,
     sched_idx: usize,
     cont_page_idx: usize,
+    total_att_pages: usize,
     header_bottom_y: f64,
     matched_bands: &[MatchedBand],
     band_hdr_ranges: &[(f64, f64)],
     rows: &[continuation::OverflowRow],
-    total_strip: Option<(f64, f64, &TotalJoinInfo)>,
+    total_strip: Option<(f64, f64, &[&TotalJoinInfo])>,
 ) -> Result<String, String> {
     let mut svg_structural = String::new();
     let mut svg_decorative = String::new();
@@ -970,37 +1053,96 @@ fn build_single_band_continuation_page(
     let mut extra_peso_joins: Vec<(String, String)> = Vec::new();
     let mut caption_aliases: BTreeMap<String, String> = BTreeMap::new();
 
-    // --- 1. Clone Page Header (y <= header_bottom_y) ---
+    let is_1600wp_attachment = slug == "1600wp-2010" && official_page_num == 1;
+
+    // --- 1. Clone Page Header ---
     let mut header_has_tin = false;
-    for r in &page.svg_rects {
-        if r.y < header_bottom_y && r.y + r.h <= header_bottom_y + 2.0 {
-            push_svg_rect(&mut svg_structural, &mut svg_decorative, r, 0.0);
-        }
-    }
-    for t in &page.texts {
-        if t.top < header_bottom_y - 1.0 {
-            let mut html = t.raw_html.clone();
-            if t.plain_text.trim().eq_ignore_ascii_case("TIN")
-                || t.plain_text.contains("Taxpayer")
-                || t.plain_text.contains("Donor")
-                || t.plain_text.contains("Decedent")
-            {
-                header_has_tin = true;
+    let mut cursor_y;
+    if is_1600wp_attachment {
+        // Clone the official attachment strip [445.0, 482.5] ("ATTACHMENT TO BIR FORM
+        // 1600-WP - ALPHABETICAL LIST OF PAYEES (FORMAT ONLY)", "Page ___ of ___",
+        // FOR THE PERIOD FROM/TO, WITHHOLDING AGENT TIN and NAME) shifted up to y=20pt.
+        let att_top = 445.0;
+        let att_bottom = 482.5;
+        let dy_att = 20.0 - 445.87;
+        for r in &page.svg_rects {
+            let r_bottom = r.y + r.h;
+            if r_bottom <= att_top + 0.2 || r.y >= att_bottom - 0.2 {
+                continue;
             }
-            if t.plain_text.starts_with("Page ") {
-                html = replace_inner_text(&html, "Add'l Sheet");
+            let cy0 = r.y.max(att_top);
+            let cy1 = r_bottom.min(att_bottom);
+            if cy1 - cy0 <= 0.05 {
+                continue;
             }
-            body_texts.push_str(&html);
+            let clamped = SvgRect {
+                x: r.x,
+                y: cy0,
+                w: r.w,
+                h: cy1 - cy0,
+                fill: r.fill.clone(),
+                layer: r.layer.clone(),
+            };
+            push_svg_rect(&mut svg_structural, &mut svg_decorative, &clamped, dy_att);
         }
-    }
-    for c in page.cells.values() {
-        if c.top < header_bottom_y - 1.0 {
-            body_cells.push_str(&c.raw_html);
+        for t in &page.texts {
+            if t.top >= att_top && t.top < att_bottom - 0.5 {
+                body_texts.push_str(&shift_top_in_tag(&t.raw_html, dy_att));
+            }
         }
+        for c in page.cells.values() {
+            if c.top >= att_top && c.top < att_bottom - 0.5 {
+                body_cells.push_str(&shift_top_in_tag(&c.raw_html, dy_att));
+            }
+        }
+        // Wire WITHHOLDING AGENT NAME box (`p1c272`) from `frm1600WP:txtTaxpayerName`.
+        if page.cells.contains_key("p1c272") {
+            caption_aliases.insert("p1c272".to_string(), "p1c21".to_string());
+            extra_joins
+                .entry("frm1600WP:txtTaxpayerName".to_string())
+                .or_default()
+                .push("p1c272".to_string());
+        }
+        // Fill "Page {k} of {N}" into the two underline blanks (x=536.83..550.52, 558.65..572.35).
+        let this_page_no = 2 + cont_page_idx;
+        let page_num_top = fmt_pt(447.80 + dy_att);
+        body_texts.push_str(&format!(
+            "<div class=\"t\" style=\"left:536.83pt;top:{page_num_top}pt;width:13.69pt;text-align:center;font-family:Arial,Helvetica,sans-serif;font-size:6.5pt;font-weight:700;color:#000000\">{this_page_no}</div>\
+             <div class=\"t\" style=\"left:558.65pt;top:{page_num_top}pt;width:13.70pt;text-align:center;font-family:Arial,Helvetica,sans-serif;font-size:6.5pt;font-weight:700;color:#000000\">{total_att_pages}</div>"
+        ));
+        header_has_tin = true;
+        cursor_y = att_bottom + dy_att;
+    } else {
+        for r in &page.svg_rects {
+            if r.y < header_bottom_y && r.y + r.h <= header_bottom_y + 2.0 {
+                push_svg_rect(&mut svg_structural, &mut svg_decorative, r, 0.0);
+            }
+        }
+        for t in &page.texts {
+            if t.top < header_bottom_y - 1.0 {
+                let mut html = t.raw_html.clone();
+                if t.plain_text.trim().eq_ignore_ascii_case("TIN")
+                    || t.plain_text.contains("Taxpayer")
+                    || t.plain_text.contains("Donor")
+                    || t.plain_text.contains("Decedent")
+                {
+                    header_has_tin = true;
+                }
+                if t.plain_text.starts_with("Page ") {
+                    html = replace_inner_text(&html, "Add'l Sheet");
+                }
+                body_texts.push_str(&html);
+            }
+        }
+        for c in page.cells.values() {
+            if c.top < header_bottom_y - 1.0 {
+                body_cells.push_str(&c.raw_html);
+            }
+        }
+        cursor_y = header_bottom_y + 4.0;
     }
 
     // --- 2. Stamp each matched band (heading strip + cloned rows) ---
-    let mut cursor_y = header_bottom_y + 4.0;
     // If the official later page has no TIN/Taxpayer's Name strip (e.g. Form 2552
     // Page 2), stamp a compact paper-styled identity strip so every continuation
     // sheet still carries TIN, Taxpayer's Name, and Return Period.
@@ -1079,10 +1221,11 @@ fn build_single_band_continuation_page(
             .iter()
             .filter(|t| t.top >= hdr_top - 0.5 && t.top < hdr_bottom - 0.5)
             .collect();
-        let already_continued = hdr_texts.iter().any(|t| {
-            let lower = t.plain_text.to_ascii_lowercase();
-            lower.contains("continuation") || lower.contains("continued")
-        });
+        let already_continued = is_1600wp_attachment
+            || hdr_texts.iter().any(|t| {
+                let lower = t.plain_text.to_ascii_lowercase();
+                lower.contains("continuation") || lower.contains("continued")
+            });
         let mut marked_continued = already_continued;
         let sched_lower = sched.heading.to_ascii_lowercase();
         let has_attach_note = hdr_texts.iter().any(|t| {
@@ -1166,6 +1309,8 @@ fn build_single_band_continuation_page(
         });
 
         // Stamp each overflowing row k = 0..n_rows
+        let row_t0 = template_y;
+        let row_t1 = template_y + pitch;
         for (k, row) in rows.iter().enumerate() {
             let row_y = band_top_y + (k as f64) * pitch;
             let dy = row_y - template_y;
@@ -1173,6 +1318,48 @@ fn build_single_band_continuation_page(
             // Internal row rules (comb ticks, white mask bands, dividers)
             for rr in &trow.rules {
                 push_band_rect(&mut svg_structural, rr, dy);
+            }
+
+            // Decorative rects (grey decimal-point column shading) AND un-ID'd
+            // structural rects inside the template row (such as thick vertical
+            // group-mark ticks under horizontal caps that have no data-rule-id
+            // and are therefore omitted from trow.rules).
+            for r in &page.svg_rects {
+                let r_bottom = r.y + r.h;
+                if r.layer == "layer-decorative" {
+                    if r_bottom <= row_t0 + 0.2 || r.y >= row_t1 - 0.2 {
+                        continue;
+                    }
+                    let cy0 = r.y.max(row_t0);
+                    let cy1 = r_bottom.min(row_t1);
+                    if cy1 - cy0 <= 0.05 {
+                        continue;
+                    }
+                    let clamped = SvgRect {
+                        x: r.x,
+                        y: cy0,
+                        w: r.w,
+                        h: cy1 - cy0,
+                        fill: r.fill.clone(),
+                        layer: r.layer.clone(),
+                    };
+                    push_svg_rect(&mut svg_structural, &mut svg_decorative, &clamped, dy);
+                } else {
+                    // Structural rect wholly inside this template row (not a
+                    // multi-row spanning line) and not already emitted via trow.rules.
+                    if r.y < row_t0 - 1.0 || r_bottom > row_t1 + 1.0 {
+                        continue;
+                    }
+                    let already_in_trow = trow.rules.iter().any(|rr| {
+                        (rr.x - r.x).abs() < 0.05
+                            && (rr.y - r.y).abs() < 0.05
+                            && (rr.w - r.w).abs() < 0.05
+                            && (rr.h - r.h).abs() < 0.05
+                    });
+                    if !already_in_trow {
+                        push_svg_rect(&mut svg_structural, &mut svg_decorative, r, dy);
+                    }
+                }
             }
 
             // Continuing row number (ordinal)
@@ -1186,6 +1373,20 @@ fn build_single_band_continuation_page(
                     row.row_number.to_string()
                 };
                 body_texts.push_str(&replace_inner_text(&shifted, &ord_label));
+            }
+
+            // Static non-ordinal `.t` markers inside the template row (e.g. `●`
+            // decimal-point dots inside grey decimal columns).
+            for t in &page.texts {
+                if t.top < row_t0 - 1.0 || t.top >= row_t1 - 0.5 {
+                    continue;
+                }
+                if let Some(ord_t) = template_ord_text {
+                    if std::ptr::eq(t, ord_t) {
+                        continue;
+                    }
+                }
+                body_texts.push_str(&shift_top_in_tag(&t.raw_html, dy));
             }
 
             // Collect peso/cents synthetic ids per money column in this row
@@ -1263,7 +1464,7 @@ fn build_single_band_continuation_page(
     }
 
     // --- 3. Clone official TOTAL row on the last continuation page ---
-    if let Some((t_top, t_bottom, tj)) = total_strip {
+    if let Some((t_top, t_bottom, total_joins)) = total_strip {
         let total_y = cursor_y - SECTION_GAP_PT;
         let dy_tot = total_y - t_top;
 
@@ -1288,9 +1489,10 @@ fn build_single_band_continuation_page(
             push_svg_rect(&mut svg_structural, &mut svg_decorative, &clamped, dy_tot);
         }
 
-        // Mark the rightmost label in the cloned TOTAL row with "(as on page N)"
-        // so the reader sees it repeats the official-page grand total rather
-        // than a second figure to add.
+        // Mark the rightmost multi-letter label in the cloned TOTAL row with
+        // "(as on page N)" so the reader sees it repeats the official-page grand
+        // total rather than a second figure to add (skipping dots and single-char
+        // currency markers like "P").
         let mut tot_texts: Vec<&TextNode> = page
             .texts
             .iter()
@@ -1301,43 +1503,56 @@ fn build_single_band_continuation_page(
                 .partial_cmp(&b.left)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        let last_idx = tot_texts.len().saturating_sub(1);
+        let label_idx = tot_texts
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, t)| {
+                t.plain_text
+                    .chars()
+                    .filter(|c| c.is_ascii_alphabetic())
+                    .count()
+                    >= 2
+            })
+            .map(|(i, _)| i);
         for (idx, t) in tot_texts.into_iter().enumerate() {
             let mut shifted = shift_top_in_tag(&t.raw_html, dy_tot);
-            if idx == last_idx && !t.plain_text.is_empty() {
+            if Some(idx) == label_idx {
                 let marked = format!("{} (as on page {official_page_num})", t.plain_text);
                 shifted = replace_inner_text(&shifted, &marked);
             }
             body_texts.push_str(&shifted);
         }
 
-        // Clone the official total cell(s) and wire the schedule's grand total
-        let syn_tot_id = format!("cont_tot_s{sched_idx}_{}", tj.html_id);
-        caption_aliases.insert(syn_tot_id.clone(), tj.html_id.clone());
-        if let Some(src_tot) = page.cells.get(&tj.html_id) {
-            body_cells.push_str(&clone_cell_div(
-                &src_tot.raw_html,
-                &tj.html_id,
-                &syn_tot_id,
-                dy_tot,
-            ));
-        }
-        let syn_cents_id = tj.cents_html_id.as_ref().and_then(|cid| {
-            let src = page.cells.get(cid)?;
-            let sid = format!("cont_tot_s{sched_idx}_{cid}");
-            body_cells.push_str(&clone_cell_div(&src.raw_html, cid, &sid, dy_tot));
-            Some(sid)
-        });
+        // Clone ALL official total cells on this row and wire each grand total
+        for tj in total_joins {
+            let syn_tot_id = format!("cont_tot_s{sched_idx}_{}", tj.html_id);
+            caption_aliases.insert(syn_tot_id.clone(), tj.html_id.clone());
+            if let Some(src_tot) = page.cells.get(&tj.html_id) {
+                body_cells.push_str(&clone_cell_div(
+                    &src_tot.raw_html,
+                    &tj.html_id,
+                    &syn_tot_id,
+                    dy_tot,
+                ));
+            }
+            let syn_cents_id = tj.cents_html_id.as_ref().and_then(|cid| {
+                let src = page.cells.get(cid)?;
+                let sid = format!("cont_tot_s{sched_idx}_{cid}");
+                body_cells.push_str(&clone_cell_div(&src.raw_html, cid, &sid, dy_tot));
+                Some(sid)
+            });
 
-        if let Some(tot_val) = fields.get(&tj.writer_key).filter(|v| !v.trim().is_empty()) {
-            let syn_key = format!("{}__cont_{syn_tot_id}", tj.writer_key);
-            syn_fields.insert(syn_key.clone(), tot_val.clone());
-            if tj.is_money {
-                extra_money_joins.push((syn_key, syn_tot_id, syn_cents_id));
-            } else if tj.is_peso {
-                extra_peso_joins.push((syn_key, syn_tot_id));
-            } else {
-                extra_joins.entry(syn_key).or_default().push(syn_tot_id);
+            if let Some(tot_val) = fields.get(&tj.writer_key).filter(|v| !v.trim().is_empty()) {
+                let syn_key = format!("{}__cont_{syn_tot_id}", tj.writer_key);
+                syn_fields.insert(syn_key.clone(), tot_val.clone());
+                if tj.is_money {
+                    extra_money_joins.push((syn_key, syn_tot_id, syn_cents_id));
+                } else if tj.is_peso {
+                    extra_peso_joins.push((syn_key, syn_tot_id));
+                } else {
+                    extra_joins.entry(syn_key).or_default().push(syn_tot_id);
+                }
             }
         }
     }
@@ -1349,8 +1564,10 @@ fn build_single_band_continuation_page(
         w = fmt_pt(page.width_pt),
         h = fmt_pt(page.height_pt),
     );
-    for img in &page.svg_images {
-        raw_page.push_str(img);
+    if !is_1600wp_attachment {
+        for img in &page.svg_images {
+            raw_page.push_str(img);
+        }
     }
     raw_page.push_str("<g class=\"layer-decorative\">");
     raw_page.push_str(&svg_decorative);
@@ -1407,9 +1624,7 @@ fn detect_page_header_bottom(page: &ParsedPage, first_band_y: f64) -> f64 {
     if has_header_tin {
         let mut max_cell_bottom = 0.0_f64;
         for c in page.cells.values() {
-            if c.top < first_section_y - 2.0
-                && c.raw_html.contains("data-cell-kind=\"field\"")
-            {
+            if c.top < first_section_y - 2.0 && c.raw_html.contains("data-cell-kind=\"field\"") {
                 let b = c.top + c.height;
                 if b > max_cell_bottom && b <= first_section_y + 1.0 {
                     max_cell_bottom = b;
@@ -1448,12 +1663,7 @@ fn find_band_header_top(
     let heavy_rule_above = page
         .svg_rects
         .iter()
-        .filter(|r| {
-            r.w > 400.0
-                && r.h >= 0.9
-                && r.y >= min_top - 2.0
-                && r.y <= table_top_y - 10.0
-        })
+        .filter(|r| r.w > 400.0 && r.h >= 0.9 && r.y >= min_top - 2.0 && r.y <= table_top_y - 10.0)
         .map(|r| r.y)
         .fold(None::<f64>, |acc, y| {
             Some(acc.map_or(y, |prev| prev.max(y)))
@@ -1483,12 +1693,7 @@ fn find_band_header_top(
     min_top
 }
 
-fn push_svg_rect(
-    structural: &mut String,
-    decorative: &mut String,
-    r: &SvgRect,
-    dy: f64,
-) {
+fn push_svg_rect(structural: &mut String, decorative: &mut String, r: &SvgRect, dy: f64) {
     let target = if r.layer.contains("decorative") {
         decorative
     } else {
@@ -1664,32 +1869,31 @@ mod tests {
 
     #[test]
     fn parses_formgen_bands_for_band_forms_and_empty_for_fallback() {
-        let b2000 = parse_formgen_bands(
-            include_str!("../../../html-frozen/2000-ot-2018/index.html"),
-        );
+        let b2000 =
+            parse_formgen_bands(include_str!("../../../html-frozen/2000-ot-2018/index.html"));
         assert_eq!(b2000.len(), 2, "2000-OT has 2 bands (p2g0, p2g1)");
         assert_eq!(b2000[0].id, "p2g0");
         assert_eq!(b2000[1].id, "p2g1");
 
-        let b1800 = parse_formgen_bands(
-            include_str!("../../../html-frozen/1800-2018/index.html"),
-        );
+        let b1800 = parse_formgen_bands(include_str!("../../../html-frozen/1800-2018/index.html"));
         assert_eq!(b1800.len(), 4, "1800 has 4 bands (p2g0..p2g3)");
 
-        let b2552 = parse_formgen_bands(
-            include_str!("../../../html-frozen/2552-2018/index.html"),
-        );
+        let b2552 = parse_formgen_bands(include_str!("../../../html-frozen/2552-2018/index.html"));
         assert_eq!(b2552.len(), 7, "2552 has 7 bands (p2g0..p2g6)");
 
-        let b1600wp = parse_formgen_bands(
-            include_str!("../../../html-frozen/1600wp-2010/index.html"),
+        let b1600wp =
+            parse_formgen_bands(include_str!("../../../html-frozen/1600wp-2010/index.html"));
+        assert!(
+            !b1600wp.is_empty(),
+            "1600WP now carries metadata-only formgen-bands"
         );
-        assert!(!b1600wp.is_empty(), "1600WP now carries metadata-only formgen-bands");
 
-        let b2200m = parse_formgen_bands(
-            include_str!("../../../html-frozen/2200m-2018/index.html"),
+        let b2200m =
+            parse_formgen_bands(include_str!("../../../html-frozen/2200m-2018/index.html"));
+        assert!(
+            b2200m.is_empty(),
+            "2200M stays on plain fallback (growables: [])"
         );
-        assert!(b2200m.is_empty(), "2200M stays on plain fallback (growables: [])");
     }
 
     #[test]
@@ -1701,7 +1905,10 @@ mod tests {
         fields.insert("frm2000OT:txtPg2TaxpayerName".into(), "JUANA SANTOS".into());
         for i in 0..15 {
             let n = i + 1;
-            fields.insert(format!("frm2000OT:sched1A:txtOCT{i}"), format!("TCT-{n:03}"));
+            fields.insert(
+                format!("frm2000OT:sched1A:txtOCT{i}"),
+                format!("TCT-{n:03}"),
+            );
             fields.insert(
                 format!("frm2000OT:sched1A:txtFMVCol1{i}"),
                 format!("{}.00", 1_000_000 * n),
@@ -1727,7 +1934,10 @@ mod tests {
 
         // Official pages (everything before the continuation page) must retain
         // the official grand total AND match a 5-row-only fill with the same total.
-        let cont_pos = doc.html.find("<div class=\"page page-continuation-band\"").unwrap();
+        let cont_pos = doc
+            .html
+            .find("<div class=\"page page-continuation-band\"")
+            .unwrap();
         let official_prefix = &doc.html[..cont_pos];
         assert!(
             official_prefix.contains("120000000.00"),
@@ -1751,10 +1961,22 @@ mod tests {
         fields.insert("frm2552:txtTaxpayerName".into(), "JUANA SANTOS".into());
         fields.insert("frm2552:txtYearEnded".into(), "2026".into());
         for row_no in 1..=8 {
-            fields.insert(format!("frm2552:txtPg2Pt5Sch1Seller{row_no}"), format!("S1-{row_no}"));
-            fields.insert(format!("frm2552:txtPg2Pt5Sch1TaxDue{row_no}"), format!("{}.00", row_no * 100));
-            fields.insert(format!("frm2552:txtPg2Pt5Sch2Seller{row_no}"), format!("S2-{row_no}"));
-            fields.insert(format!("frm2552:txtPg2Pt5Sch2TaxDue{row_no}"), format!("{}.00", row_no * 500));
+            fields.insert(
+                format!("frm2552:txtPg2Pt5Sch1Seller{row_no}"),
+                format!("S1-{row_no}"),
+            );
+            fields.insert(
+                format!("frm2552:txtPg2Pt5Sch1TaxDue{row_no}"),
+                format!("{}.00", row_no * 100),
+            );
+            fields.insert(
+                format!("frm2552:txtPg2Pt5Sch2Seller{row_no}"),
+                format!("S2-{row_no}"),
+            );
+            fields.insert(
+                format!("frm2552:txtPg2Pt5Sch2TaxDue{row_no}"),
+                format!("{}.00", row_no * 500),
+            );
         }
         fields.insert("frm2552:txtPg2Pt5Sch1TaxDueTot".into(), "3600.00".into());
         fields.insert("frm2552:txtPg2Pt5Sch2TaxDueTot".into(), "18000.00".into());
@@ -1777,14 +1999,53 @@ mod tests {
             if i <= 6 {
                 fields.insert(format!("derived:sched_seq{i}"), i.to_string());
             }
-            fields.insert(format!("frm1600WP:dtSched:txtFullname{i}"), format!("PAYEE {i}"));
-            fields.insert(format!("frm1600WP:dtSched:amount{i}"), format!("{}.00", i * 1000));
-            fields.insert(format!("frm1600WP:dtSched:taxWithheld{i}"), format!("{}.00", i * 100));
+            fields.insert(
+                format!("frm1600WP:dtSched:txtFullname{i}"),
+                format!("PAYEE {i}"),
+            );
+            fields.insert(
+                format!("frm1600WP:dtSched:amount{i}"),
+                format!("{}.00", i * 1000),
+            );
+            fields.insert(
+                format!("frm1600WP:dtSched:taxWithheld{i}"),
+                format!("{}.00", i * 100),
+            );
         }
+        fields.insert("derived:att_from_mm".into(), "01".into());
+        fields.insert("derived:att_from_dd".into(), "01".into());
+        fields.insert("derived:att_from_yyyy".into(), "2026".into());
+        fields.insert("derived:att_to_mm".into(), "01".into());
+        fields.insert("derived:att_to_dd".into(), "31".into());
+        fields.insert("derived:att_to_yyyy".into(), "2026".into());
+        fields.insert("derived:att_tin1".into(), "000".into());
+        fields.insert("derived:att_tin2".into(), "123".into());
+        fields.insert("derived:att_tin3".into(), "453".into());
+        fields.insert("derived:att_branch".into(), "00000".into());
+        fields.insert("derived:sched_total_amount".into(), "55000.00".into());
+        fields.insert(
+            "frm1600WP:dtSched:TotaltaxWithheld".into(),
+            "5500.00".into(),
+        );
         let doc = frozen_html::filled_document_with_report("1600wp-2010", &fields, None).unwrap();
         assert_eq!(doc.overflow.schedules.len(), 1);
-        let cont_pos = doc.html.find("<div class=\"page page-continuation-band\"").unwrap();
+        let cont_pos = doc
+            .html
+            .find("<div class=\"page page-continuation-band\"")
+            .unwrap();
+        let official = &doc.html[..cont_pos];
         let cont = &doc.html[cont_pos..];
+        // Official Page 1 gets "Page 1 of 2" when continuation exists
+        assert!(official.contains(">1</div>") && official.contains(">2</div>"));
+        // Continuation Page 2 uses attachment header (NOT return top Items 1-4 / DLN / PSIC)
+        assert!(cont.contains("ATTACHMENT TO BIR FORM 1600-WP"));
+        assert!(cont.contains("PAYEE DETAILS"));
+        assert!(cont.contains("NATURE OF PAYMENT"));
+        assert!(cont.contains("TOTAL (as on page 1)"));
+        assert!(cont.contains("55000.00") && cont.contains("5500.00"));
+        assert!(cont.contains("JUANA SANTOS"));
+        assert!(!cont.contains("Amended Return"));
+        assert!(!cont.contains("TIN: "));
         for n in 7..=10 {
             assert!(
                 cont.contains(&format!("value=\"{n}\"")),
@@ -1801,17 +2062,45 @@ mod tests {
         fields.insert("frm1801v2018:txtTaxpayerName".into(), "JUANA SANTOS".into());
         for i in 1..=4 {
             fields.insert(format!("frm1801v2018:sched1Oct_{i}"), format!("TCT-{i:03}"));
-            fields.insert(format!("frm1801v2018:sched1Class_{i}'"), "RES".into());
-            fields.insert(format!("frm1801v2018:sched1Fmv_{i}"), format!("{}.00", i * 100_000));
+            fields.insert(
+                format!("frm1801v2018:sched1Class_{i}'"),
+                if i % 2 == 1 { "RR" } else { "CR" }.into(),
+            );
+            fields.insert(
+                format!("frm1801v2018:sched1Fmv_{i}"),
+                format!("{}.00", i * 100_000),
+            );
         }
+        fields.insert("frm1801v2018:sched1Exc_Total".into(), "400000.00".into());
+        fields.insert("frm1801v2018:sched1Conj_Total".into(), "600000.00".into());
         let doc = frozen_html::filled_document_with_report("1801-2018", &fields, None).unwrap();
         assert_eq!(doc.overflow.schedules.len(), 1);
-        let cont_pos = doc.html.find("<div class=\"page page-continuation-band\"").unwrap();
+        let cont_pos = doc
+            .html
+            .find("<div class=\"page page-continuation-band\"")
+            .unwrap();
         let cont = &doc.html[cont_pos..];
         assert!(cont.contains("TCT-003"));
         assert!(cont.contains("TCT-004"));
         assert!(
-            !cont.contains("continuation) (continued)") && !cont.contains("Continuation) (continued)"),
+            cont.contains("value=\"RR\""),
+            "1801 continuation row 3 must print classification RR"
+        );
+        assert!(
+            cont.contains("value=\"CR\""),
+            "1801 continuation row 4 must print classification CR"
+        );
+        assert!(
+            cont.contains("400000.00"),
+            "1801 continuation must repeat Exclusive total"
+        );
+        assert!(
+            cont.contains("600000.00"),
+            "1801 continuation must repeat Conjugal total"
+        );
+        assert!(
+            !cont.contains("continuation) (continued)")
+                && !cont.contains("Continuation) (continued)"),
             "1801 Schedule 1 continuation heading must not duplicate (continued)"
         );
     }
@@ -1826,14 +2115,23 @@ mod tests {
             f1707.insert(format!("frm1707:txtPg2Pt4S2_{k}Col1"), format!("CORP {k}"));
             f1707.insert(format!("frm1707:txtPg2Pt4S2_{k}Col2"), format!("{}00", k));
             f1707.insert(format!("frm1707:txtPg2Pt4S2_{k}Col3"), format!("CERT-{k}"));
-            f1707.insert(format!("frm1707:txtPg2Pt4S2_{k}Col4"), format!("{k}0000.00"));
-            f1707.insert(format!("frm1707:txtPg2Pt4S3_{k}Col1"), format!("EXPENSE {k}"));
+            f1707.insert(
+                format!("frm1707:txtPg2Pt4S2_{k}Col4"),
+                format!("{k}0000.00"),
+            );
+            f1707.insert(
+                format!("frm1707:txtPg2Pt4S3_{k}Col1"),
+                format!("EXPENSE {k}"),
+            );
             f1707.insert(format!("frm1707:txtPg2Pt4S3_{k}Col2"), format!("{k}500.25"));
         }
         let doc1707 = frozen_html::filled_document_with_report("1707-2021", &f1707, None).unwrap();
         assert_eq!(doc1707.overflow.schedules.len(), 2);
         assert!(doc1707.html.contains("CORP 1") && doc1707.html.contains("CORP 3"));
-        assert!(doc1707.html.contains("page-continuation-band"), "1707 Schedule 3 uses cloned band p2g1");
+        assert!(
+            doc1707.html.contains("page-continuation-band"),
+            "1707 Schedule 3 uses cloned band p2g1"
+        );
         assert!(doc1707.html.contains("EXPENSE 1") || doc1707.html.contains("value=\"E\""));
 
         // 1701A: Part IV-A & Part IV-B popup rows -> cloned bands p2g0 & p2g1
@@ -1841,44 +2139,218 @@ mod tests {
         f1701a.insert("derived:tin".into(), "00012345300000".into());
         f1701a.insert("frm1701A:txtTaxpayerName".into(), "JUANA SANTOS".into());
         for n in 1..=3 {
-            f1701a.insert(format!("frm1701A:txtmodalPartIVADesc_{n}C1"), format!("OTHER INC A {n}"));
-            f1701a.insert(format!("frm1701A:txtmodalPartIVA_{n}C2"), format!("{n}0000.00"));
-            f1701a.insert(format!("frm1701A:txtmodalPartIVA_{n}C3"), format!("{n}500.00"));
-            f1701a.insert(format!("frm1701A:txtmodalPartIVBDesc_{n}C1"), format!("OTHER INC B {n}"));
-            f1701a.insert(format!("frm1701A:txtmodalPartIVB_{n}C2"), format!("{n}2000.00"));
-            f1701a.insert(format!("frm1701A:txtmodalPartIVB_{n}C3"), format!("{n}300.00"));
+            f1701a.insert(
+                format!("frm1701A:txtmodalPartIVADesc_{n}C1"),
+                format!("OTHER INC A {n}"),
+            );
+            f1701a.insert(
+                format!("frm1701A:txtmodalPartIVA_{n}C2"),
+                format!("{n}0000.00"),
+            );
+            f1701a.insert(
+                format!("frm1701A:txtmodalPartIVA_{n}C3"),
+                format!("{n}500.00"),
+            );
+            f1701a.insert(
+                format!("frm1701A:txtmodalPartIVBDesc_{n}C1"),
+                format!("OTHER INC B {n}"),
+            );
+            f1701a.insert(
+                format!("frm1701A:txtmodalPartIVB_{n}C2"),
+                format!("{n}2000.00"),
+            );
+            f1701a.insert(
+                format!("frm1701A:txtmodalPartIVB_{n}C3"),
+                format!("{n}300.00"),
+            );
         }
-        let doc1701a = frozen_html::filled_document_with_report("1701a-2018", &f1701a, None).unwrap();
+        let doc1701a =
+            frozen_html::filled_document_with_report("1701a-2018", &f1701a, None).unwrap();
         assert_eq!(doc1701a.overflow.schedules.len(), 2);
-        assert!(doc1701a.html.contains("page-continuation-band"), "1701A uses cloned bands");
+        assert!(
+            doc1701a.html.contains("page-continuation-band"),
+            "1701A uses cloned bands"
+        );
         assert!(!doc1701a.html.contains("class=\"page page-continuation\""));
         assert!(doc1701a.html.contains("OTHER INC A 1") && doc1701a.html.contains("OTHER INC B 3"));
 
         // 1707A, 1700, 1702EX, 1702MX, 1702RT popup detection
         let mut f1707a = BTreeMap::new();
-        f1707a.insert("frm1707Av2021:txtS1C2NameOfCorporateStock_1".into(), "ALPHA CORP".into());
-        f1707a.insert("frm1707Av2021:txtS1C3SellingPrice_1".into(), "50000.00".into());
-        assert_eq!(continuation::detect_overflow("1707a-2021", &f1707a).unwrap().schedules.len(), 1);
+        f1707a.insert(
+            "frm1707Av2021:txtS1C2NameOfCorporateStock_1".into(),
+            "ALPHA CORP".into(),
+        );
+        f1707a.insert(
+            "frm1707Av2021:txtS1C3SellingPrice_1".into(),
+            "50000.00".into(),
+        );
+        assert_eq!(
+            continuation::detect_overflow("1707a-2021", &f1707a)
+                .unwrap()
+                .schedules
+                .len(),
+            1
+        );
 
         let mut f1700 = BTreeMap::new();
-        f1700.insert("frm1700:txtPg2I4_1PartVIEmployerName1".into(), "ACME INC".into());
+        f1700.insert(
+            "frm1700:txtPg2I4_1PartVIEmployerName1".into(),
+            "ACME INC".into(),
+        );
         f1700.insert("frm1700:txtPg2ISched1c_4_1REG".into(), "120000.00".into());
-        assert_eq!(continuation::detect_overflow("1700-2018", &f1700).unwrap().schedules.len(), 1);
+        assert_eq!(
+            continuation::detect_overflow("1700-2018", &f1700)
+                .unwrap()
+                .schedules
+                .len(),
+            1
+        );
 
         let mut f1702ex = BTreeMap::new();
         f1702ex.insert("frm1702EX:txtPg3Pt6S2I4_1Col1".into(), "SPECIAL DED".into());
         f1702ex.insert("frm1702EX:txtPg3Pt6S2I4_1Col3".into(), "9000.00".into());
-        assert_eq!(continuation::detect_overflow("1702ex-2018", &f1702ex).unwrap().schedules.len(), 1);
+        assert_eq!(
+            continuation::detect_overflow("1702ex-2018", &f1702ex)
+                .unwrap()
+                .schedules
+                .len(),
+            1
+        );
 
         let mut f1702mx = BTreeMap::new();
         f1702mx.insert("frm1702MX:txtPg6Sc6_1Col1".into(), "MX DED".into());
         f1702mx.insert("frm1702MX:txtPg6Sc6_1Col3".into(), "8000.00".into());
-        assert_eq!(continuation::detect_overflow("1702mx-2018c", &f1702mx).unwrap().schedules.len(), 1);
+        assert_eq!(
+            continuation::detect_overflow("1702mx-2018c", &f1702mx)
+                .unwrap()
+                .schedules
+                .len(),
+            1
+        );
 
         let mut f1702rt = BTreeMap::new();
         f1702rt.insert("frm1702RT:txtPg3Sc2I4.1C1".into(), "RT DED".into());
         f1702rt.insert("frm1702RT:txtPg3Sc2I4.1C3".into(), "7000.00".into());
-        assert_eq!(continuation::detect_overflow("1702rt-2018c", &f1702rt).unwrap().schedules.len(), 1);
+        assert_eq!(
+            continuation::detect_overflow("1702rt-2018c", &f1702rt)
+                .unwrap()
+                .schedules
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn continuation_first_row_label_follows_official_last_row_for_1707_and_1701a() {
+        // 1707: official rows are A..D (capacity 4); first continuation row must be E (5), never D (4)
+        let mut f1707 = BTreeMap::new();
+        f1707.insert("derived:tin_digits".into(), "00012345300000".into());
+        f1707.insert(
+            "frm1707:txtPg2RegisteredName".into(),
+            "SANTOS, JUANA".into(),
+        );
+        for k in 1..=3 {
+            f1707.insert(format!("frm1707:txtPg2Pt4S2_{k}Col1"), format!("CORP {k}"));
+            f1707.insert(format!("frm1707:txtPg2Pt4S2_{k}Col2"), "100".into());
+            f1707.insert(format!("frm1707:txtPg2Pt4S2_{k}Col3"), format!("CERT-{k}"));
+            f1707.insert(format!("frm1707:txtPg2Pt4S2_{k}Col4"), "10000.00".into());
+            f1707.insert(
+                format!("frm1707:txtPg2Pt4S3_{k}Col1"),
+                format!("EXPENSE {k}"),
+            );
+            f1707.insert(format!("frm1707:txtPg2Pt4S3_{k}Col2"), format!("{k}750.50"));
+        }
+        let doc1707 = frozen_html::filled_document_with_report("1707-2021", &f1707, None).unwrap();
+        let s2 = doc1707
+            .overflow
+            .schedules
+            .iter()
+            .find(|s| s.heading == "Schedule 2")
+            .unwrap();
+        let s3 = doc1707
+            .overflow
+            .schedules
+            .iter()
+            .find(|s| s.heading == "Schedule 3")
+            .unwrap();
+        assert_eq!(s2.printed_capacity, 4);
+        assert_eq!(s3.printed_capacity, 4);
+        assert_eq!(
+            s2.rows[0].row_number, 5,
+            "Schedule 2 first continuation row must follow D (4)"
+        );
+        assert_eq!(
+            s3.rows[0].row_number, 5,
+            "Schedule 3 first continuation row must follow D (4)"
+        );
+
+        // Cloned band for Schedule 3 must label rows E, F, G (not D), preserve decorative
+        // vertical group ticks + grey decimal box + decimal dot, and fill cloned header TIN/Name.
+        let band_pos = doc1707
+            .html
+            .find("<div class=\"page page-continuation-band\"")
+            .unwrap();
+        let cont = &doc1707.html[band_pos..];
+        assert!(
+            cont.contains(">E</div>"),
+            "1707 Schedule 3 first continuation row must be E"
+        );
+        assert!(cont.contains(">F</div>"));
+        assert!(cont.contains(">G</div>"));
+        assert!(
+            !cont.contains(">D</div>"),
+            "1707 Schedule 3 continuation must not repeat row D"
+        );
+        assert!(
+            cont.contains("fill=\"#808080\""),
+            "cloned amount comb must carry grey decimal column"
+        );
+        assert!(
+            cont.contains("height=\"6.96\""),
+            "cloned amount comb must carry thick vertical group ticks"
+        );
+        assert!(
+            cont.contains("●"),
+            "cloned amount comb must carry decimal dot"
+        );
+        assert!(
+            cont.contains("data-writer-value=\"00012345300000\""),
+            "cloned header TIN must be filled"
+        );
+        assert!(
+            cont.contains("data-writer-value=\"SANTOS, JUANA\""),
+            "cloned header Taxpayer Name must be filled"
+        );
+
+        // 1701A: Part IV-A official rows are 41-42 -> first continuation row must be 43;
+        // Part IV-B official rows are 50-51 -> first continuation row must be 52.
+        let mut f1701a = BTreeMap::new();
+        f1701a.insert("frm1701A:txtmodalPartIVADesc_1C1".into(), "EXTRA A".into());
+        f1701a.insert("frm1701A:txtmodalPartIVA_1C2".into(), "5000.00".into());
+        f1701a.insert("frm1701A:txtmodalPartIVBDesc_1C1".into(), "EXTRA B".into());
+        f1701a.insert("frm1701A:txtmodalPartIVB_1C2".into(), "6000.00".into());
+        let doc1701a =
+            frozen_html::filled_document_with_report("1701a-2018", &f1701a, None).unwrap();
+        let p4a = doc1701a
+            .overflow
+            .schedules
+            .iter()
+            .find(|s| s.heading.contains("Part IV-A"))
+            .unwrap();
+        let p4b = doc1701a
+            .overflow
+            .schedules
+            .iter()
+            .find(|s| s.heading.contains("Part IV-B"))
+            .unwrap();
+        assert_eq!(
+            p4a.rows[0].row_number, 43,
+            "1701A Part IV-A first continuation row must be 43"
+        );
+        assert_eq!(
+            p4b.rows[0].row_number, 52,
+            "1701A Part IV-B first continuation row must be 52"
+        );
     }
 
     #[test]
@@ -1893,10 +2365,16 @@ mod tests {
             "frm1707:txtPg2Pt4S3_1Col1".into(),
             "EXTREMELY LONG DOCUMENTARY STAMP TAX AND BROKERAGE EXPENSE DESCRIPTION FOR WHITE BAND TEST".into(),
         );
-        f1707.insert("frm1707:txtPg2Pt4S3_1Col2".into(), "999999999999999.99".into());
+        f1707.insert(
+            "frm1707:txtPg2Pt4S3_1Col2".into(),
+            "999999999999999.99".into(),
+        );
 
         let doc = frozen_html::filled_document_with_report("1707-2021", &f1707, None).unwrap();
-        let cont_pos = doc.html.find("<div class=\"page page-continuation-band\"").unwrap();
+        let cont_pos = doc
+            .html
+            .find("<div class=\"page page-continuation-band\"")
+            .unwrap();
         let cont = &doc.html[cont_pos..];
         assert!(
             cont.contains("data-overflow-of=\"cont_"),
