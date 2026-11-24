@@ -1,0 +1,114 @@
+{
+  "schedules": [
+    {
+      "heading": "Schedule 1",
+      "printed_capacity": 2,
+      "columns": [
+        {
+          "heading": "(A) Date Purchased/Imported (MM/DD/YYYY)",
+          "is_amount": false,
+          "subtotal": null
+        },
+        {
+          "heading": "(B) Source Code",
+          "is_amount": false,
+          "subtotal": null
+        },
+        {
+          "heading": "(C) Description",
+          "is_amount": false,
+          "subtotal": null
+        },
+        {
+          "heading": "(D) Amount of Purchases/Importation",
+          "is_amount": true,
+          "subtotal": "27,000,000.00"
+        },
+        {
+          "heading": "(E) Balance of Input Tax from Previous Period",
+          "is_amount": false,
+          "subtotal": null
+        },
+        {
+          "heading": "(F) Estimated Life (in months)",
+          "is_amount": false,
+          "subtotal": null
+        },
+        {
+          "heading": "(G) Recognized Life (Remaining Life)",
+          "is_amount": false,
+          "subtotal": null
+        },
+        {
+          "heading": "(H) Allowable Input Tax for the Period",
+          "is_amount": true,
+          "subtotal": "162,000.00"
+        },
+        {
+          "heading": "(I) Balance of Input Tax to be carried to Next Period",
+          "is_amount": true,
+          "subtotal": "3,078,000.00"
+        }
+      ],
+      "rows": [
+        {
+          "row_number": 3,
+          "values": [
+            "01/13/2026",
+            "D",
+            "CAPITAL EQUIPMENT 3",
+            "4500000.00",
+            "540000.00",
+            "60",
+            "48",
+            "27000.00",
+            "513000.00"
+          ]
+        },
+        {
+          "row_number": 4,
+          "values": [
+            "01/14/2026",
+            "D",
+            "CAPITAL EQUIPMENT 4",
+            "6000000.00",
+            "720000.00",
+            "60",
+            "48",
+            "36000.00",
+            "684000.00"
+          ]
+        },
+        {
+          "row_number": 5,
+          "values": [
+            "01/15/2026",
+            "D",
+            "CAPITAL EQUIPMENT 5",
+            "7500000.00",
+            "900000.00",
+            "60",
+            "48",
+            "45000.00",
+            "855000.00"
+          ]
+        },
+        {
+          "row_number": 6,
+          "values": [
+            "01/16/2026",
+            "D",
+            "CAPITAL EQUIPMENT 6",
+            "9000000.00",
+            "1080000.00",
+            "60",
+            "48",
+            "54000.00",
+            "1026000.00"
+          ]
+        }
+      ],
+      "has_total": true
+    }
+  ]
+}

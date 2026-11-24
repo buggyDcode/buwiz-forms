@@ -1880,4 +1880,45 @@ mod tests {
         f1702rt.insert("frm1702RT:txtPg3Sc2I4.1C3".into(), "7000.00".into());
         assert_eq!(continuation::detect_overflow("1702rt-2018c", &f1702rt).unwrap().schedules.len(), 1);
     }
+
+    #[test]
+    fn cloned_band_cells_receive_white_knockout_band_on_overflow() {
+        // 1707 Schedule 3 uses comb cells (p2c89 peso + p2c90 cents) and p2c88 particulars.
+        // Feed an over-wide amount (15 digits) on a continuation row and verify the cloned
+        // cell gets `data-overflow-of="cont-..."` and the document carries the white-band CSS.
+        let mut f1707 = BTreeMap::new();
+        f1707.insert("derived:tin".into(), "00012345300000".into());
+        f1707.insert("frm1707:txtSellerName".into(), "JUANA SANTOS".into());
+        f1707.insert(
+            "frm1707:txtPg2Pt4S3_1Col1".into(),
+            "EXTREMELY LONG DOCUMENTARY STAMP TAX AND BROKERAGE EXPENSE DESCRIPTION FOR WHITE BAND TEST".into(),
+        );
+        f1707.insert("frm1707:txtPg2Pt4S3_1Col2".into(), "999999999999999.99".into());
+
+        let doc = frozen_html::filled_document_with_report("1707-2021", &f1707, None).unwrap();
+        let cont_pos = doc.html.find("<div class=\"page page-continuation-band\"").unwrap();
+        let cont = &doc.html[cont_pos..];
+        assert!(
+            cont.contains("data-overflow-of=\"cont_"),
+            "cloned comb/text cell on continuation page must get data-overflow-of white band"
+        );
+        assert!(
+            cont.contains("data-overflow-warning=\"amount-comb\""),
+            "over-wide cloned money comb should carry amount-comb overflow warning"
+        );
+        let cell_warnings = doc.cell_overflow_warnings();
+        assert!(
+            cell_warnings
+                .iter()
+                .any(|w| w.cell.starts_with("cont_") && w.kind == "amount-comb"),
+            "overflow_warnings() must report the cloned continuation cell: {cell_warnings:?}"
+        );
+        let summary = doc
+            .warning_summary()
+            .expect("warning_summary() must be Some when rows and amounts overflow");
+        assert!(
+            summary.contains("additional sheet") && summary.contains("fitted line"),
+            "unified warning_summary() must include both schedule rows and fitted-line amount: {summary}"
+        );
+    }
 }

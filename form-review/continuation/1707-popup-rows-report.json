@@ -1,0 +1,116 @@
+{
+  "schedules": [
+    {
+      "heading": "Schedule 2",
+      "printed_capacity": 4,
+      "columns": [
+        {
+          "heading": "Name of Corporate Stock",
+          "is_amount": false,
+          "subtotal": null
+        },
+        {
+          "heading": "No. of Shares",
+          "is_amount": false,
+          "subtotal": null
+        },
+        {
+          "heading": "Stock Certificate Number",
+          "is_amount": false,
+          "subtotal": null
+        },
+        {
+          "heading": "Taxable Base/Selling Price",
+          "is_amount": true,
+          "subtotal": "1,100,000.00"
+        }
+      ],
+      "rows": [
+        {
+          "row_number": 4,
+          "values": [
+            "OVERFLOW CORP 1",
+            "150",
+            "CERT-101",
+            "125000.00"
+          ]
+        },
+        {
+          "row_number": 5,
+          "values": [
+            "OVERFLOW CORP 2",
+            "250",
+            "CERT-102",
+            "225000.00"
+          ]
+        },
+        {
+          "row_number": 6,
+          "values": [
+            "OVERFLOW CORP 3",
+            "350",
+            "CERT-103",
+            "325000.00"
+          ]
+        },
+        {
+          "row_number": 7,
+          "values": [
+            "OVERFLOW CORP 4",
+            "450",
+            "CERT-104",
+            "425000.00"
+          ]
+        }
+      ],
+      "has_total": true
+    },
+    {
+      "heading": "Schedule 3",
+      "printed_capacity": 4,
+      "columns": [
+        {
+          "heading": "Particulars",
+          "is_amount": false,
+          "subtotal": null
+        },
+        {
+          "heading": "Amount",
+          "is_amount": true,
+          "subtotal": "13,002.00"
+        }
+      ],
+      "rows": [
+        {
+          "row_number": 4,
+          "values": [
+            "OVERFLOW EXPENSE 1",
+            "1750.50"
+          ]
+        },
+        {
+          "row_number": 5,
+          "values": [
+            "OVERFLOW EXPENSE 2",
+            "2750.50"
+          ]
+        },
+        {
+          "row_number": 6,
+          "values": [
+            "OVERFLOW EXPENSE 3",
+            "3750.50"
+          ]
+        },
+        {
+          "row_number": 7,
+          "values": [
+            "OVERFLOW EXPENSE 4",
+            "4750.50"
+          ]
+        }
+      ],
+      "has_total": true
+    }
+  ]
+}

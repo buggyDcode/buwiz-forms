@@ -1,0 +1,116 @@
+{
+  "schedules": [
+    {
+      "heading": "Part IV-A Other Non-Operating Income",
+      "printed_capacity": 2,
+      "columns": [
+        {
+          "heading": "Other Non-Operating Income (specify)",
+          "is_amount": false,
+          "subtotal": null
+        },
+        {
+          "heading": "A) Taxpayer/Filer",
+          "is_amount": true,
+          "subtotal": "120,000.00"
+        },
+        {
+          "heading": "B) Spouse",
+          "is_amount": true,
+          "subtotal": "10,800.00"
+        }
+      ],
+      "rows": [
+        {
+          "row_number": 42,
+          "values": [
+            "OTHER NON-OP A 1",
+            "15000.00",
+            "1200.00"
+          ]
+        },
+        {
+          "row_number": 43,
+          "values": [
+            "OTHER NON-OP A 2",
+            "25000.00",
+            "2200.00"
+          ]
+        },
+        {
+          "row_number": 44,
+          "values": [
+            "OTHER NON-OP A 3",
+            "35000.00",
+            "3200.00"
+          ]
+        },
+        {
+          "row_number": 45,
+          "values": [
+            "OTHER NON-OP A 4",
+            "45000.00",
+            "4200.00"
+          ]
+        }
+      ],
+      "has_total": true
+    },
+    {
+      "heading": "Part IV-B Other Non-Operating Income",
+      "printed_capacity": 2,
+      "columns": [
+        {
+          "heading": "Other Non-Operating Income (specify)",
+          "is_amount": false,
+          "subtotal": null
+        },
+        {
+          "heading": "A) Taxpayer/Filer",
+          "is_amount": true,
+          "subtotal": "132,000.00"
+        },
+        {
+          "heading": "B) Spouse",
+          "is_amount": true,
+          "subtotal": "11,600.00"
+        }
+      ],
+      "rows": [
+        {
+          "row_number": 51,
+          "values": [
+            "OTHER NON-OP B 1",
+            "18000.00",
+            "1400.00"
+          ]
+        },
+        {
+          "row_number": 52,
+          "values": [
+            "OTHER NON-OP B 2",
+            "28000.00",
+            "2400.00"
+          ]
+        },
+        {
+          "row_number": 53,
+          "values": [
+            "OTHER NON-OP B 3",
+            "38000.00",
+            "3400.00"
+          ]
+        },
+        {
+          "row_number": 54,
+          "values": [
+            "OTHER NON-OP B 4",
+            "48000.00",
+            "4400.00"
+          ]
+        }
+      ],
+      "has_total": true
+    }
+  ]
+}

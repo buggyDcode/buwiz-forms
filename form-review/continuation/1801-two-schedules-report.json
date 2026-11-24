@@ -1,0 +1,100 @@
+{
+  "schedules": [
+    {
+      "heading": "Schedule 1",
+      "printed_capacity": 2,
+      "columns": [
+        {
+          "heading": "OCT/TCT/CCT No.",
+          "is_amount": false,
+          "subtotal": null
+        },
+        {
+          "heading": "Tax Declaration No.",
+          "is_amount": false,
+          "subtotal": null
+        },
+        {
+          "heading": "Location",
+          "is_amount": false,
+          "subtotal": null
+        },
+        {
+          "heading": "Lot/Improvement",
+          "is_amount": false,
+          "subtotal": null
+        },
+        {
+          "heading": "Area",
+          "is_amount": false,
+          "subtotal": null
+        },
+        {
+          "heading": "FMV per TD",
+          "is_amount": true,
+          "subtotal": "12,000,000.00"
+        },
+        {
+          "heading": "FMV per BIR (Zonal Value)",
+          "is_amount": true,
+          "subtotal": null
+        },
+        {
+          "heading": "EXCLUSIVE",
+          "is_amount": true,
+          "subtotal": null
+        },
+        {
+          "heading": "CONJUGAL/COMMUNAL",
+          "is_amount": true,
+          "subtotal": null
+        }
+      ],
+      "rows": [
+        {
+          "row_number": 3,
+          "values": [
+            "TCT-0003",
+            "TD-0003",
+            "MAKATI CITY LOT 3",
+            "LOT 3 BLK 2",
+            "360.00",
+            "3000000.00",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "row_number": 4,
+          "values": [
+            "TCT-0004",
+            "TD-0004",
+            "MAKATI CITY LOT 4",
+            "LOT 4 BLK 2",
+            "480.00",
+            "4000000.00",
+            "",
+            "",
+            ""
+          ]
+        },
+        {
+          "row_number": 5,
+          "values": [
+            "TCT-0005",
+            "TD-0005",
+            "MAKATI CITY LOT 5",
+            "LOT 5 BLK 2",
+            "600.00",
+            "5000000.00",
+            "",
+            "",
+            ""
+          ]
+        }
+      ],
+      "has_total": true
+    }
+  ]
+}
