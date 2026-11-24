@@ -575,6 +575,8 @@ impl Form1600WpDraft {
                 },
             );
         }
+        let sched_total_amount: f64 = self.schedule.iter().map(|row| row.amount).sum();
+        put("sched_total_amount", official_amount(sched_total_amount));
         super::print_map::blank_unset_date_parts(
             &mut fields,
             &[
@@ -1227,5 +1229,11 @@ mod tests {
         assert_eq!(print["derived:sched_seq1"], "1");
         assert_eq!(print["derived:sched_seq2"], "2");
         assert_eq!(print["derived:sched_seq3"], "");
+        assert_eq!(print["derived:sched_total_amount"], "5,000.00");
+        draft.schedule.clear();
+        draft.recompute();
+        let zero_print = draft.to_print_field_map();
+        assert_eq!(zero_print["derived:sched_total_amount"], "0.00");
+        assert_eq!(zero_print["frm1600WP:dtSched:TotaltaxWithheld"], "0.00");
     }
 }

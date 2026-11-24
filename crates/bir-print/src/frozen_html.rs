@@ -6210,8 +6210,16 @@ mod tests {
         assert_eq!(comb_text(&html, "p1c32"), "");
         assert_eq!(comb_text(&html, "p1c51"), "250.00");
         assert_eq!(comb_text(&html, "p1c96"), "WINNER FIXTURE");
+        assert_eq!(comb_text(&html, "p1c241"), "2,500.00");
+        assert_eq!(comb_text(&html, "p1c243"), "250.00");
         assert_eq!(comb_text(&html, "p1c74"), "00000");
         assert!(!html.contains("name=\"frm1600WP:"));
+        // Zero Schedule 1.1 totals still print as 0.00, matching Part II items 14-16.
+        draft.schedule.clear();
+        draft.recompute();
+        let zero_html = filled_document("1600wp-2010", &draft.to_print_field_map()).unwrap();
+        assert_eq!(comb_text(&zero_html, "p1c241"), "0.00");
+        assert_eq!(comb_text(&zero_html, "p1c243"), "0.00");
     }
 
     #[test]
