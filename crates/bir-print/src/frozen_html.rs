@@ -170,6 +170,8 @@ enum CellFill {
 
 /// The type a comb's boxes print in: the largest an overflow line uses.
 const PLAIN_MAX_PT: f64 = 9.0;
+/// Readable floor for an over-wide numeric amount fitted across a comb.
+const AMOUNT_OVERFLOW_MIN_PT: f64 = 5.5;
 /// What the per-character estimate assumed before every sheet's overflow
 /// type was measured (P4-7): about 0.58 em a character. Kept for the tests
 /// that show how it fell short.
@@ -1496,8 +1498,15 @@ fn fill_text_input(
         // the comb, shrunk to fit, instead of losing the characters past
         // the last box.
         let whole_line = via_cell || is_email_key(name) || name.starts_with("derived:line:");
+        let amount_comb = is_amount_comb_key(name) && is_amount_comb_value(print);
         let overflow = (whole_line && chars.len() > ordered.len())
-            .then(|| comb_overflow_line(html, input_name, print, sheet))
+            .then(|| {
+                if amount_comb {
+                    comb_overflow_amount_line(html, input_name, print.trim(), sheet)
+                } else {
+                    comb_overflow_line(html, input_name, print, sheet)
+                }
+            })
             .flatten();
         let spread = overflow.is_none();
         if let Some((at, line)) = overflow {
@@ -2843,10 +2852,20 @@ fn right_aligned_slot_values(slots: usize, digits: &str) -> Option<Vec<String>> 
     Some(values)
 }
 
+#[allow(dead_code)]
 fn fill_money_joins(
     html: &str,
     fields: &BTreeMap<String, String>,
     money_joins: &[MoneyJoin],
+) -> String {
+    fill_money_joins_with_sheet(html, fields, money_joins, &SheetType::plain())
+}
+
+fn fill_money_joins_with_sheet(
+    html: &str,
+    fields: &BTreeMap<String, String>,
+    money_joins: &[MoneyJoin],
+    sheet: &SheetType,
 ) -> String {
     if money_joins.is_empty() {
         return html.to_string();
@@ -2906,28 +2925,65 @@ fn fill_money_joins(
             if cent_ordered.len() != 2 {
                 continue;
             }
-            let Some(peso_values) = right_aligned_slot_values(peso_ordered.len(), &peso) else {
-                continue;
-            };
-            for (offset, index) in peso_ordered.into_iter().enumerate() {
-                let writer = (offset == 0).then_some(value.as_str());
-                replacements.push((
-                    tags[index].start,
-                    tags[index].end,
-                    set_value(tags[index].tag, &peso_values[offset], writer),
-                ));
-            }
-            for (offset, index) in cent_ordered.into_iter().enumerate() {
-                let ch = cents
-                    .chars()
-                    .nth(offset)
-                    .map(|ch| ch.to_string())
-                    .unwrap_or_default();
-                replacements.push((
-                    tags[index].start,
-                    tags[index].end,
-                    set_value(tags[index].tag, &ch, None),
-                ));
+            if let Some(peso_values) = right_aligned_slot_values(peso_ordered.len(), &peso) {
+                for (offset, index) in peso_ordered.into_iter().enumerate() {
+                    let writer = (offset == 0).then_some(value.as_str());
+                    replacements.push((
+                        tags[index].start,
+                        tags[index].end,
+                        set_value(tags[index].tag, &peso_values[offset], writer),
+                    ));
+                }
+                for (offset, index) in cent_ordered.into_iter().enumerate() {
+                    let ch = cents
+                        .chars()
+                        .nth(offset)
+                        .map(|ch| ch.to_string())
+                        .unwrap_or_default();
+                    replacements.push((
+                        tags[index].start,
+                        tags[index].end,
+                        set_value(tags[index].tag, &ch, None),
+                    ));
+                }
+            } else {
+                // Over-wide amount: print as one right-aligned fitted line across the
+                // peso comb (or combined decimal comb) with white knockout band and
+                // overflow warning marker; never leave the comb blank.
+                let overflow_text = if cells.cent_html_id.is_some() {
+                    peso.clone()
+                } else {
+                    format!("{peso}.{cents}")
+                };
+                if let Some((at, line)) =
+                    comb_overflow_amount_line(html, &cells.peso_html_id, &overflow_text, sheet)
+                {
+                    replacements.push((at, at, line));
+                    for (offset, index) in peso_ordered.into_iter().enumerate() {
+                        let writer = (offset == 0).then_some(value.as_str());
+                        replacements.push((
+                            tags[index].start,
+                            tags[index].end,
+                            set_value(tags[index].tag, "", writer),
+                        ));
+                    }
+                    for (offset, index) in cent_ordered.into_iter().enumerate() {
+                        let ch = if cells.cent_html_id.is_some() {
+                            cents
+                                .chars()
+                                .nth(offset)
+                                .map(|ch| ch.to_string())
+                                .unwrap_or_default()
+                        } else {
+                            String::new()
+                        };
+                        replacements.push((
+                            tags[index].start,
+                            tags[index].end,
+                            set_value(tags[index].tag, &ch, None),
+                        ));
+                    }
+                }
             }
         }
     }
@@ -2970,10 +3026,20 @@ fn whole_pesos_with_style(value: &str, style: NegativeStyle) -> Option<String> {
     Some(signed_digits(negative, &digits, "", style, true))
 }
 
+#[allow(dead_code)]
 fn fill_peso_joins(
     html: &str,
     fields: &BTreeMap<String, String>,
     peso_joins: &[PesoJoin],
+) -> String {
+    fill_peso_joins_with_sheet(html, fields, peso_joins, &SheetType::plain())
+}
+
+fn fill_peso_joins_with_sheet(
+    html: &str,
+    fields: &BTreeMap<String, String>,
+    peso_joins: &[PesoJoin],
+    sheet: &SheetType,
 ) -> String {
     if peso_joins.is_empty() {
         return html.to_string();
@@ -2993,16 +3059,27 @@ fn fill_peso_joins(
                 continue;
             };
             let ordered = ordered_comb_indices(&tags, indices);
-            let Some(values) = right_aligned_slot_values(ordered.len(), &pesos) else {
-                continue;
-            };
-            for (offset, index) in ordered.into_iter().enumerate() {
-                let writer = (offset == 0).then_some(value.as_str());
-                replacements.push((
-                    tags[index].start,
-                    tags[index].end,
-                    set_value(tags[index].tag, &values[offset], writer),
-                ));
+            if let Some(values) = right_aligned_slot_values(ordered.len(), &pesos) {
+                for (offset, index) in ordered.into_iter().enumerate() {
+                    let writer = (offset == 0).then_some(value.as_str());
+                    replacements.push((
+                        tags[index].start,
+                        tags[index].end,
+                        set_value(tags[index].tag, &values[offset], writer),
+                    ));
+                }
+            } else if let Some((at, line)) =
+                comb_overflow_amount_line(html, html_id, &pesos, sheet)
+            {
+                replacements.push((at, at, line));
+                for (offset, index) in ordered.into_iter().enumerate() {
+                    let writer = (offset == 0).then_some(value.as_str());
+                    replacements.push((
+                        tags[index].start,
+                        tags[index].end,
+                        set_value(tags[index].tag, "", writer),
+                    ));
+                }
             }
         }
     }
@@ -3298,8 +3375,8 @@ fn fill_bundle(
     });
     let plan = line_group_plan(&filled, fields, &cells, &sheet);
     let filled = fill_by_name_set(&filled, fields, &cells.joins, &plan, &sheet);
-    let filled = fill_money_joins(&filled, fields, &cells.money_joins);
-    let filled = fill_peso_joins(&filled, fields, &cells.peso_joins);
+    let filled = fill_money_joins_with_sheet(&filled, fields, &cells.money_joins, &sheet);
+    let filled = fill_peso_joins_with_sheet(&filled, fields, &cells.peso_joins, &sheet);
     let filled = fill_date_joins(&filled, fields, &cells.date_joins);
     Ok(split_single_character_cells(
         slug,
@@ -3762,6 +3839,117 @@ fn base64_encode(bytes: &[u8]) -> String {
         } else {
             out.push('=');
         }
+    }
+    out
+}
+
+/// True when a writer key represents a numeric amount printed into a comb
+/// (derived whole-peso/money combs on 1700, 1701A, 1701MS, or money-typed keys).
+fn is_amount_comb_key(key: &str) -> bool {
+    is_amount_typed_key(key)
+        || key.starts_with("derived:amount_")
+        || key.starts_with("derived:tp_p")
+        || key.starts_with("derived:sp_p")
+        || key.starts_with("derived:p2_")
+        || key.starts_with("derived:p3_")
+}
+
+/// True when `text` is a formatted numeric amount (optional leading `-` or
+/// surrounding `(...)`, digits, commas, and at most one decimal point).
+fn is_amount_comb_value(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let body = trimmed
+        .strip_prefix('(')
+        .and_then(|s| s.strip_suffix(')'))
+        .or_else(|| trimmed.strip_prefix('-'))
+        .unwrap_or(trimmed);
+    let mut digits = 0usize;
+    let mut dots = 0usize;
+    for ch in body.chars() {
+        match ch {
+            '0'..='9' => digits += 1,
+            ',' => {}
+            '.' => dots += 1,
+            _ => return false,
+        }
+    }
+    digits > 0 && dots <= 1
+}
+
+/// One read-only input laid over a whole comb cell (`<div id="{cell}">`),
+/// holding an over-wide amount right-aligned in a fitted font (floored at
+/// [`AMOUNT_OVERFLOW_MIN_PT`]) with `data-overflow-of` (white knockout band)
+/// and `data-overflow-warning="amount-comb"` for continuation/warning reporting.
+fn comb_overflow_amount_line(
+    html: &str,
+    cell: &str,
+    text: &str,
+    sheet: &SheetType,
+) -> Option<(usize, String)> {
+    let open = html.find(&format!("<div id=\"{cell}\""))?;
+    let tag = &html[open..open + html[open..].find('>')?];
+    let width_at = tag.find(";width:")? + ";width:".len();
+    let width: f64 = tag[width_at..].split("pt").next()?.parse().ok()?;
+    let size = fit_line(sheet, width, text).max(AMOUNT_OVERFLOW_MIN_PT);
+    let close = open + html[open..].find('>')?;
+    Some((
+        close + 1,
+        format!(
+            "<input type=\"text\" class=\"fi\" readonly value=\"{}\" style=\"font-size:{size:.2}pt;text-align:right;justify-content:flex-end;padding-right:1pt;z-index:1\" data-overflow-warning=\"amount-comb\" data-overflow-of=\"{cell}\">",
+            html_escape(text)
+        ),
+    ))
+}
+
+/// One cell whose printed value overflowed its official box (e.g. an amount
+/// wider than its comb slots), exposed for continuation-sheet / UI warnings.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OverflowWarning {
+    pub cell: String,
+    pub kind: String,
+    pub value: String,
+    pub font_size_pt: Option<f64>,
+}
+
+/// Lists every cell in `document` carrying a `data-overflow-warning` marker
+/// (works identically on official cells and cloned continuation cells).
+pub fn overflow_warnings(document: &str) -> Vec<OverflowWarning> {
+    let needle = " data-overflow-warning=\"";
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(at) = document[from..].find(needle) {
+        let at = from + at;
+        let start = document[..at].rfind('<').unwrap_or(0);
+        let end = at + document[at..].find('>').unwrap_or(0);
+        let tag = &document[start..=end];
+        from = end + 1;
+        let Some(kind) = attr(tag, "data-overflow-warning") else {
+            continue;
+        };
+        let cell = attr(tag, "data-overflow-of")
+            .or_else(|| attr(tag, "name"))
+            .or_else(|| attr(tag, "id"))
+            .unwrap_or("")
+            .to_string();
+        let value = attr(tag, "value")
+            .unwrap_or("")
+            .replace("&quot;", "\"")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&amp;", "&");
+        let font_size_pt = tag
+            .find("font-size:")
+            .and_then(|pos| tag[pos + "font-size:".len()..].split("pt").next())
+            .and_then(|s| s.parse::<f64>().ok());
+        out.push(OverflowWarning {
+            cell,
+            kind: kind.to_string(),
+            value,
+            font_size_pt,
+        });
     }
     out
 }
@@ -4340,6 +4528,70 @@ mod tests {
         }];
         let doc = super::fill_peso_joins(&html, &fields, &unsigned);
         assert_eq!(comb_values(&doc, "p"), ["", "", "", "", "", "1", "2", "3"]);
+    }
+
+    #[test]
+    fn overwide_comb_amounts_print_right_aligned_with_warning_on_official_and_cloned_cells() {
+        use std::collections::BTreeMap;
+        let comb_div = |id: &str, width: f64, slots: usize| {
+            format!(
+                "<div id=\"{id}\" style=\"left:10pt;top:10pt;width:{width}pt;height:14pt\">{}</div>",
+                comb(id, slots)
+            )
+        };
+        // 1. MoneyJoin with separate peso + centavo combs (e.g. 2000OT / 1801)
+        let html = format!("{}{}", comb_div("p1c56", 90.0, 8), comb_div("p1c57", 24.0, 2));
+        let mut fields = BTreeMap::new();
+        fields.insert("k".to_string(), "-1,134,107,265.03".to_string());
+        let joins = [super::MoneyJoin {
+            writer_key: "k".into(),
+            cells: vec![super::MoneyCells {
+                peso_html_id: "p1c56".into(),
+                cent_html_id: Some("p1c57".into()),
+                point_slot: false,
+            }],
+            negative_style: super::NegativeStyle::Minus,
+        }];
+        let doc = super::fill_money_joins(&html, &fields, &joins);
+        let (printed, size) = super::printed_cell(&doc, "p1c56");
+        assert_eq!(printed, "-1134107265");
+        assert!(size.unwrap() >= super::AMOUNT_OVERFLOW_MIN_PT);
+        assert!(doc.contains("text-align:right;justify-content:flex-end;padding-right:1pt"));
+        assert_eq!(comb_values(&doc, "p1c57"), ["0", "3"]);
+        let warnings = super::overflow_warnings(&doc);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].cell, "p1c56");
+        assert_eq!(warnings[0].kind, "amount-comb");
+        assert_eq!(warnings[0].value, "-1134107265");
+
+        // 2. PesoJoin (e.g. 1701)
+        let html = comb_div("cont2-p1c80", 72.0, 8);
+        fields.insert("k".to_string(), "-199,914,152.00".to_string());
+        let pjoins = [super::PesoJoin {
+            writer_key: "k".into(),
+            html_ids: vec!["cont2-p1c80".into()],
+            negative_style: super::NegativeStyle::Parentheses,
+        }];
+        let doc = super::fill_peso_joins(&html, &fields, &pjoins);
+        let (printed, size) = super::printed_cell(&doc, "cont2-p1c80");
+        assert_eq!(printed, "(199914152)");
+        assert!(size.unwrap() >= super::AMOUNT_OVERFLOW_MIN_PT);
+        let warnings = super::overflow_warnings(&doc);
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].cell, "cont2-p1c80");
+        assert_eq!(warnings[0].kind, "amount-comb");
+
+        // 3. Derived amount comb via fill_by_name_with_cells (1700 / 1701A / 1701MS)
+        let html = comb_div("p1c90", 72.0, 8);
+        let mut dfields = BTreeMap::new();
+        dfields.insert("derived:amount_22A".to_string(), "(199914152)".to_string());
+        let mut cells = BTreeMap::new();
+        cells.insert("derived:amount_22A".to_string(), vec!["p1c90".to_string()]);
+        let doc = super::fill_by_name_with_cells(&html, &dfields, &cells, &BTreeMap::new());
+        let (printed, _) = super::printed_cell(&doc, "p1c90");
+        assert_eq!(printed, "(199914152)");
+        assert!(doc.contains("text-align:right;justify-content:flex-end;padding-right:1pt"));
+        assert_eq!(super::overflow_warnings(&doc).len(), 1);
     }
 
     #[test]

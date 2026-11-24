@@ -68,7 +68,13 @@ fn inputs_to_spans(html: &str) -> String {
         out.push_str("<span class=\"");
         out.push_str(class);
         out.push_str(" fs\"");
-        for a in ["id", "style", "data-slot-index", "data-overflow-of"] {
+        for a in [
+            "id",
+            "style",
+            "data-slot-index",
+            "data-overflow-warning",
+            "data-overflow-of",
+        ] {
             if let Some(v) = attr(tag, a) {
                 out.push_str(&format!(" {a}=\"{v}\""));
             }
