@@ -1100,6 +1100,70 @@ fn is_amount_typed_key(key: &str) -> bool {
     false
 }
 
+/// Whether `value` is a formatted numeric quantity (integer or decimal with
+/// optional thousands commas, e.g. `160000`, `1,000`, `12,345.678`, `250.50`).
+fn is_formatted_numeric_quantity(value: &str) -> bool {
+    let s = value.trim();
+    let s = s.strip_prefix('-').unwrap_or(s);
+    if s.is_empty() {
+        return false;
+    }
+    let (whole, frac) = match s.split_once('.') {
+        Some((w, f)) => (w, Some(f)),
+        None => (s, None),
+    };
+    if whole.is_empty()
+        || !whole.bytes().any(|b| b.is_ascii_digit())
+        || !whole.bytes().all(|b| b.is_ascii_digit() || b == b',')
+    {
+        return false;
+    }
+    if let Some(f) = frac {
+        if f.is_empty() || !f.bytes().all(|b| b.is_ascii_digit()) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether a writer key represents a numeric quantity column (shares, area,
+/// installment count, volume/weight/units) that should right-align in plain
+/// table cells, excluding rates, identifiers, dates, and text captions.
+fn is_quantity_typed_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    let tail = lower.rsplit(':').next().unwrap_or(&lower);
+    for excluded in [
+        "rate", "percent", "pct", "taxdec", "taxpayer", "taxagent", "taxableyear", "tin", "zip",
+        "rdo", "date", "month", "year", "day", "name", "title", "addr", "email", "phone", "tel",
+        "atc", "desc", "particular", "location", "class", "oct", "tct", "cct", "sheet", "page",
+        "seq", "memo", "bank", "check", "ror", "drawee", "code", "kind", "type", "status",
+        "remarks", "cert",
+    ] {
+        if tail.contains(excluded) {
+            return false;
+        }
+    }
+    for qty_token in [
+        "area",
+        "share",
+        "qty",
+        "quantity",
+        "volume",
+        "metric",
+        "liter",
+        "gram",
+        "kilo",
+        "weight",
+        "installment",
+        "txttotaln",
+    ] {
+        if tail.contains(qty_token) {
+            return true;
+        }
+    }
+    false
+}
+
 /// One stacked line of a printed item: its cell, the key that fills it,
 /// its boxes and its width (pt).
 #[derive(Debug, Clone)]
@@ -1480,10 +1544,10 @@ fn fill_text_input(
         let width = via_cell
             .then(|| plain_cell_width(html, input_name))
             .flatten();
-        let right_align_money = via_cell
+        let right_align_numeric = via_cell
             && !split
-            && is_amount_typed_key(name)
-            && is_formatted_money_amount(print);
+            && ((is_amount_typed_key(name) && is_formatted_money_amount(print))
+                || (is_quantity_typed_key(name) && is_formatted_numeric_quantity(print)));
         for &index in indices {
             let writer = via_cell.then_some(print);
             let tag = set_value(tags[index].tag, print, writer);
@@ -1491,7 +1555,7 @@ fn fill_text_input(
                 .filter(|_| !split)
                 .and_then(|width| plain_input_size(sheet, width, tags[index].tag, print));
             let tag = size.map_or_else(|| tag.clone(), |size| with_font_size(&tag, size));
-            let tag = if right_align_money {
+            let tag = if right_align_numeric {
                 with_style_declaration(
                     &tag,
                     "text-align:right;justify-content:flex-end;padding-right:2pt",
@@ -8197,8 +8261,49 @@ mod donor_estate_print_tests {
             .tag
             .to_string();
         assert!(
-            !area_tag.contains("text-align:right"),
-            "Schedule B2 Area (non-money) must stay left-aligned: {area_tag}"
+            area_tag.contains("text-align:right;justify-content:flex-end;padding-right:2pt"),
+            "Schedule B2 Area (numeric quantity) should right-align: {area_tag}"
+        );
+
+        // 2552 Schedule 1 & Part VI Number of Shares and 1706 Schedule 1 Area
+        let mut f2552 = BTreeMap::new();
+        f2552.insert("frm2552:txtPg2Pt5Sch1NumShares1".into(), "150000".into());
+        f2552.insert("frm2552:txtPg2Pt6NumShares1".into(), "25,000".into());
+        f2552.insert("frm2552:txtPg2Pt5Sch1Seller1".into(), "SELLER CORP".into());
+        let html_2552 = filled_document("2552-2018", &f2552).unwrap();
+        let sch1_shares = super::input_tags(&html_2552)
+            .into_iter()
+            .find(|t| t.name == "p2c48")
+            .expect("p2c48 input")
+            .tag
+            .to_string();
+        assert!(
+            sch1_shares.contains("text-align:right;justify-content:flex-end;padding-right:2pt"),
+            "2552 Schedule 1 Number of Shares should right-align: {sch1_shares}"
+        );
+        let seller_tag = super::input_tags(&html_2552)
+            .into_iter()
+            .find(|t| t.name == "p2c23")
+            .expect("p2c23 input")
+            .tag
+            .to_string();
+        assert!(
+            !seller_tag.contains("text-align:right"),
+            "2552 Schedule 1 Seller (text) must stay left-aligned: {seller_tag}"
+        );
+
+        let mut f1706 = BTreeMap::new();
+        f1706.insert("frm1706:txtArea".into(), "1,250.50".into());
+        let html_1706 = filled_document("1706-2018", &f1706).unwrap();
+        let area_1706 = super::input_tags(&html_1706)
+            .into_iter()
+            .find(|t| t.name == "p2c42")
+            .expect("p2c42 input")
+            .tag
+            .to_string();
+        assert!(
+            area_1706.contains("text-align:right;justify-content:flex-end;padding-right:2pt"),
+            "1706 Schedule 1 Area should right-align: {area_1706}"
         );
 
         // 1600WP Part II tax base (money) vs Schedule 1.1 rate (non-money)
