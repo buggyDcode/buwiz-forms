@@ -1,8 +1,9 @@
 // Settings > Account > Buwiz (old AccountCard): the cloud account. Separate from the PIN that unlocks this computer. Filing keeps
 // working when the server is unreachable.
+import { openUrl } from "nsh";
 import { AppButton, Card, deviceCopy, Line, SettingRow } from "../../ui";
 import { cloud, openAccount, signIn, signOut } from "./cloud";
-import { serverHint } from "./logic";
+import { deletionRequestUrl, serverHint } from "./logic";
 
 export function BuwizCard() {
   openAccount();
@@ -38,6 +39,20 @@ export function BuwizCard() {
           />
         </If>
       </SettingRow>
+      <If when={status().practice}>
+        <SettingRow testID="settings-account-practice" title="Practice account" hint="Returns are simulated and never sent to the BIR" />
+      </If>
+      <If when={status().signed_in}>
+        <SettingRow testID="settings-account-delete" title="Delete account" hint="Writes an email to support asking to delete this Buwiz account">
+          <AppButton
+            testID="settings-account-delete-button"
+            label="Request deletion"
+            variant="ghost"
+            size="sm"
+            onPress={() => void openUrl(deletionRequestUrl(status().email))}
+          />
+        </SettingRow>
+      </If>
     </Card>
   );
 }

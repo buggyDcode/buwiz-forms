@@ -13,10 +13,12 @@ for (const { name, size } of SIZES) {
     await app.waitFor(ready);
     expectTexts(app, ["Buwiz", "Server", "Set when this app was built.", "https://buwiz.example.test", "Not signed in", "Sign in"]);
     expect(app.shows("id:settings-account-sign-out")).toBe(false);
+    expect(app.shows("id:settings-account-delete-button")).toBe(false);
     await app.press("id:settings-account-sign-in");
     await app.waitFor("text:juana@example.com", { timeout: 15000 });
     expect(calls(app)).toEqual(["cloud_account_begin_sign_in", "cloud_account_finish_sign_in", "cloud_account_session_opened"]);
     expect(app.shows("id:settings-account-sign-out")).toBe(true);
+    expect(app.shows("id:settings-account-delete-button")).toBe(true);
     expect(app.shows("id:settings-account-sign-in")).toBe(false);
     expect(state(app)).toContain("cloudLocked=false");
   }, 60_000);
@@ -29,6 +31,17 @@ for (const { name, size } of SIZES) {
     await app.press("id:settings-account-sign-out");
     await app.waitFor("text:/cloudLocked=true/");
     expect(calls(app)).toEqual(["cloud_account_refresh", "cloud_account_sign_out", "cloud_account_session_closed"]);
+  }, 60_000);
+
+  test(`${name}: a practice account says its returns are simulated; a real account does not`, async () => {
+    const app = await openSettings(size, { cloud: "practice", solo: true }, "account");
+    await app.waitFor(ready);
+    await app.waitFor("id:settings-account-practice");
+    expectTexts(app, ["Practice account", "Returns are simulated and never sent to the BIR"]);
+    const real = await openSettings(size, { cloud: "in", solo: true }, "account");
+    await real.waitFor(ready);
+    await real.waitFor("text:calls: cloud_account_refresh");
+    expect(real.shows("id:settings-account-practice")).toBe(false);
   }, 60_000);
 
   test(`${name}: an unreachable server leaves the card as it was and says why`, async () => {
