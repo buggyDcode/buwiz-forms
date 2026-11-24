@@ -1023,9 +1023,8 @@ fn shrunk_room(room: f64) -> f64 {
     (room - 1.0).max(room.min(1.0))
 }
 
-/// `tag` with `font-size:{size}pt` last in its inline style.
-fn with_font_size(tag: &str, size: f64) -> String {
-    let declaration = format!("font-size:{size:.2}pt");
+/// `tag` with `declaration` appended to its inline `style="..."` attribute.
+fn with_style_declaration(tag: &str, declaration: &str) -> String {
     if let Some(at) = tag.find(" style=\"") {
         let value_at = at + " style=\"".len();
         if let Some(end) = tag[value_at..].find('"') {
@@ -1041,6 +1040,64 @@ fn with_font_size(tag: &str, size: f64) -> String {
         close
     };
     format!("{} style=\"{declaration}\"{}", &tag[..close], &tag[close..])
+}
+
+/// `tag` with `font-size:{size}pt` last in its inline style.
+fn with_font_size(tag: &str, size: f64) -> String {
+    with_style_declaration(tag, &format!("font-size:{size:.2}pt"))
+}
+
+/// Whether `value` is formatted like an official two-decimal currency amount
+/// (`0.00`, `1,234.50`, `-500.00`), as emitted by `official_amount()` /
+/// `formatCurrency()`. Bare integers, TINs, ZIPs, dates, and `%` rates return false.
+fn is_formatted_money_amount(value: &str) -> bool {
+    let s = value.trim();
+    let s = s.strip_prefix('-').unwrap_or(s);
+    let Some((whole, cents)) = s.split_once('.') else {
+        return false;
+    };
+    if cents.len() != 2 || !cents.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    !whole.is_empty()
+        && whole.bytes().any(|b| b.is_ascii_digit())
+        && whole.bytes().all(|b| b.is_ascii_digit() || b == b',')
+}
+
+/// Whether a writer key represents a currency/money amount field (not a rate,
+/// area, quantity, share count, identifier, date, or text caption).
+fn is_amount_typed_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    let tail = lower.rsplit(':').next().unwrap_or(&lower);
+    // Exclude non-money numeric/code/text keys even if they contain substrings
+    // like "tax" (TaxRate, TaxDec, Taxpayer, TaxAgent) or "value".
+    for excluded in [
+        "rate", "percent", "pct", "area", "share", "qty", "quantity", "volume", "metric",
+        "liter", "gram", "kilo", "weight", "ratio", "unit", "count", "taxdec", "taxpayer",
+        "taxagent", "taxableyear", "tin", "zip", "rdo", "date", "month", "year", "day",
+        "name", "title", "addr", "email", "phone", "tel", "atc", "desc", "particular",
+        "location", "class", "oct", "tct", "cct", "sheet", "page", "seq", "memo", "bank",
+        "check", "ror", "drawee", "num", "no_", "code", "kind", "type", "status", "remarks",
+    ] {
+        if tail.contains(excluded) {
+            return false;
+        }
+    }
+    for money_token in [
+        "_base", "_withheld", "amount", "amt", "fairmarketvalue", "fmv", "zonal", "ftd",
+        "total", "tax", "income", "payment", "payable", "value", "gross", "net", "deduct",
+        "credit", "surcharge", "interest", "compromise", "penalt", "remit", "price", "cost",
+        "sales", "receipt", "purchase", "loss", "claim", "estate", "realprop", "fam_",
+        "personalprop", "business_", "transfer", "gift", "asset", "liab", "equity",
+        "capital", "profit", "expense", "revenue", "allowance", "exemption", "withholding",
+        "base", "due", "paid", "overpay", "refund", "balance", "dividend", "royalt",
+        "compensation", "benefit", "gain", "proceed", "consideration",
+    ] {
+        if tail.contains(money_token) {
+            return true;
+        }
+    }
+    false
 }
 
 /// One stacked line of a printed item: its cell, the key that fills it,
@@ -1423,6 +1480,10 @@ fn fill_text_input(
         let width = via_cell
             .then(|| plain_cell_width(html, input_name))
             .flatten();
+        let right_align_money = via_cell
+            && !split
+            && is_amount_typed_key(name)
+            && is_formatted_money_amount(print);
         for &index in indices {
             let writer = via_cell.then_some(print);
             let tag = set_value(tags[index].tag, print, writer);
@@ -1430,6 +1491,14 @@ fn fill_text_input(
                 .filter(|_| !split)
                 .and_then(|width| plain_input_size(sheet, width, tags[index].tag, print));
             let tag = size.map_or_else(|| tag.clone(), |size| with_font_size(&tag, size));
+            let tag = if right_align_money {
+                with_style_declaration(
+                    &tag,
+                    "text-align:right;justify-content:flex-end;padding-right:2pt",
+                )
+            } else {
+                tag
+            };
             replacements.push((tags[index].start, tags[index].end, tag));
         }
     }
@@ -8059,5 +8128,72 @@ mod donor_estate_print_tests {
         assert_eq!(draft.to_bir_field_map()["frm1801v2018:txtBranchCodeE"], "1");
         let html = filled_document("1801-2018", &fields).unwrap();
         assert_eq!(comb_text(&html, "p1c32"), "00001");
+    }
+
+    #[test]
+    fn plain_money_inputs_right_align_with_inset_while_non_money_stays_left() {
+        // 1800 Schedule A Fair Market Value (money) vs Schedule B2 Area (non-money)
+        let mut fields = donor(6, 15, 2025);
+        fields.insert("frm1800v2018:schedA:txtFairMarketValue0".into(), "150,000.00".into());
+        fields.insert("frm1800v2018:schedB2:txtArea0".into(), "250.00".into());
+        fields.insert("frm1800v2018:schedB2:txtFTD0".into(), "1,200,000.00".into());
+        let html = filled_document("1800-2018", &fields).unwrap();
+        let fmv_tag = super::input_tags(&html)
+            .into_iter()
+            .find(|t| t.name == "p2c76")
+            .expect("p2c76 input")
+            .tag
+            .to_string();
+        assert!(
+            fmv_tag.contains("text-align:right;justify-content:flex-end;padding-right:2pt"),
+            "Schedule A FMV should right-align: {fmv_tag}"
+        );
+        let ftd_tag = super::input_tags(&html)
+            .into_iter()
+            .find(|t| t.name == "p2c179")
+            .expect("p2c179 input")
+            .tag
+            .to_string();
+        assert!(
+            ftd_tag.contains("text-align:right;justify-content:flex-end;padding-right:2pt"),
+            "Schedule B2 FMV per TD should right-align: {ftd_tag}"
+        );
+        let area_tag = super::input_tags(&html)
+            .into_iter()
+            .find(|t| t.name == "p2c178")
+            .expect("p2c178 input")
+            .tag
+            .to_string();
+        assert!(
+            !area_tag.contains("text-align:right"),
+            "Schedule B2 Area (non-money) must stay left-aligned: {area_tag}"
+        );
+
+        // 1600WP Part II tax base (money) vs Schedule 1.1 rate (non-money)
+        let mut f1600 = BTreeMap::new();
+        f1600.insert("derived:WB191_base".into(), "500,000.00".into());
+        f1600.insert("frm1600WP:dtSched:txtRatePercent1".into(), "20.00".into());
+        f1600.insert("frm1600WP:txtTaxpayerName".into(), "SAMPLE CORP".into());
+        let html_wp = filled_document("1600wp-2010", &f1600).unwrap();
+        let base_tag = super::input_tags(&html_wp)
+            .into_iter()
+            .find(|t| t.name == "p1c32")
+            .expect("p1c32 input")
+            .tag
+            .to_string();
+        assert!(
+            base_tag.contains("text-align:right;justify-content:flex-end;padding-right:2pt"),
+            "1600WP tax base should right-align: {base_tag}"
+        );
+        let rate_tag = super::input_tags(&html_wp)
+            .into_iter()
+            .find(|t| t.name == "p1c64")
+            .expect("p1c64 input")
+            .tag
+            .to_string();
+        assert!(
+            !rate_tag.contains("text-align:right"),
+            "1600WP tax rate (non-money) must stay left-aligned: {rate_tag}"
+        );
     }
 }
