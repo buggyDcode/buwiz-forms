@@ -241,7 +241,11 @@ pub fn detect_overflow(
         return Ok(OverflowReport::default());
     }
 
-    let specs = discover_schedules(&parsed);
+    let specs = if slug == "2200p-2020" {
+        Vec::new()
+    } else {
+        discover_schedules(&parsed)
+    };
     let mut schedules = Vec::new();
 
     for spec in specs {
@@ -1053,6 +1057,89 @@ struct PopupScheduleDef {
 ///   Schedule 3 (`txtPg2Pt4S3_{k}Col1..2`)
 /// - `1707a-2021` (`form_1707a.rs`): Schedule 1 (`txtS1C*_{k}`) & Schedule 2 (`txtS2C*_{k}`)
 const POPUP_SCHEDULES: &[PopupScheduleDef] = &[
+    // 2200P (Schedule 1 added rows 28+ beyond the 27 printed rows; rows 1-25
+    // have preprinted ATC/Description/Unit/Rate while rows 26-27 have caption
+    // variations that prevent automatic column discovery from uniting all 14
+    // columns).
+    PopupScheduleDef {
+        slug: "2200p-2020",
+        heading: "Schedule 1 — Summary of Removals and Excise Tax Due",
+        printed_capacity: 27,
+        row_num_base: 0,
+        has_total: true,
+        columns: &[
+            PopupColDef {
+                key_template: "frm2200P:txtSched1ATC{n}",
+                heading: "ATC",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2200P:txtSched1Description{n}",
+                heading: "Description",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2200P:txtSched1UnitOfMeasure{n}",
+                heading: "Unit of Measure",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2200P:txtSched1ApplicableRate{n}",
+                heading: "Applicable Rate",
+                is_amount: true,
+            },
+            PopupColDef {
+                key_template: "frm2200P:txtSched1PlaceOfRemoval{n}",
+                heading: "Place of Removal",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2200P:txtSched1LocalManuProd{n}",
+                heading: "Locally Manufactured/Produced",
+                is_amount: true,
+            },
+            PopupColDef {
+                key_template: "frm2200P:txtSched1Imported{n}",
+                heading: "Imported",
+                is_amount: true,
+            },
+            PopupColDef {
+                key_template: "frm2200P:txtSched1TotTaxRemovals{n}",
+                heading: "Total Taxable Removals",
+                is_amount: true,
+            },
+            PopupColDef {
+                key_template: "frm2200P:txtSched1TaxPaidImported{n}",
+                heading: "Tax-Paid Imported",
+                is_amount: true,
+            },
+            PopupColDef {
+                key_template: "frm2200P:txtSched1UnderBond{n}",
+                heading: "Under Bond",
+                is_amount: true,
+            },
+            PopupColDef {
+                key_template: "frm2200P:txtSched1Exports{n}",
+                heading: "Exports",
+                is_amount: true,
+            },
+            PopupColDef {
+                key_template: "frm2200P:txtSched1Others{n}",
+                heading: "Others",
+                is_amount: true,
+            },
+            PopupColDef {
+                key_template: "frm2200P:txtSched1TotTaxPaid{n}",
+                heading: "Total Tax-Paid/Exempt",
+                is_amount: true,
+            },
+            PopupColDef {
+                key_template: "frm2200P:txtSched1BasicExciseTaxDue{n}",
+                heading: "Basic Excise Tax Due",
+                is_amount: true,
+            },
+        ],
+    },
     // 2552 (Part V Schedules 1, 2, 3 popup rows when > 5 rows)
     PopupScheduleDef {
         slug: "2552-2018",
