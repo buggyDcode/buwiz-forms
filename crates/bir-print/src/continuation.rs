@@ -1084,6 +1084,50 @@ const POPUP_SCHEDULES: &[PopupScheduleDef] = &[
         ],
     },
     PopupScheduleDef {
+        slug: "2200a-2020",
+        heading: "Schedule 1 — Summary of Removals and Excise Tax Due (Others)",
+        printed_capacity: 3,
+        row_num_base: 0,
+        has_total: true,
+        columns: &[
+            PopupColDef {
+                key_template: "frm2200Av2020:txtSched1_xa_others{n}_Atc",
+                heading: "ATC",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2200Av2020:txtSched1_xa_others{n}_Desc",
+                heading: "Description",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2200Av2020:txtSched1_xa_others{n}_Bracket",
+                heading: "NRP Bracket",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm2200Av2020:txtSched1_xa_others{n}_Rate",
+                heading: "Applicable Tax Rate",
+                is_amount: true,
+            },
+            PopupColDef {
+                key_template: "frm2200Av2020:txtSched1_xa_others{n}_Export",
+                heading: "Export / Exempt",
+                is_amount: true,
+            },
+            PopupColDef {
+                key_template: "frm2200Av2020:txtSched1_xa_others{n}_Taxable",
+                heading: "Taxable Removals",
+                is_amount: true,
+            },
+            PopupColDef {
+                key_template: "frm2200Av2020:txtSched1_xa_others{n}_Due",
+                heading: "Excise Tax Due",
+                is_amount: true,
+            },
+        ],
+    },
+    PopupScheduleDef {
         slug: "2200p-2020",
         heading: "Schedule 1 — Summary of Removals and Excise Tax Due",
         printed_capacity: 27,
@@ -2299,6 +2343,7 @@ fn extract_tin(fields: &BTreeMap<String, String>) -> String {
         fields,
         &[
             "txtBranchCode",
+            "branchCode",
             "txtTIN4",
             "txtPg1TIN4",
             "txtPg1Pt1I6TINC4",
@@ -2315,12 +2360,12 @@ fn extract_tin(fields: &BTreeMap<String, String>) -> String {
             return format_tin_digits(d);
         }
     }
-    let t1 =
-        first_matching_field(fields, &["txtTIN1", "txtTin1", "txtPg1TIN1"]).unwrap_or_default();
-    let t2 =
-        first_matching_field(fields, &["txtTIN2", "txtTin2", "txtPg1TIN2"]).unwrap_or_default();
-    let t3 =
-        first_matching_field(fields, &["txtTIN3", "txtTin3", "txtPg1TIN3"]).unwrap_or_default();
+    let t1 = first_matching_field(fields, &["txtTIN1", "txtTin1", "txtPg1TIN1", "tinA"])
+        .unwrap_or_default();
+    let t2 = first_matching_field(fields, &["txtTIN2", "txtTin2", "txtPg1TIN2", "tinB"])
+        .unwrap_or_default();
+    let t3 = first_matching_field(fields, &["txtTIN3", "txtTin3", "txtPg1TIN3", "tinC"])
+        .unwrap_or_default();
     if !t1.is_empty() && !t2.is_empty() && !t3.is_empty() {
         if br.is_empty() {
             return format!("{t1}-{t2}-{t3}");

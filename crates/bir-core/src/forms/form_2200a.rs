@@ -999,6 +999,24 @@ impl Form2200ADraft {
                 "frm2200Av2020:txtDateYear",
             ],
         );
+        // Emit any saved Schedule 1 "Others" rows past the 3-row paper capacity
+        // so the continuation sheet prints every row summed into Schedule 1 Total.
+        for (index, row) in self.others.iter().enumerate().skip(FORM_2200A_OTHER_ROWS) {
+            let base = format!("{PREFIX}:txtSched1_xa_others{}", index + 1);
+            fields.insert(format!("{base}_Atc"), row.atc_digits.trim().to_string());
+            fields.insert(format!("{base}_Desc"), row.description.trim().to_string());
+            fields.insert(format!("{base}_Bracket"), row.bracket.trim().to_string());
+            fields.insert(format!("{base}_Rate"), row.rate.trim().to_string());
+            fields.insert(
+                format!("{base}_Export"),
+                official_amount(row.amounts.export_exempt),
+            );
+            fields.insert(
+                format!("{base}_Taxable"),
+                official_amount(row.amounts.taxable),
+            );
+            fields.insert(format!("{base}_Due"), official_amount(row.amounts.tax_due));
+        }
         fields
     }
 

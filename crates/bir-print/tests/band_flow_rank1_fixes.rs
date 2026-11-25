@@ -260,3 +260,45 @@ fn form_1702q_prints_all_6_schedule4_other_credits_with_total_and_tin() {
         "1702Q Schedule 4 total must equal 21000.00"
     );
 }
+
+#[test]
+fn form_2200a_prints_all_10_others_rows_with_total_and_tin() {
+    use bir_core::forms::form_2200a::{Form2200AAmounts, Form2200ADraft, Form2200AOtherRow};
+    let profile = demo_profile();
+    let mut d = Form2200ADraft::new_from_profile(&profile, 2025, 1);
+    d.others.clear();
+    for i in 1..=10usize {
+        d.others.push(Form2200AOtherRow {
+            atc_digits: format!("{i:03}"),
+            description: format!("ALCOHOL OTHER {i:02}"),
+            bracket: format!("BRACKET {i}"),
+            rate: "50.00".to_string(),
+            amounts: Form2200AAmounts {
+                export_exempt: 0.0,
+                taxable: (i as f64) * 10.0,
+                tax_due: (i as f64) * 500.0,
+            },
+        });
+    }
+    d.recompute();
+    let fields = d.to_print_field_map();
+    let doc = filled_document_with_report("2200a-2020", &fields, None).unwrap();
+    for i in 1..=10usize {
+        let desc = format!("ALCOHOL OTHER {i:02}");
+        assert!(
+            doc.html.contains(&desc),
+            "2200A Schedule 1 Others row {i} ({desc}) must print"
+        );
+    }
+    assert!(
+        doc.html.contains("000-123-453-00000"),
+        "2200A continuation header must carry filer TIN 000-123-453-00000"
+    );
+    assert_eq!(
+        fields
+            .get("frm2200Av2020:txtSched1_TotalDue")
+            .map(|s| s.replace(',', "")),
+        Some("27500.00".to_string()),
+        "2200A Schedule 1 total must equal 27500.00"
+    );
+}
