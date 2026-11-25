@@ -1,3 +1,5 @@
+use bir_core::forms::form_1604c::Form1604cDraft;
+use bir_core::forms::form_1604e::Form1604eDraft;
 use bir_core::forms::form_1701::{
     Form1701CivilStatus, Form1701Draft, Form1701EmployerRow, Form1701Party,
 };
@@ -169,4 +171,32 @@ fn form_1701_prints_schedule1_employer_names_and_tins() {
     );
     assert_eq!(printed_cell(&doc, "p2c61").0, "TED");
     assert_eq!(printed_cell(&doc, "p2c63").0, "00099911100002");
+}
+
+#[test]
+fn form_1604c_prints_two_digit_year_after_preprinted_20() {
+    let profile = demo_profile();
+    let d = Form1604cDraft::new_from_profile(&profile, 2025);
+    assert_eq!(
+        d.to_bir_field_map().get("frm1604c:txtYear").map(String::as_str),
+        Some("2025")
+    );
+    let map = d.to_print_field_map();
+    assert_eq!(map.get("frm1604c:txtYear").map(String::as_str), Some("25"));
+    let doc = filled_document("1604c-2018", &map).expect("1604c-2018 render");
+    assert_eq!(printed_cell(&doc, "p1c4").0, "25");
+}
+
+#[test]
+fn form_1604e_prints_two_digit_year_after_preprinted_20() {
+    let profile = demo_profile();
+    let d = Form1604eDraft::new_from_profile(&profile, 2025);
+    assert_eq!(
+        d.to_bir_field_map().get("frm1604e:txtYear").map(String::as_str),
+        Some("2025")
+    );
+    let map = d.to_print_field_map();
+    assert_eq!(map.get("frm1604e:txtYear").map(String::as_str), Some("25"));
+    let doc = filled_document("1604e-2018", &map).expect("1604e-2018 render");
+    assert_eq!(printed_cell(&doc, "p1c4").0, "25");
 }
