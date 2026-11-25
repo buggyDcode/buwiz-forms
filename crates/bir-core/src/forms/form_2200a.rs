@@ -726,6 +726,76 @@ fn cents(value: f64) -> f64 {
     parse_official_amount(&official_amount(value)).unwrap_or(0.0)
 }
 
+/// Shape one Part IV payment row into its shared sheet comb (`data-slot-index`
+/// skips the grey decimal-point slot, so the comb has 32 or 27 `<input>`s):
+/// - with `bank`: 32 inputs = 5 bank + 6 number + 8 date (`MMDDYYYY`) + 11 pesos (right-aligned) + 2 cents
+/// - without `bank` (Item 27 Tax Debit Memo): 27 inputs = 6 number + 8 date + 11 pesos + 2 cents.
+fn part4_payment_comb_line(bank: Option<&str>, number: &str, date: &str, amount: &str) -> String {
+    let bank_text = bank.map(str::trim).unwrap_or("");
+    let num_text = number.trim();
+    let date_digits: String = date
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .take(8)
+        .collect();
+    let amt_clean: String = amount
+        .trim()
+        .chars()
+        .filter(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    if bank_text.is_empty() && num_text.is_empty() && date_digits.is_empty() && amt_clean.is_empty()
+    {
+        return String::new();
+    }
+
+    let (slots, num_off, date_off, peso_off) = if bank.is_some() {
+        (32usize, 5usize, 11usize, 19usize)
+    } else {
+        (27usize, 0usize, 6usize, 14usize)
+    };
+    let mut line = vec![' '; slots];
+    let put_left = |buf: &mut [char], start: usize, width: usize, text: &str| {
+        for (i, ch) in text.chars().take(width).enumerate() {
+            buf[start + i] = ch;
+        }
+    };
+    if bank.is_some() {
+        put_left(&mut line, 0, 5, bank_text);
+    }
+    put_left(&mut line, num_off, 6, num_text);
+    put_left(&mut line, date_off, 8, &date_digits);
+
+    if !amt_clean.is_empty() {
+        let (whole_raw, frac_raw) = amt_clean.split_once('.').unwrap_or((&amt_clean, ""));
+        let whole_digits: String = whole_raw.chars().filter(|c| c.is_ascii_digit()).collect();
+        let whole_trimmed = whole_digits.trim_start_matches('0');
+        let whole = if whole_trimmed.is_empty() {
+            "0"
+        } else {
+            whole_trimmed
+        };
+        let whole_chars: Vec<char> = whole.chars().collect();
+        let take = whole_chars.len().min(11);
+        let src_start = whole_chars.len() - take;
+        let dst_start = peso_off + (11 - take);
+        for (i, ch) in whole_chars[src_start..].iter().enumerate() {
+            line[dst_start + i] = *ch;
+        }
+        let mut frac_chars: Vec<char> = frac_raw
+            .chars()
+            .filter(|c| c.is_ascii_digit())
+            .take(2)
+            .collect();
+        while frac_chars.len() < 2 {
+            frac_chars.push('0');
+        }
+        line[peso_off + 11] = frac_chars[0];
+        line[peso_off + 12] = frac_chars[1];
+    }
+
+    line.into_iter().collect()
+}
+
 /// JavaScript `x.toFixed(2)` as `amtFormat` uses it: the exact binary value
 /// rounded half up at the cent (not the decimal-text rounding of
 /// `round()`), e.g. `(0.2 * 1.005).toFixed(2)` is `0.20`.
@@ -991,6 +1061,42 @@ impl Form2200ADraft {
         let (line1, line2) = super::print_map::split_print_line(&address, 40);
         put("address_line1", line1);
         put("line:address_line2", line2);
+        put(
+            "part4_cash",
+            part4_payment_comb_line(
+                Some(&self.payment.cash_bank),
+                &self.payment.cash_number,
+                &self.payment.cash_date,
+                &self.payment.cash_amount,
+            ),
+        );
+        put(
+            "part4_check",
+            part4_payment_comb_line(
+                Some(&self.payment.check_bank),
+                &self.payment.check_number,
+                &self.payment.check_date,
+                &self.payment.check_amount,
+            ),
+        );
+        put(
+            "part4_tdm",
+            part4_payment_comb_line(
+                None,
+                &self.payment.tax_number,
+                &self.payment.tax_date,
+                &self.payment.tax_amount,
+            ),
+        );
+        put(
+            "part4_others",
+            part4_payment_comb_line(
+                Some(&self.payment.others_bank),
+                &self.payment.others_number,
+                &self.payment.others_date,
+                &self.payment.others_amount,
+            ),
+        );
         fields
     }
 

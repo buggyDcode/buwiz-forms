@@ -1358,16 +1358,18 @@ fn fill_text_input(
         // digits into the slots before the point and put the two centavo
         // digits after it. Spreading the text left-to-right put `0.00` as
         // `0 . 0 0` from the first box (#print-audit decimal mapping).
-        if let Some(writes) = money_comb_values(tags, &ordered, print) {
-            for (offset, (index, ch)) in writes.into_iter().enumerate() {
-                let writer = (via_cell && offset == 0).then_some(print);
-                replacements.push((
-                    tags[index].start,
-                    tags[index].end,
-                    set_value(tags[index].tag, &ch, writer),
-                ));
+        if !name.starts_with("derived:") {
+            if let Some(writes) = money_comb_values(tags, &ordered, print) {
+                for (offset, (index, ch)) in writes.into_iter().enumerate() {
+                    let writer = (via_cell && offset == 0).then_some(print);
+                    replacements.push((
+                        tags[index].start,
+                        tags[index].end,
+                        set_value(tags[index].tag, &ch, writer),
+                    ));
+                }
+                return;
             }
-            return;
         }
         let chars: Vec<char> = print.chars().collect();
         // Text longer than its comb (a long name, an email, a

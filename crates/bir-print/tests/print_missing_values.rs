@@ -10,6 +10,7 @@ use bir_core::forms::form_1800::{
 use bir_core::forms::form_1801::{
     Form1801Draft, Form1801Particular, Form1801RealProperty, Form1801Split,
 };
+use bir_core::forms::form_2200a::Form2200ADraft;
 use bir_core::forms::queueable::QueueableForm;
 use bir_core::TaxpayerProfile;
 use bir_print::frozen_html::{filled_document, printed_cell};
@@ -217,4 +218,48 @@ fn form_1707a_prints_item_12a_tax_relief_specify() {
     let doc = filled_document("1707a-2021", &map).expect("1707a-2021 render");
     assert_eq!(printed_cell(&doc, "p1c42").0, "X");
     assert_eq!(printed_cell(&doc, "p1c207").0, "PH-US TAX TREATY");
+}
+
+#[test]
+fn form_2200a_prints_part_iv_payment_details() {
+    let profile = demo_profile();
+    let mut d = Form2200ADraft::new_from_profile(&profile, 2025, 3);
+    d.day = 15;
+    d.payment.cash_bank = "BDO".into();
+    d.payment.cash_number = "100201".into();
+    d.payment.cash_date = "03/15/2025".into();
+    d.payment.cash_amount = "123,456,789.12".into();
+    d.payment.check_bank = "BPI".into();
+    d.payment.check_number = "200302".into();
+    d.payment.check_date = "03/16/2025".into();
+    d.payment.check_amount = "234,567,890.34".into();
+    d.payment.tax_number = "300403".into();
+    d.payment.tax_date = "03/17/2025".into();
+    d.payment.tax_amount = "345,678,901.56".into();
+    d.payment.others_details = "EPAY".into();
+    d.payment.others_bank = "MBTC".into();
+    d.payment.others_number = "400504".into();
+    d.payment.others_date = "03/18/2025".into();
+    d.payment.others_amount = "456,789,012.78".into();
+    d.recompute();
+
+    let map = d.to_print_field_map();
+    let doc = filled_document("2200a-2020", &map).expect("2200a-2020 render");
+    assert_eq!(
+        printed_cell(&doc, "p1c108").0,
+        "BDO  10020103152025  12345678912"
+    );
+    assert_eq!(
+        printed_cell(&doc, "p1c110").0,
+        "BPI  20030203162025  23456789034"
+    );
+    assert_eq!(
+        printed_cell(&doc, "p1c111").0,
+        "30040303172025  34567890156"
+    );
+    assert_eq!(printed_cell(&doc, "p1c113").0, "EPAY");
+    assert_eq!(
+        printed_cell(&doc, "p1c114").0,
+        "MBTC 40050403182025  45678901278"
+    );
 }
