@@ -88,6 +88,30 @@ pub enum BandKind {
     TrailingSpace,
 }
 
+/// Band indices of the filer-identity strip: the static blocks between the
+/// page header and the first growable table (TIN with branch code, taxpayer
+/// name, return period, ATC lines). Spawned continuation pages repeat them
+/// under the header, the way the paper's own additional sheets repeat the
+/// same identity block.
+fn identity_strip_band_indices(layout: &PageLayout, header_idx: Option<usize>) -> Vec<usize> {
+    let Some(hi) = header_idx else {
+        return Vec::new();
+    };
+    let end = layout
+        .bands
+        .iter()
+        .position(|b| b.kind == BandKind::RowTemplate)
+        .unwrap_or(layout.bands.len());
+    ((hi + 1)..end)
+        .filter(|&j| {
+            matches!(
+                layout.bands[j].kind,
+                BandKind::PlainBlock | BandKind::SectionTitle
+            )
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct LayoutBand {
     pub id: String,
@@ -2545,6 +2569,14 @@ fn pack_page(
         cur_y = layout.bands[hi].y1;
     }
 
+    // The filer-identity strip: every static band between the page header and
+    // the page's first growable table (TIN with branch code, taxpayer name,
+    // return period, ATC lines). A spawned continuation page repeats it under
+    // the header, the way the paper's own additional sheets ask for the same
+    // identity block — without it a continuation page carried the form banner
+    // but neither TIN nor name (1600-PT).
+    let identity_strip = identity_strip_band_indices(&layout, header_idx);
+
     let start_new_page =
         |pages: &mut Vec<PackedPage>, cur_slices: &mut Vec<PlacedSlice>, cur_y: &mut f64| {
             let cont_index = pages.len();
@@ -2562,6 +2594,17 @@ fn pack_page(
                     is_repeated_table_head: false,
                 });
                 *cur_y = layout.bands[hi].y1;
+                for &j in &identity_strip {
+                    cur_slices.push(PlacedSlice::OriginalBand {
+                        band_idx: j,
+                        dest_y: layout.bands[j].y0,
+                        shrunk_pt: 0.0,
+                        is_repeated_header: false,
+                        is_repeated_section_title: false,
+                        is_repeated_table_head: false,
+                    });
+                    *cur_y = (*cur_y).max(layout.bands[j].y1);
+                }
             } else {
                 *cur_y = 20.0;
             }
@@ -3764,10 +3807,17 @@ mod tests {
             }
         }
 
-        for b in &layout.bands {
+        let strip = identity_strip_band_indices(
+            &layout,
+            layout
+                .bands
+                .iter()
+                .position(|b| b.kind == BandKind::PageHeader),
+        );
+        for (bi, b) in layout.bands.iter().enumerate() {
             for tid in &b.text_ids {
                 let got = text_counts.get(tid).copied().unwrap_or(0);
-                if b.kind == BandKind::PageHeader {
+                if b.kind == BandKind::PageHeader || strip.contains(&bi) {
                     assert_eq!(
                         got, page_count,
                         "{slug} ({label}): page_header text {tid} expected {page_count}, got {got}"
@@ -3786,7 +3836,7 @@ mod tests {
             }
             for cid in &b.cell_ids {
                 let got = cell_counts.get(cid).copied().unwrap_or(0);
-                if b.kind == BandKind::PageHeader {
+                if b.kind == BandKind::PageHeader || strip.contains(&bi) {
                     assert_eq!(
                         got, page_count,
                         "{slug} ({label}): page_header cell {cid} expected {page_count}, got {got}"
@@ -3808,7 +3858,7 @@ mod tests {
                     continue;
                 }
                 let got = svg_id_counts.get(sid).copied().unwrap_or(0);
-                if b.kind == BandKind::PageHeader {
+                if b.kind == BandKind::PageHeader || strip.contains(&bi) {
                     assert_eq!(
                         got, page_count,
                         "{slug} ({label}): page_header svg {sid} expected {page_count}, got {got}"

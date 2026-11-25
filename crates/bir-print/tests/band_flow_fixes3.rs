@@ -129,3 +129,51 @@ fn form_1707a_continuation_pages_carry_the_full_engine_header() {
         assert_eq!(count(&name), want, "{name} must print once");
     }
 }
+
+/// fixes-3 item 3: 1600-PT's "Page 1 (continued)" must carry the filer's TIN
+/// and taxpayer name, not the form banner alone. 40 Part II rows put rows
+/// 32-40 onto the continuation page; the TIN comb cells (p1c16/18/20/22) and
+/// the name cell must repeat there with the identity strip.
+#[test]
+fn form_1600pt_continuation_pages_carry_tin_and_name() {
+    use bir_core::forms::form_1600pt::{
+        Form1600PtAgentCategory, Form1600PtAtcRow, Form1600PtDraft,
+    };
+    let mut draft = Form1600PtDraft::new_from_profile(&demo_profile(), 2025, 6);
+    draft.set_agent_category(Form1600PtAgentCategory::Government);
+    draft.set_taxes_withheld(true);
+    for k in 0..40u32 {
+        draft.atc_rows.push(Form1600PtAtcRow {
+            atc_code: "WB030".into(),
+            rate_text: "3.0".into(),
+            tax_base: 1_000.0 + f64::from(k),
+            tax_withheld: 0.0,
+        });
+    }
+    draft.recompute();
+    let fields = draft.to_print_field_map();
+    let doc = filled_document_with_report("1600-pt-2018", &fields, None).unwrap();
+    std::fs::write("/tmp/bfout/1600pt-fixes3.html", &doc.html).unwrap();
+
+    let page_count = doc.html.matches("class=\"page page-").count();
+    assert!(
+        page_count >= 2,
+        "40 Part II rows must overflow onto a continuation page, got {page_count} page(s)"
+    );
+    // The TIN comb cells of page 1 must print once per page, not once total.
+    for cell in ["p1c16", "p1c18", "p1c20", "p1c22"] {
+        let occurrences = doc.html.matches(&format!("id=\"{cell}\"")).count();
+        assert!(
+            occurrences >= 2,
+            "TIN comb cell {cell} prints {occurrences} time(s) across {page_count} pages:              the continuation page carries no TIN"
+        );
+    }
+    // The taxpayer name must appear on every page fragment, not only page 1.
+    let frags: Vec<&str> = doc.html.split("class=\"page page-").collect();
+    for (idx, frag) in frags.iter().enumerate().skip(1) {
+        assert!(
+            frag.to_uppercase().contains("SANTOS"),
+            "page fragment {idx} of {page_count} lacks the taxpayer name"
+        );
+    }
+}
