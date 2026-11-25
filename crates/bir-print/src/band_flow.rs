@@ -217,7 +217,6 @@ struct FlowPageDom {
     width_pt: f64,
     height_pt: f64,
     svg_open_tag: String,
-    svg_images: Vec<String>,
     svg_nodes: Vec<FlowSvgNode>,
     texts: Vec<FlowTextNode>,
     cells: Vec<FlowCellNode>,
@@ -250,7 +249,6 @@ fn parse_flow_page_dom(doc_html: &str, page_num: usize) -> Result<FlowPageDom, S
         fmt_pt(width_pt),
         fmt_pt(height_pt),
     );
-    let mut svg_images = Vec::new();
     let mut svg_nodes = Vec::new();
 
     if let Some(svg_start) = page_html.find("<svg ") {
@@ -280,7 +278,14 @@ fn parse_flow_page_dom(doc_html: &str, page_num: usize) -> Result<FlowPageDom, S
                     scan = a + 4;
                 } else if rest.starts_with("<image ") {
                     let end_img = find_svg_elem_end(svg, a, "image");
-                    svg_images.push(svg[a..end_img].to_string());
+                    let index = svg_nodes.len();
+                    svg_nodes.push(FlowSvgNode {
+                        index,
+                        layer: String::new(),
+                        rule_id: None,
+                        rect: None,
+                        raw_tag: svg[a..end_img].to_string(),
+                    });
                     scan = end_img;
                 } else if rest.starts_with("<rect ") {
                     let end_r = find_svg_elem_end(svg, a, "rect");
@@ -379,14 +384,35 @@ fn parse_flow_page_dom(doc_html: &str, page_num: usize) -> Result<FlowPageDom, S
         }
     }
 
-    // 3. Parse `<div class="layer-cells">...</div>` (cells + cell-keyed overlays)
+    // 3. Parse all `<div class="layer-cells">...</div>` and `<div class="band" ...>...</div>`
+    // containers on the page (forms with wrapped growable bands split `layer-cells` around
+    // `<div class="band" id="band-content-...">`).
     let mut cells: Vec<FlowCellNode> = Vec::new();
     let mut cell_idx_by_id: BTreeMap<String, usize> = BTreeMap::new();
     let mut pending_overlays: Vec<(Option<String>, f64, String)> = Vec::new();
 
-    if let Some(lc_pos) = html_no_tpl.find("<div class=\"layer-cells\">") {
-        let lc_end = find_matching_div_end(&html_no_tpl, lc_pos).unwrap_or(html_no_tpl.len());
-        let lc_inner = &html_no_tpl[lc_pos + "<div class=\"layer-cells\">".len()..lc_end - 6];
+    let mut scan_from = 0usize;
+    while scan_from < html_no_tpl.len() {
+        let next_lc = html_no_tpl[scan_from..]
+            .find("<div class=\"layer-cells\"")
+            .map(|r| scan_from + r);
+        let next_band = html_no_tpl[scan_from..]
+            .find("<div class=\"band\"")
+            .map(|r| scan_from + r);
+        let container_start = match (next_lc, next_band) {
+            (Some(a), Some(b)) => a.min(b),
+            (Some(a), None) => a,
+            (None, Some(b)) => b,
+            (None, None) => break,
+        };
+        let Some(open_gt_rel) = html_no_tpl[container_start..].find('>') else {
+            break;
+        };
+        let inner_start = container_start + open_gt_rel + 1;
+        let container_end =
+            find_matching_div_end(&html_no_tpl, container_start).unwrap_or(html_no_tpl.len());
+        let inner_end = container_end.saturating_sub(6).max(inner_start);
+        let lc_inner = &html_no_tpl[inner_start..inner_end];
         let mut pos = 0;
         while pos < lc_inner.len() {
             let Some(rel) = lc_inner[pos..].find('<') else {
@@ -444,6 +470,7 @@ fn parse_flow_page_dom(doc_html: &str, page_num: usize) -> Result<FlowPageDom, S
             }
             pos = elem_end;
         }
+        scan_from = container_end;
     }
 
     let mut orphan_overlays = Vec::new();
@@ -463,7 +490,6 @@ fn parse_flow_page_dom(doc_html: &str, page_num: usize) -> Result<FlowPageDom, S
         width_pt,
         height_pt,
         svg_open_tag,
-        svg_images,
         svg_nodes,
         texts,
         cells,
@@ -1507,11 +1533,6 @@ enum PlacedSlice {
         /// True when the table continues on the next page (draw closing rule
         /// + `"Continued on the next page"` cue; omit `total_row`).
         continues_next: bool,
-        /// Height of `total_row` if `total_row` sits right below on this page
-        /// (used to extend spanning vertical rules into `total_row`).
-        total_follows_height: f64,
-        /// Height of `table_head` if `table_head` sits right above on this page.
-        head_precedes_height: f64,
     },
     /// Continuation slice of extra rows `[start..end)` on a spawned page.
     ExtraRowsSlice {
@@ -1519,8 +1540,6 @@ enum PlacedSlice {
         dest_y: f64,
         extra_rows: Vec<RenderedExtraRow>,
         continues_next: bool,
-        total_follows_height: f64,
-        head_precedes_height: f64,
     },
     Rule6Line {
         dest_y: f64,
@@ -1543,10 +1562,40 @@ fn flow_single_page(
     _fields: &BTreeMap<String, String>,
     rule6_insertions: &[Rule6Insertion],
 ) -> Result<String, String> {
-    let packed = pack_page(slug, raw_html, dom, layout, growths, rule6_insertions)?;
+    // Adopt any DOM text node whose `id` was omitted from `formgen-page-layout`
+    // (e.g. `style="left:0;top:..."` spans in generator v1) into the band covering
+    // its `top` coordinate so no text on the page is ever dropped.
+    let mut effective_layout = layout.clone();
+    let assigned_texts: BTreeSet<&str> = layout
+        .bands
+        .iter()
+        .flat_map(|b| b.text_ids.iter().map(|s| s.as_str()))
+        .collect();
+    for t in &dom.texts {
+        let Some(tid) = t.id.as_deref() else {
+            continue;
+        };
+        if assigned_texts.contains(tid) {
+            continue;
+        }
+        if let Some(band) = effective_layout.bands.iter_mut().find(|b| {
+            b.kind != BandKind::TrailingSpace && t.top >= b.y0 - 1.0 && t.top < b.y1 + 1.0
+        }) {
+            band.text_ids.push(tid.to_string());
+        }
+    }
+
+    let packed = pack_page(
+        slug,
+        raw_html,
+        dom,
+        &effective_layout,
+        growths,
+        rule6_insertions,
+    )?;
     let mut out = String::new();
     for pp in &packed {
-        out.push_str(&emit_packed_page(dom, layout, pp));
+        out.push_str(&emit_packed_page(dom, &effective_layout, pp));
     }
     Ok(out)
 }
@@ -1761,8 +1810,6 @@ fn pack_page(
                         orig_height_pt: *orig_height_pt,
                         extra_rows: extra_rows.clone(),
                         continues_next: false,
-                        total_follows_height: total_h,
-                        head_precedes_height: head_h,
                     });
                     cur_y += *orig_height_pt + extra_total_h;
                     if let Some(ti) = total_band_idx {
@@ -1842,8 +1889,6 @@ fn pack_page(
                     orig_height_pt: *orig_height_pt,
                     extra_rows: extra_rows[..take].to_vec(),
                     continues_next: true,
-                    total_follows_height: 0.0,
-                    head_precedes_height: head_h,
                 });
 
                 // Spill remaining extra rows onto continuation pages.
@@ -1851,7 +1896,6 @@ fn pack_page(
                 while cursor < extra_rows.len() {
                     start_new_page(&mut pages, &mut cur_slices, &mut cur_y);
 
-                    let mut cont_head_h = 0.0;
                     if let Some(hi) = head_band_idx {
                         cur_slices.push(PlacedSlice::OriginalBand {
                             band_idx: *hi,
@@ -1861,7 +1905,6 @@ fn pack_page(
                             is_repeated_table_head: true,
                         });
                         cur_y += head_h;
-                        cont_head_h = head_h;
                     }
 
                     let rem_h: f64 = extra_rows[cursor..].iter().map(|r| r.height_pt).sum();
@@ -1872,8 +1915,6 @@ fn pack_page(
                             dest_y: cur_y,
                             extra_rows: extra_rows[cursor..].to_vec(),
                             continues_next: false,
-                            total_follows_height: total_h,
-                            head_precedes_height: cont_head_h,
                         });
                         cur_y += rem_h;
                         if let Some(ti) = total_band_idx {
@@ -1910,8 +1951,6 @@ fn pack_page(
                             dest_y: cur_y,
                             extra_rows: extra_rows[cursor..chunk_end].to_vec(),
                             continues_next: true,
-                            total_follows_height: 0.0,
-                            head_precedes_height: cont_head_h,
                         });
                         cursor = chunk_end;
                     }
@@ -2011,10 +2050,24 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
     let mut text_out = String::new();
     let mut cells_out = String::new();
 
-    // Preserve SVG `<image .../>` (BIR logo/barcode) inside the page header.
-    for img in &dom.svg_images {
-        svg_out.push_str(img);
+    // Count how many bands in the source page layout reference each spanning SVG rule,
+    // and collect per-output-page spans so every spanning rail is emitted ONCE per
+    // output page with exact geometry (verbatim when un-grown and un-shifted).
+    let mut total_span_refs: BTreeMap<&str, usize> = BTreeMap::new();
+    for b in &layout.bands {
+        for rid in &b.spanning_svg_ids {
+            *total_span_refs.entry(rid.as_str()).or_default() += 1;
+        }
     }
+    struct SpanRef {
+        band_idx: usize,
+        dy: f64,
+        shrunk_pt: f64,
+        is_orig_band: bool,
+        slice_top: f64,
+        slice_bottom: f64,
+    }
+    let mut span_refs: BTreeMap<&str, Vec<SpanRef>> = BTreeMap::new();
 
     for slice in &pp.slices {
         match slice {
@@ -2041,6 +2094,17 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
                     &mut text_out,
                     &mut cells_out,
                 );
+                let slice_bottom = dest_y + (band.y1 - band.y0) - *shrunk_pt;
+                for rid in &band.spanning_svg_ids {
+                    span_refs.entry(rid.as_str()).or_default().push(SpanRef {
+                        band_idx: *band_idx,
+                        dy,
+                        shrunk_pt: *shrunk_pt,
+                        is_orig_band: true,
+                        slice_top: *dest_y,
+                        slice_bottom,
+                    });
+                }
             }
             PlacedSlice::OrigRowsPlusExtra {
                 band_idx,
@@ -2048,8 +2112,6 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
                 orig_height_pt,
                 extra_rows,
                 continues_next,
-                total_follows_height,
-                head_precedes_height,
             } => {
                 let band = &layout.bands[*band_idx];
                 let dy = dest_y - band.y0;
@@ -2074,20 +2136,18 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
                     row_y += er.height_pt;
                 }
 
-                // 3. Emit spanning vertical borders adjusted to the exact span on this page.
-                emit_spanning_rules(
-                    band,
-                    dy,
-                    *dest_y,
-                    row_y,
-                    *head_precedes_height,
-                    *total_follows_height,
-                    *continues_next,
-                    true,
-                    !extra_rows.is_empty() || *continues_next,
-                    &svg_by_id,
-                    &mut svg_out,
-                );
+                // 3. Record spanning rail coverage for this slice.
+                let did_grow = !extra_rows.is_empty() || *continues_next;
+                for rid in &band.spanning_svg_ids {
+                    span_refs.entry(rid.as_str()).or_default().push(SpanRef {
+                        band_idx: *band_idx,
+                        dy,
+                        shrunk_pt: 0.0,
+                        is_orig_band: !did_grow,
+                        slice_top: *dest_y,
+                        slice_bottom: row_y,
+                    });
+                }
 
                 // 4. On a mid-table break, close the table cleanly and print the cue.
                 if *continues_next {
@@ -2105,8 +2165,6 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
                 dest_y,
                 extra_rows,
                 continues_next,
-                total_follows_height,
-                head_precedes_height,
             } => {
                 let band = &layout.bands[*band_idx];
                 let mut row_y = *dest_y;
@@ -2114,19 +2172,16 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
                     emit_extra_row(er, row_y, &mut svg_out, &mut text_out, &mut cells_out);
                     row_y += er.height_pt;
                 }
-                emit_spanning_rules(
-                    band,
-                    dest_y - band.y0,
-                    *dest_y,
-                    row_y,
-                    *head_precedes_height,
-                    *total_follows_height,
-                    *continues_next,
-                    false,
-                    true,
-                    &svg_by_id,
-                    &mut svg_out,
-                );
+                for rid in &band.spanning_svg_ids {
+                    span_refs.entry(rid.as_str()).or_default().push(SpanRef {
+                        band_idx: *band_idx,
+                        dy: dest_y - band.y0,
+                        shrunk_pt: 0.0,
+                        is_orig_band: false,
+                        slice_top: *dest_y,
+                        slice_bottom: row_y,
+                    });
+                }
                 if *continues_next {
                     emit_break_closing_and_cue(
                         layout.table_x0,
@@ -2140,6 +2195,71 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
             PlacedSlice::Rule6Line { dest_y, ins } => {
                 emit_rule6_line(*dest_y, ins, &mut svg_out, &mut text_out);
             }
+        }
+    }
+
+    // Emit each spanning SVG rail ONCE per output page.
+    for (rid, refs) in span_refs {
+        let Some(node) = svg_by_id.get(rid) else {
+            continue;
+        };
+        let total = total_span_refs.get(rid).copied().unwrap_or(0);
+        let all_intact = refs.len() == total
+            && refs
+                .iter()
+                .all(|r| r.is_orig_band && r.shrunk_pt == 0.0 && (r.dy - refs[0].dy).abs() < 0.01);
+        if all_intact {
+            emit_svg_node_shifted(
+                node,
+                &layout.bands[refs[0].band_idx],
+                refs[0].dy,
+                0.0,
+                &mut svg_out,
+            );
+            continue;
+        }
+        let Some((x, orig_y, w, orig_h, ref fill)) = node.rect else {
+            emit_svg_node_shifted(
+                node,
+                &layout.bands[refs[0].band_idx],
+                refs[0].dy,
+                0.0,
+                &mut svg_out,
+            );
+            continue;
+        };
+        let orig_bottom = orig_y + orig_h;
+        let mut min_top = f64::INFINITY;
+        let mut max_bottom = f64::NEG_INFINITY;
+        for r in &refs {
+            let b = &layout.bands[r.band_idx];
+            let r_top = if r.is_orig_band || orig_y >= b.y0 - 0.5 {
+                r.slice_top + (orig_y - b.y0).max(0.0)
+            } else {
+                r.slice_top
+            };
+            let r_bot = if r.is_orig_band {
+                r.slice_top + ((orig_bottom.min(b.y1) - b.y0) - r.shrunk_pt).max(0.0)
+            } else {
+                r.slice_bottom
+            };
+            if r_top < min_top {
+                min_top = r_top;
+            }
+            if r_bot > max_bottom {
+                max_bottom = r_bot;
+            }
+        }
+        if min_top.is_finite() && max_bottom.is_finite() {
+            let new_h = (max_bottom - min_top).max(0.5);
+            svg_out.push_str(&format!(
+                "<g class=\"{}\"><rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{fill}\" data-rule-id=\"{rid}\"/></g>",
+                node.layer,
+                fmt_pt(x),
+                fmt_pt(min_top),
+                fmt_pt(w),
+                fmt_pt(new_h),
+            ));
         }
     }
 
@@ -2182,14 +2302,15 @@ fn emit_original_band(
     text_out: &mut String,
     cells_out: &mut String,
 ) {
-    // Emit SVG nodes (handling `shrunk_pt` for `elastic_box`).
-    for rid in &band.svg_ids {
-        if let Some(node) = svg_by_id.get(rid.as_str()) {
+    // Emit SVG nodes in original paint order: un-ID'd fills/shading (`svg_indices`)
+    // first, then ID'd rules (`svg_ids`) on top so background rects never paint over rules.
+    for &sidx in &band.svg_indices {
+        if let Some(node) = dom.svg_nodes.get(sidx) {
             emit_svg_node_shifted(node, band, dy, shrunk_pt, svg_out);
         }
     }
-    for &sidx in &band.svg_indices {
-        if let Some(node) = dom.svg_nodes.get(sidx) {
+    for rid in &band.svg_ids {
+        if let Some(node) = svg_by_id.get(rid.as_str()) {
             emit_svg_node_shifted(node, band, dy, shrunk_pt, svg_out);
         }
     }
@@ -2234,11 +2355,19 @@ fn emit_original_band(
         } else if is_repeated_table_head && attach_note_tid.is_none() && !added_continued_heading {
             let trimmed = t.plain_text.trim();
             let lower = trimmed.to_ascii_lowercase();
-            if trimmed.len() >= 8
+            let is_heading = trimmed.len() >= 8
                 && (lower.contains("schedule")
                     || lower.contains("part ")
-                    || lower.contains("details"))
-            {
+                    || lower.contains("details"));
+            let has_explicit_heading = band.text_ids.iter().any(|id| {
+                text_by_id.get(id.as_str()).is_some_and(|tn| {
+                    let s = tn.plain_text.trim();
+                    let l = s.to_ascii_lowercase();
+                    s.len() >= 8
+                        && (l.contains("schedule") || l.contains("part ") || l.contains("details"))
+                })
+            });
+            if is_heading || (!has_explicit_heading && !trimmed.is_empty()) {
                 if !lower.contains("continued") && !lower.contains("continuation") {
                     elem = replace_inner_text(&elem, &format!("{trimmed} (continued)"));
                 }
@@ -2272,13 +2401,13 @@ fn emit_original_band_non_spanning(
     text_out: &mut String,
     cells_out: &mut String,
 ) {
-    for rid in &band.svg_ids {
-        if let Some(node) = svg_by_id.get(rid.as_str()) {
+    for &sidx in &band.svg_indices {
+        if let Some(node) = dom.svg_nodes.get(sidx) {
             emit_svg_node_shifted(node, band, dy, 0.0, svg_out);
         }
     }
-    for &sidx in &band.svg_indices {
-        if let Some(node) = dom.svg_nodes.get(sidx) {
+    for rid in &band.svg_ids {
+        if let Some(node) = svg_by_id.get(rid.as_str()) {
             emit_svg_node_shifted(node, band, dy, 0.0, svg_out);
         }
     }
@@ -2330,82 +2459,24 @@ fn emit_svg_node_shifted(
             fmt_pt(new_h),
         ));
     } else if dy.abs() > 1e-4 {
-        svg_out.push_str(&format!(
-            "<g class=\"{}\" transform=\"translate(0,{})\">{}</g>",
-            node.layer,
-            fmt_pt(dy),
-            node.raw_tag,
-        ));
-    } else {
-        svg_out.push_str(&format!("<g class=\"{}\">{}</g>", node.layer, node.raw_tag,));
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn emit_spanning_rules(
-    band: &LayoutBand,
-    dy: f64,
-    rows_top_y: f64,
-    rows_bottom_y: f64,
-    head_precedes_height: f64,
-    total_follows_height: f64,
-    continues_next: bool,
-    is_original_rows: bool,
-    did_grow: bool,
-    svg_by_id: &BTreeMap<&str, &FlowSvgNode>,
-    svg_out: &mut String,
-) {
-    for rid in &band.spanning_svg_ids {
-        let Some(node) = svg_by_id.get(rid.as_str()) else {
-            continue;
-        };
-        // If this original row_template band neither grew nor split across a page
-        // break, preserve every spanning rail intact (verbatim when `dy == 0`).
-        if is_original_rows && !did_grow {
-            emit_svg_node_shifted(node, band, dy, 0.0, svg_out);
-            continue;
+        if node.layer.is_empty() {
+            svg_out.push_str(&format!(
+                "<g transform=\"translate(0,{})\">{}</g>",
+                fmt_pt(dy),
+                node.raw_tag,
+            ));
+        } else {
+            svg_out.push_str(&format!(
+                "<g class=\"{}\" transform=\"translate(0,{})\">{}</g>",
+                node.layer,
+                fmt_pt(dy),
+                node.raw_tag,
+            ));
         }
-        let Some((x, orig_y, w, orig_h, ref fill)) = node.rect else {
-            continue;
-        };
-        let orig_bottom = orig_y + orig_h;
-        let top_y = if is_original_rows {
-            // On the table's starting page, never clip a spanning rail that starts
-            // above `band.y0` (e.g. a shared outer frame spanning a paired half-table).
-            orig_y + dy
-        } else {
-            // On a spawned continuation page, only the repeated `table_head` sits
-            // above the continued rows.
-            let starts_in_head = orig_y < band.y0 - 2.0 && head_precedes_height > 0.0;
-            if starts_in_head {
-                (rows_top_y - (band.y0 - orig_y)).max(rows_top_y - head_precedes_height)
-            } else {
-                rows_top_y + (orig_y - band.y0).max(0.0)
-            }
-        };
-        // Did this rule originally extend below `band.y1` (into `total_row`)?
-        let extends_into_total = orig_bottom > band.y1 + 2.0;
-        let bottom_y = if !continues_next && extends_into_total {
-            if is_original_rows {
-                let added_h = rows_bottom_y - (rows_top_y + (band.y1 - band.y0));
-                orig_bottom + dy + added_h
-            } else if total_follows_height > 0.0 {
-                rows_bottom_y + (orig_bottom - band.y1).min(total_follows_height)
-            } else {
-                rows_bottom_y
-            }
-        } else {
-            rows_bottom_y
-        };
-        let new_h = (bottom_y - top_y).max(0.5);
-        svg_out.push_str(&format!(
-            "<g class=\"{}\"><rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{fill}\" data-rule-id=\"{rid}\"/></g>",
-            node.layer,
-            fmt_pt(x),
-            fmt_pt(top_y),
-            fmt_pt(w),
-            fmt_pt(new_h),
-        ));
+    } else if node.layer.is_empty() {
+        svg_out.push_str(&node.raw_tag);
+    } else {
+        svg_out.push_str(&format!("<g class=\"{}\">{}</g>", node.layer, node.raw_tag));
     }
 }
 
