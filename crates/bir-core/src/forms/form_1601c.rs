@@ -381,6 +381,38 @@ impl Form1601CDraft {
                 fields.insert(format!("frm1601c:sched1:{key}{row}"), String::new());
             }
         }
+        // Emit any saved Schedule I rows past the 3-row paper capacity so band-flow
+        // prints every row that `compute()` summed into Item 26.
+        for (i, row) in self.schedule_1.iter().enumerate().skip(MAX_SCHEDULE_1_ROWS) {
+            fields.insert(
+                format!("frm1601c:sched1:txtMonthYear{i}"),
+                row.previous_month.clone(),
+            );
+            fields.insert(
+                format!("frm1601c:sched1:txtDatePaid{i}"),
+                row.date_paid.clone(),
+            );
+            fields.insert(
+                format!("frm1601c:sched1:txtBankCode{i}"),
+                row.drawee_bank_code_or_agency.clone(),
+            );
+            fields.insert(
+                format!("frm1601c:sched1:txtNumber{i}"),
+                row.payment_number.clone(),
+            );
+            fields.insert(
+                format!("frm1601c:sched1:txtTaxPaid{i}"),
+                format!("{:.2}", row.tax_paid),
+            );
+            fields.insert(
+                format!("frm1601c:sched1:txtShouldTaxDue{i}"),
+                format!("{:.2}", row.should_be_tax_due),
+            );
+            fields.insert(
+                format!("frm1601c:sched1:txtAdjustments{i}"),
+                format!("{:.2}", row.adjustment),
+            );
+        }
         for (key, value) in [
             ("tin_digits", tin_digits),
             ("address_line1", line1),

@@ -175,3 +175,45 @@ fn form_2551q_prints_all_10_schedule1_rows_with_matching_total() {
         "2551Q Schedule 1 total must equal sum of all 10 rows"
     );
 }
+
+#[test]
+fn form_1601c_prints_all_10_schedule1_rows_with_matching_item26_total() {
+    use bir_core::forms::form_1601c::{Form1601CDraft, Form1601CSchedule1Row};
+    let profile = demo_profile();
+    let mut d = Form1601CDraft::new_from_profile(&profile, 2025, 1);
+    d.schedule_1.clear();
+    for i in 1..=10usize {
+        let mut row = Form1601CSchedule1Row {
+            previous_month: format!("{i:02}/2024"),
+            date_paid: format!("{i:02}/10/2024"),
+            drawee_bank_code_or_agency: format!("BDO{i:02}"),
+            payment_number: format!("OR{i:04}"),
+            tax_paid: 1_000.0,
+            should_be_tax_due: 1_500.0,
+            adjustment: 500.0,
+        };
+        row.recompute();
+        d.schedule_1.push(row);
+    }
+    d.compute();
+    let fields = d.to_print_field_map();
+    let doc = filled_document_with_report("1601c-2018", &fields, None).unwrap();
+    let cells = bir_print::frozen_html::printed_cells(&doc.html);
+    let cell_values: Vec<&str> = cells.values().map(|(v, _)| v.as_str()).collect();
+    for i in 1..=10usize {
+        let bank = format!("BDO{i:02}");
+        let hits = cell_values.iter().filter(|v| **v == bank).count()
+            + doc.html.matches(&bank).count();
+        assert!(
+            hits >= 1,
+            "1601C Schedule I row {i} ({bank}) must print"
+        );
+    }
+    assert_eq!(
+        fields
+            .get("frm1601c:sched1:txtTotal1")
+            .map(|s| s.replace(',', "")),
+        Some("5000.00".to_string()),
+        "1601C Schedule I total must equal 5000.00"
+    );
+}
