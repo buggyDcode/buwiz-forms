@@ -5386,10 +5386,13 @@ fn apply_screen_edits_here(
             }
         };
         // A box the form would clear (its answer does not hold) or past its
-        // official length is refused with its reason (PR 11's forms).
+        // official length is refused with its reason (PR 11's forms, 2551Q).
         let result = result.and_then(|()| {
             written
-                .and_then(|value| rows_excise::refusal(kind, &next, &key, &value))
+                .and_then(|value| {
+                    rows_excise::refusal(kind, &next, &key, &value)
+                        .or_else(|| form_2551q_amount_refusal(kind, &key, &value))
+                })
                 .map_or(Ok(()), Err)
         });
         match result {
@@ -5422,6 +5425,61 @@ fn apply_screen_edits_here(
         penalty_groups.into_iter().map(|(group, _)| group).collect();
     rows_excise::join_if_group_blanked(kind, draft, &groups, &blanked, &rejected);
     Ok(rejected)
+}
+
+/// Refuse 2551Q amount edits at entry when they exceed the official 12-char
+/// typed taxable-amount limit (`txtATCAmt1..6`) or the 12-digit peso comb
+/// (`frm2551Qv2018:txt15..22`), so entry, Check, and Queue agree.
+fn form_2551q_amount_refusal(kind: AgentFormKind, key: &str, value: &Value) -> Option<String> {
+    if kind != AgentFormKind::Form2551Q {
+        return None;
+    }
+    let amount = match value {
+        Value::Number(n) => n.as_f64()?,
+        Value::String(s) => {
+            let clean = s.trim().replace(',', "");
+            if clean.is_empty() {
+                return None;
+            }
+            clean.parse::<f64>().ok()?
+        }
+        _ => return None,
+    };
+    if !amount.is_finite() {
+        return None;
+    }
+    if matches!(
+        key,
+        "txtATCAmt1" | "txtATCAmt2" | "txtATCAmt3" | "txtATCAmt4" | "txtATCAmt5" | "txtATCAmt6"
+    ) {
+        if !bir_core::forms::form_2551q::fits_taxable_amount_input(amount.abs()) {
+            return Some(bir_core::forms::form_2551q::taxable_amount_limit_message(
+                None,
+            ));
+        }
+        if amount < 0.0 {
+            return Some("Must be zero or greater; enter a non-negative amount.".to_string());
+        }
+    } else if matches!(
+        key,
+        "frm2551Qv2018:txt15"
+            | "frm2551Qv2018:txt16"
+            | "frm2551Qv2018:txt17"
+            | "frm2551Qv2018:txt20"
+            | "frm2551Qv2018:txt21"
+            | "frm2551Qv2018:txt22"
+    ) {
+        if !bir_core::forms::form_2551q::fits_decimal_comb(
+            amount,
+            bir_core::forms::form_2551q::FORM_2551Q_AMOUNT_INTEGER_CELLS,
+        ) {
+            return Some(bir_core::forms::form_2551q::amount_comb_limit_message(None));
+        }
+        if amount < 0.0 {
+            return Some("Must be zero or greater; enter a non-negative amount.".to_string());
+        }
+    }
+    None
 }
 
 /// Why a box's direct draft steps (`ChoiceStep::Set`) are refused: it is
@@ -9180,6 +9238,167 @@ mod tests {
         let cleared = fill("2551Q", &filled["draft"], json!({"drpATC2": ""}));
         assert!(cleared["rejected"].get("drpATC2").is_none(), "{cleared}");
         assert_eq!(cleared["draft"]["schedule_1"][1]["atc"], "");
+    }
+
+    #[test]
+    fn form_2551q_entry_check_and_queue_agree_on_amount_limits() {
+        setup();
+        let opened = open("2551Q", 3);
+        let validate = |draft: &Value| {
+            call_async(
+                "screen_form_validate",
+                vec!["2551Q".into(), json(draft.clone())],
+            )
+            .unwrap()
+        };
+
+        // Row 1 (default PT010 @ 3%): 666,666,666.66 (12 chars, with centavos) -> tax due 20,000,000.00 (8 digits)
+        // Row 2 (second catalog ATC): 999,999,999,999 (12 chars, 12 integer digits) -> fits 12-digit tax due
+        let row2_atc = opened["options"]["drpATC2"]
+            .as_array()
+            .and_then(|opts| {
+                opts.iter().find(|o| {
+                    o["value"]
+                        .as_str()
+                        .is_some_and(|v| !v.is_empty() && v != "0" && v != "1")
+                })
+            })
+            .and_then(|o| o["value"].as_str())
+            .unwrap_or("2")
+            .to_string();
+        let ok = fill(
+            "2551Q",
+            &opened["draft"],
+            json!({
+                "txtATCAmt1": "666666666.66",
+                "drpATC2": row2_atc,
+                "txtATCAmt2": "999999999999",
+            }),
+        );
+        assert!(ok["rejected"].as_object().unwrap().is_empty(), "{ok}");
+        let validated = validate(&ok["draft"]);
+        let errs = validated["errors"].as_array().unwrap();
+        assert!(
+            !errs.iter().any(|e| {
+                let f = e["field"].as_str().unwrap_or("");
+                f.starts_with("schedule_1_row_") || f == "total_tax_due"
+            }),
+            "expected no amount-limit errors, got {errs:?}"
+        );
+
+        // Over 12-char typed limit with centavos (13 chars): refused AT ENTRY with actionable words
+        let over_cents = fill(
+            "2551Q",
+            &opened["draft"],
+            json!({"txtATCAmt1": "1000000000.01"}),
+        );
+        let msg = over_cents["rejected"]["txtATCAmt1"]
+            .as_str()
+            .expect("1000000000.01 must be refused at entry");
+        assert!(
+            msg.contains("12-character") && msg.contains("enter a smaller amount"),
+            "{msg}"
+        );
+
+        // Over 12-char typed limit without centavos (13 digits): refused AT ENTRY
+        let over_whole = fill(
+            "2551Q",
+            &opened["draft"],
+            json!({"txtATCAmt1": "1000000000000"}),
+        );
+        assert!(
+            over_whole["rejected"]["txtATCAmt1"]
+                .as_str()
+                .is_some_and(|m| m.contains("12-character")),
+            "{over_whole}"
+        );
+
+        // Over 12-digit Part II comb limit on Item 15: refused AT ENTRY
+        let over_item15 = fill(
+            "2551Q",
+            &opened["draft"],
+            json!({"frm2551Qv2018:txt15": "1000000000000"}),
+        );
+        let msg15 = over_item15["rejected"]["frm2551Qv2018:txt15"]
+            .as_str()
+            .expect("Item 15 >= 1e12 must be refused at entry");
+        assert!(
+            msg15.contains("12-digit") && msg15.contains("enter a smaller amount"),
+            "{msg15}"
+        );
+    }
+
+    #[test]
+    fn form_2551q_negative_amounts_agree_across_entry_check_and_queue() {
+        setup();
+        let opened = open("2551Q", 3);
+
+        // Negative over-limit on Schedule 1 taxable amount: refused AT ENTRY with unified wording
+        let neg_over_sched = fill(
+            "2551Q",
+            &opened["draft"],
+            json!({"txtATCAmt1": "-1000000000.01"}),
+        );
+        let msg_sched = neg_over_sched["rejected"]["txtATCAmt1"]
+            .as_str()
+            .expect("-1000000000.01 must be refused at entry");
+        assert!(
+            msg_sched.contains("12-character") && msg_sched.contains("enter a smaller amount"),
+            "{msg_sched}"
+        );
+
+        // Negative within-limit on Schedule 1 taxable amount: refused AT ENTRY as non-negative
+        let neg_small_sched = fill("2551Q", &opened["draft"], json!({"txtATCAmt1": "-0.01"}));
+        assert!(
+            neg_small_sched["rejected"]["txtATCAmt1"]
+                .as_str()
+                .is_some_and(|m| m.contains("non-negative")),
+            "{neg_small_sched}"
+        );
+
+        // Negative over-limit on Item 15 (creditable tax withheld): refused AT ENTRY with unified wording
+        let neg_over_15 = fill(
+            "2551Q",
+            &opened["draft"],
+            json!({"frm2551Qv2018:txt15": "-1000000000000"}),
+        );
+        let msg_15 = neg_over_15["rejected"]["frm2551Qv2018:txt15"]
+            .as_str()
+            .expect("Item 15 <= -1e12 must be refused at entry");
+        assert!(
+            msg_15.contains("at most 999,999,999,999.99")
+                && msg_15.contains("enter a smaller amount"),
+            "{msg_15}"
+        );
+
+        // Negative within-limit on Item 15: refused AT ENTRY as non-negative
+        let neg_small_15 = fill(
+            "2551Q",
+            &opened["draft"],
+            json!({"frm2551Qv2018:txt15": "-100"}),
+        );
+        assert!(
+            neg_small_15["rejected"]["frm2551Qv2018:txt15"]
+                .as_str()
+                .is_some_and(|m| m.contains("non-negative")),
+            "{neg_small_15}"
+        );
+
+        // Check agrees on the same negative over-limit value when present in a draft
+        let mut tampered = opened["draft"].clone();
+        tampered["creditable_tax_withheld"] = json!(-1_000_000_000_000.0);
+        let checked = validated("2551Q", &tampered);
+        let errs = checked["errors"].as_array().unwrap();
+        assert!(
+            errs.iter().any(|e| {
+                e["field"] == "creditable_withheld"
+                    && e["message"].as_str().is_some_and(|m| {
+                        m.contains("at most 999,999,999,999.99")
+                            && m.contains("enter a smaller amount")
+                    })
+            }),
+            "Check must emit unified limit wording for -1e12, got {errs:?}"
+        );
     }
 
     #[test]
