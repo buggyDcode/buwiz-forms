@@ -1037,6 +1037,165 @@ const DERIVED_BAND_FLOW_SLUGS: &[&str] = &["1707-2021"];
 ///   onto `page-<p>-cont-<k>` pages under the page's own header.
 /// - Any remaining schedules without layout coverage are returned in
 ///   `unhandled_schedules` for the existing continuation/fallback path.
+/// Explicit allowlist of named fields with the RULES 6 override switched ON
+/// ("Other Tax Credits/Payments (specify)" and fields of the exact same shape:
+/// a small inline specify box in the label column sharing its row with an amount).
+/// Forms whose "Other Tax Credits/Payments (specify)" sits on its own header row
+/// above full-width character-comb rows (`1702EX`, `1702RT`, `1702Q`) are NOT here.
+const RULE6_ENABLED_FIELDS: &[(&str, &str)] = &[
+    ("2551q-2018", "frm2551Qv2018:txt17Specify"),
+    ("2550q-2024", "frm2550qv2024:addSpecifyNo19"),
+    ("1700-2018", "frm1700:txtPg2I57Desc"),
+    ("1701a-2018", "frm1701A:txt63Desc"),
+    ("1701q-2018", "frm1701q:txt61Desc"),
+    ("1701ms-2024", "derived:foreign_tax_credits_description"),
+    ("1701ms-2024", "derived:other_credits_description"),
+    ("1601c-2018", "frm1601c:txt20Other"),
+    ("1603q-2018", "frm1603Q:txt16Other"),
+];
+
+/// Minimum readable font size per RULES 3 (7.5pt); when an enabled Rule 6
+/// specify box had to shrink below this or overflows its inner width at 7.5pt,
+/// Rule 6 moves the text to a full-width inserted band beneath the label row.
+const RULE6_MIN_FONT_PT: f64 = 7.5;
+
+fn is_rule6_enabled(slug: &str, writer_key: &str) -> bool {
+    RULE6_ENABLED_FIELDS
+        .iter()
+        .any(|&(s, k)| s == slug && k == writer_key)
+}
+
+fn unescape_html_basic(s: &str) -> String {
+    s.replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&#x27;", "'")
+}
+
+/// Extract the `inset: Tpt Rpt Bpt Lpt` right & left insets (in pt) from a
+/// `<span class="fi ...">` opening tag, if present.
+fn extract_inset_lr(tag: &str) -> Option<(f64, f64)> {
+    let style = extract_attr(tag, "style")?;
+    let pos = style.find("inset:")?;
+    let rest = &style[pos + 6..];
+    let end = rest.find(';').unwrap_or(rest.len());
+    let parts: Vec<f64> = rest[..end]
+        .split_whitespace()
+        .filter_map(|tok| tok.strip_suffix("pt").unwrap_or(tok).parse::<f64>().ok())
+        .collect();
+    match parts.len() {
+        1 => Some((parts[0], parts[0])),
+        2 => Some((parts[1], parts[1])),
+        3 => Some((parts[1], parts[1])),
+        4 => Some((parts[1], parts[3])),
+        _ => None,
+    }
+}
+
+/// Inspect the filled HTML for an enabled Rule 6 cell; if its text does not fit
+/// its small inline box (font shrunk below 7.5pt or text width at 7.5pt exceeds
+/// the inner box width), return the unescaped text to place in the inserted line.
+fn extract_rule6_overflow_text(official_filled: &str, field: &Rule6Field) -> Option<String> {
+    let needle = format!("id=\"{}\"", field.cell_id);
+    let id_pos = official_filled.find(&needle)?;
+    let div_start = official_filled[..id_pos].rfind("<div")?;
+    let div_end = find_matching_div_end(official_filled, div_start)?;
+    let cell_html = &official_filled[div_start..div_end];
+
+    let cell_gt = cell_html.find('>')?;
+    let cell_open = &cell_html[..cell_gt + 1];
+    let cell_w = extract_style_pt(cell_open, "width:").unwrap_or(0.0);
+
+    // Find inner `<span class="fi ...">...</span>`.
+    let span_start = cell_html[cell_gt + 1..].find("<span")? + cell_gt + 1;
+    let span_gt = cell_html[span_start..].find('>')? + span_start;
+    let span_open = &cell_html[span_start..span_gt + 1];
+    let span_close = cell_html[span_gt + 1..].find("</span>")? + span_gt + 1;
+    let raw_inner = &cell_html[span_gt + 1..span_close];
+    let text = unescape_html_basic(&strip_html_tags(raw_inner))
+        .trim()
+        .to_string();
+    if text.is_empty() {
+        return None;
+    }
+
+    // 1. Primary signal: `frozen_html` had to shrink the inline font below 7.5pt.
+    if let Some(fs) = extract_style_pt(span_open, "font-size:") {
+        if fs < RULE6_MIN_FONT_PT - 0.01 {
+            return Some(text);
+        }
+    }
+
+    // 2. Geometric fallback: text width at 7.5pt exceeds the inline box width.
+    if cell_w > 0.0 {
+        let (inset_r, inset_l) = extract_inset_lr(span_open).unwrap_or((2.0, 2.0));
+        let inner_w = (cell_w - inset_r - inset_l).max(20.0);
+        if (text.chars().count() as f64) * 4.2 > inner_w {
+            return Some(text);
+        }
+    }
+
+    None
+}
+
+fn collect_rule6_insertions_by_page(
+    slug: &str,
+    explicit_layout: Option<&PageLayoutDoc>,
+    official_filled: &str,
+) -> BTreeMap<usize, Vec<Rule6Insertion>> {
+    let mut per_page: BTreeMap<usize, Vec<Rule6Insertion>> = BTreeMap::new();
+    let Some(doc) = explicit_layout else {
+        return per_page;
+    };
+    for page in &doc.pages {
+        for field in &page.rule6_fields {
+            if !is_rule6_enabled(slug, &field.writer_key) {
+                continue;
+            }
+            if let Some(text) = extract_rule6_overflow_text(official_filled, field) {
+                per_page
+                    .entry(page.page)
+                    .or_default()
+                    .push(Rule6Insertion::from_text(field.clone(), text));
+            }
+        }
+    }
+    per_page
+}
+
+/// Fast check used by `frozen_html` to decide whether to invoke `apply_band_flow`
+/// when there is no schedule overflow.
+pub(crate) fn has_rule6_overflow(slug: &str, raw_html: &str, official_filled: &str) -> bool {
+    if !RULE6_ENABLED_FIELDS.iter().any(|&(s, _)| s == slug) {
+        return false;
+    }
+    let explicit_layout = parse_page_layout(raw_html);
+    !collect_rule6_insertions_by_page(slug, explicit_layout.as_ref(), official_filled).is_empty()
+}
+
+/// Clear the inline text inside a Rule 6 cell's `<span class="fi ...">...</span>`
+/// so the small specify box stays blank while the label, item number, and amount
+/// box remain untouched on their original row.
+fn clear_rule6_cell_inline_text(dom: &mut FlowPageDom, cell_id: &str) {
+    for cell in &mut dom.cells {
+        if cell.id != cell_id {
+            continue;
+        }
+        if let Some(span_start) = cell.raw_html.find("<span") {
+            if let Some(gt_rel) = cell.raw_html[span_start..].find('>') {
+                let text_start = span_start + gt_rel + 1;
+                if let Some(end_rel) = cell.raw_html[text_start..].find("</span>") {
+                    let text_end = text_start + end_rel;
+                    cell.raw_html.replace_range(text_start..text_end, "");
+                }
+            }
+        }
+        cell.overlays.clear();
+    }
+}
+
 pub(crate) fn apply_band_flow(
     slug: &str,
     raw_html: &str,
@@ -1044,15 +1203,18 @@ pub(crate) fn apply_band_flow(
     fields: &BTreeMap<String, String>,
     report: &OverflowReport,
 ) -> Result<BandFlowOutput, String> {
-    if report.is_empty() {
+    let formgen_bands = parse_formgen_bands(raw_html);
+    let explicit_layout = parse_page_layout(raw_html);
+    let per_page_rule6 =
+        collect_rule6_insertions_by_page(slug, explicit_layout.as_ref(), official_filled);
+
+    if report.is_empty() && per_page_rule6.is_empty() {
         return Ok(BandFlowOutput {
             document_html: official_filled.to_string(),
             unhandled_schedules: Vec::new(),
         });
     }
 
-    let formgen_bands = parse_formgen_bands(raw_html);
-    let explicit_layout = parse_page_layout(raw_html);
     let allow_derived = DERIVED_BAND_FLOW_SLUGS.contains(&slug);
     if explicit_layout.is_none() && !allow_derived {
         return Ok(BandFlowOutput {
@@ -1087,7 +1249,7 @@ pub(crate) fn apply_band_flow(
         }
     }
 
-    if per_page_growth.is_empty() {
+    if per_page_growth.is_empty() && per_page_rule6.is_empty() {
         return Ok(BandFlowOutput {
             document_html: official_filled.to_string(),
             unhandled_schedules,
@@ -1097,13 +1259,21 @@ pub(crate) fn apply_band_flow(
     // Flow each affected page (from highest page index to lowest so byte spans
     // in `official_filled` remain valid while splicing).
     let mut doc = official_filled.to_string();
-    let pages_desc: Vec<usize> = per_page_growth.keys().rev().copied().collect();
+    let mut affected_pages: BTreeSet<usize> = BTreeSet::new();
+    affected_pages.extend(per_page_growth.keys().copied());
+    affected_pages.extend(per_page_rule6.keys().copied());
+    let pages_desc: Vec<usize> = affected_pages.into_iter().rev().collect();
 
     for page_num in pages_desc {
-        let Some(growths) = per_page_growth.get(&page_num) else {
-            continue;
-        };
-        let dom = parse_flow_page_dom(&doc, page_num)?;
+        let growths = per_page_growth
+            .get(&page_num)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let rule6_ins = per_page_rule6
+            .get(&page_num)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let mut dom = parse_flow_page_dom(&doc, page_num)?;
         let page_fb: Vec<&FormgenBand> = formgen_bands
             .iter()
             .filter(|b| b.page == page_num)
@@ -1152,12 +1322,23 @@ pub(crate) fn apply_band_flow(
             continue;
         };
 
-        if active_growths.is_empty() {
+        if active_growths.is_empty() && rule6_ins.is_empty() {
             continue;
         }
 
-        let flowed_pages_html =
-            flow_single_page(slug, raw_html, &dom, &layout, &active_growths, fields, &[])?;
+        for ins in rule6_ins {
+            clear_rule6_cell_inline_text(&mut dom, &ins.field.cell_id);
+        }
+
+        let flowed_pages_html = flow_single_page(
+            slug,
+            raw_html,
+            &dom,
+            &layout,
+            &active_growths,
+            fields,
+            rule6_ins,
+        )?;
 
         let (start, end) = dom.doc_span;
         doc.replace_range(start..end, &flowed_pages_html);
@@ -1915,8 +2096,11 @@ fn pack_page(
             } => {
                 let b = &layout.bands[*band_idx];
                 // Keep `SectionTitle` / `TableHead` (`keep_with_next`) with the
-                // next item so a heading is never orphaned at the bottom.
-                let min_group_h = if b.keep_with_next {
+                // next item so a heading is never orphaned at the bottom, and
+                // keep a Rule 6 label row together with its inserted line.
+                let min_group_h = if b.keep_with_next
+                    || matches!(items.get(idx + 1), Some(FlowItem::Rule6Line(_)))
+                {
                     *height_pt + min_next_unit_height(&items, idx + 1, layout)
                 } else {
                     *height_pt
@@ -2206,6 +2390,7 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
 
     let mut svg_bg_out = String::new();
     let mut svg_rules_out = String::new();
+    let mut svg_rule6_out = String::new();
     let mut text_out = String::new();
     let mut cells_out = String::new();
 
@@ -2413,7 +2598,7 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
                 }
             }
             PlacedSlice::Rule6Line { dest_y, ins } => {
-                emit_rule6_line(*dest_y, ins, &mut svg_rules_out, &mut text_out);
+                emit_rule6_line(*dest_y, ins, &mut svg_rule6_out, &mut text_out);
             }
         }
     }
@@ -2491,7 +2676,7 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
             ));
         }
     }
-    let svg_out = format!("{svg_bg_out}{svg_rules_out}");
+    let svg_out = format!("{svg_bg_out}{svg_rules_out}{svg_rule6_out}");
 
     let (page_class, page_id) = if pp.cont_index == 0 {
         (
@@ -2803,6 +2988,7 @@ fn emit_rule6_line(dest_y: f64, ins: &Rule6Insertion, svg_out: &mut String, text
     let h = ins.height_pt;
     svg_out.push_str(&format!(
         "<g class=\"layer-structural\">\
+         <rect x=\"{x}\" y=\"{y}\" width=\"{w}\" height=\"{h}\" fill=\"#ffffff\"/>\
          <rect x=\"{x}\" y=\"{y}\" width=\"{w}\" height=\"0.48\" fill=\"#000000\"/>\
          <rect x=\"{x}\" y=\"{yb}\" width=\"{w}\" height=\"0.48\" fill=\"#000000\"/>\
          <rect x=\"{x}\" y=\"{y}\" width=\"0.48\" height=\"{h}\" fill=\"#000000\"/>\

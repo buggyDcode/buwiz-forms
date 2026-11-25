@@ -4010,9 +4010,12 @@ pub fn filled_document_with_report(
     let mut official_filled = fill_bundle(loaded.html, fields, slug)?;
 
     // First try in-page band flow (Rules 5 & 6) for any overflowing schedule
-    // whose page has layout / band data. Remaining schedules without band
+    // whose page has layout / band data, or any enabled Rule 6 specify field
+    // whose text overflows its inline box. Remaining schedules without band
     // coverage fall back to the existing continuation-sheet engine.
-    let cont = if !overflow.is_empty() {
+    let rule6_active =
+        crate::band_flow::has_rule6_overflow(slug, loaded.html, &official_filled);
+    let cont = if !overflow.is_empty() || rule6_active {
         let flowed = crate::band_flow::apply_band_flow(
             slug,
             loaded.html,
