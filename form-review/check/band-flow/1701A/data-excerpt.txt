@@ -1,6 +1,8 @@
 # 1701A Independent Band-Flow Check — Data Excerpt
 
-## Case overflow
+## Case item42_8rows
   - Item 42 Other Income (8): 8 rows, exp_total=119,996.00, markers=['IVA-OTHER-01', 'IVA-OTHER-02', 'IVA-OTHER-03', 'IVA-OTHER-04']..IVA-OTHER-08
+
+## Case item51_8rows
   - Item 51 8% Other Income (8): 8 rows, exp_total=199,996.00, markers=['IVB-OTHER-01', 'IVB-OTHER-02', 'IVB-OTHER-03', 'IVB-OTHER-04']..IVB-OTHER-08
 
