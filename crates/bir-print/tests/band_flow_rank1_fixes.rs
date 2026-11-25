@@ -60,10 +60,17 @@ fn form_1702mx_prints_all_base_and_modal_schedule6_rows_with_total_and_tin() {
     let fields = d.to_print_field_map();
     let doc = filled_document_with_report("1702mx-2018c", &fields, None).unwrap();
     let pages = doc.html.matches("class=\"page ").count();
-    let base_hits: Vec<usize> = (1..=3).map(|i| doc.html.matches(&format!("MX-SC6-BASE-{i:02}")).count()).collect();
-    let more_hits: Vec<usize> = (1..=7).map(|i| doc.html.matches(&format!("MX-SC6-MORE-{i:02}")).count()).collect();
+    let base_hits: Vec<usize> = (1..=3)
+        .map(|i| doc.html.matches(&format!("MX-SC6-BASE-{i:02}")).count())
+        .collect();
+    let more_hits: Vec<usize> = (1..=7)
+        .map(|i| doc.html.matches(&format!("MX-SC6-MORE-{i:02}")).count())
+        .collect();
     let has_tin = doc.html.contains("000-123-453-00000");
-    assert_eq!(pages, 5, "1702MX must have 4 base pages + 1 continuation page, got {pages}");
+    assert_eq!(
+        pages, 5,
+        "1702MX must have 4 base pages + 1 continuation page, got {pages}"
+    );
     assert!(
         base_hits.iter().all(|&c| c >= 1),
         "all 3 base rows must print: {base_hits:?}"
@@ -151,8 +158,8 @@ fn form_2551q_prints_all_10_schedule1_rows_with_matching_total() {
     let cells = bir_print::frozen_html::printed_cells(&doc.html);
     let cell_values: Vec<&str> = cells.values().map(|(v, _)| v.as_str()).collect();
     for code in &atcs {
-        let hits = cell_values.iter().filter(|v| **v == *code).count()
-            + doc.html.matches(code).count();
+        let hits =
+            cell_values.iter().filter(|v| **v == *code).count() + doc.html.matches(code).count();
         assert!(
             hits >= 1,
             "2551Q Schedule 1 row {code} must print (cell_values={:?})",
@@ -202,12 +209,9 @@ fn form_1601c_prints_all_10_schedule1_rows_with_matching_item26_total() {
     let cell_values: Vec<&str> = cells.values().map(|(v, _)| v.as_str()).collect();
     for i in 1..=10usize {
         let bank = format!("BDO{i:02}");
-        let hits = cell_values.iter().filter(|v| **v == bank).count()
-            + doc.html.matches(&bank).count();
-        assert!(
-            hits >= 1,
-            "1601C Schedule I row {i} ({bank}) must print"
-        );
+        let hits =
+            cell_values.iter().filter(|v| **v == bank).count() + doc.html.matches(&bank).count();
+        assert!(hits >= 1, "1601C Schedule I row {i} ({bank}) must print");
     }
     assert_eq!(
         fields

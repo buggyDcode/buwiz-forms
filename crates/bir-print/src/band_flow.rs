@@ -1290,6 +1290,13 @@ pub(crate) fn apply_band_flow(
         let matched = wc_parsed
             .as_ref()
             .and_then(|wc| match_schedule_to_bands(sched, &formgen_bands, wc));
+        if std::env::var_os("BF_DEBUG").is_some() {
+            eprintln!(
+                "BFDBG sched {} matched={}",
+                sched.heading,
+                matched.is_some()
+            );
+        }
         match matched {
             Some(plan) if plan.bands.iter().all(|mb| mb.band.page == plan.page_num) => {
                 let entry = per_page_growth.entry(plan.page_num).or_default();
@@ -1353,6 +1360,12 @@ pub(crate) fn apply_band_flow(
                     b.kind == BandKind::RowTemplate
                         && b.growable_id.as_deref() == Some(mb.band.id.as_str())
                 });
+                if std::env::var_os("BF_DEBUG").is_some() {
+                    eprintln!(
+                        "BFDBG page {page_num} sched {} band {} has_band={has_band}",
+                        sched.heading, mb.band.id
+                    );
+                }
                 if has_band {
                     active_growths.push((mb.clone(), sched.clone()));
                 } else if !unhandled_schedules

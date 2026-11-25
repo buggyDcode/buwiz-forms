@@ -1554,7 +1554,10 @@ impl Form2551QDraft {
             };
             if n > 6 {
                 let pct = row.tax_rate * 100.0;
-                fields.insert(format!("txtATCAmt{n}"), format!("{:.2}", row.taxable_amount));
+                fields.insert(
+                    format!("txtATCAmt{n}"),
+                    format!("{:.2}", row.taxable_amount),
+                );
                 fields.insert(format!("txtATCRate{n}"), format!("{pct}"));
                 fields.insert(format!("txtATCDue{n}"), format!("{:.2}", row.tax_due));
             }

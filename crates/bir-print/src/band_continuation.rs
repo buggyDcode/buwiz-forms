@@ -302,6 +302,55 @@ pub(crate) fn match_schedule_to_bands(
     let mut col_row1_ids: Vec<Vec<String>> = vec![Vec::new(); sched.columns.len()];
     let mut ord_row1_ids: Vec<String> = Vec::new();
 
+    for item in wc
+        .get("date_joins")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(printed) = item.get("printed").and_then(Value::as_str) else {
+            continue;
+        };
+        let orig_writer_key = item
+            .get("writer_key")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let Some((sched_name, row_num, col_heading)) =
+            continuation::parse_schedule_row_and_column_pub(printed)
+        else {
+            continue;
+        };
+        if !sched_name.eq_ignore_ascii_case(&sched.heading) {
+            continue;
+        }
+        let Some(col_idx) = sched.columns.iter().position(|c| {
+            c.heading.eq_ignore_ascii_case(&col_heading)
+                || c.heading
+                    .to_ascii_lowercase()
+                    .starts_with(&col_heading.to_ascii_lowercase())
+                || col_heading
+                    .to_ascii_lowercase()
+                    .starts_with(&c.heading.to_ascii_lowercase())
+        }) else {
+            continue;
+        };
+        for field in ["mm_html_id", "dd_html_id", "yyyy_html_id"] {
+            if let Some(hid) = item.get(field).and_then(Value::as_str) {
+                html_to_col.insert(
+                    hid.to_string(),
+                    CellJoinKind::Text {
+                        col_idx,
+                        orig_writer_key: orig_writer_key.clone(),
+                    },
+                );
+                if row_num == 1 {
+                    col_row1_ids[col_idx].push(hid.to_string());
+                }
+            }
+        }
+    }
+
     for (section, kind_tag) in [
         ("joins", "text"),
         ("money_joins", "money"),
@@ -432,6 +481,14 @@ pub(crate) fn match_schedule_to_bands(
         }
     }
 
+    if std::env::var_os("BF_DEBUG").is_some() {
+        eprintln!(
+            "BFDBG match {}: html_to_col={} bands={}",
+            sched.heading,
+            html_to_col.len(),
+            bands.len()
+        );
+    }
     if html_to_col.is_empty() {
         return None;
     }
@@ -472,6 +529,15 @@ pub(crate) fn match_schedule_to_bands(
         }
     }
 
+    if std::env::var_os("BF_DEBUG").is_some() {
+        eprintln!(
+            "BFDBG match {}: matched_bands={} covered={}/{}",
+            sched.heading,
+            matched_bands.len(),
+            covered_cols.len(),
+            sched.columns.len()
+        );
+    }
     if matched_bands.is_empty() {
         return None;
     }
@@ -480,6 +546,14 @@ pub(crate) fn match_schedule_to_bands(
     // omits one or more columns of this schedule (e.g. 1707 Schedule 2's
     // upper Name of Corporate Stock rows), fall back to the plain table.
     if covered_cols.len() < sched.columns.len() {
+        if std::env::var_os("BF_DEBUG").is_some() {
+            eprintln!(
+                "BFDBG match {}: REJECT coverage {}/{}",
+                sched.heading,
+                covered_cols.len(),
+                sched.columns.len()
+            );
+        }
         return None;
     }
 

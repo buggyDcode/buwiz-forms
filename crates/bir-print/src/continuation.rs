@@ -398,7 +398,7 @@ pub fn continuation_pages_html(
             "page-break-after:auto;break-after:auto;"
         };
         out.push_str(&format!(
-            "<div class=\"page page-continuation\" id=\"{id_attr}\" style=\"width:{width};height:{height};overflow:hidden;{break_rule}padding:24pt 28pt;box-sizing:border-box;font-family:'eBIRForms Arimo',Arial,Helvetica,sans-serif;font-size:8.5pt;line-height:1.3;color:#000;background:#fff\">"
+            "<div class=\"page page-continuation\" id=\"{id_attr}\" style=\"width:{width};overflow:hidden;{break_rule}padding:24pt 28pt;box-sizing:border-box;font-family:'eBIRForms Arimo',Arial,Helvetica,sans-serif;font-size:8.5pt;line-height:1.3;color:#000;background:#fff\">"
         ));
 
         // Header block
