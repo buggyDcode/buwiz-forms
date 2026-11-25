@@ -1,5 +1,5 @@
 form	case	commit	side	table	held_rows	printed_once	missing_count	duped_count	in_order	exp_total	tot_in_pdf	pages	blank_pages	old_fallback_pages	sum_occurrences
-1602Q	overflow	b9552e27	before	Schedule 2 Treaty (10)	10	0	10	0	False	15,500.00	False	3	none	2	0
-1602Q	overflow	b9552e27	before	Schedule 3 IPA (10)	10	0	10	0	False	12,750.00	False	3	none	2	0
-1602Q	overflow	4321b79b	after	Schedule 2 Treaty (10)	10	0	10	0	False	15,500.00	False	3	none	2	0
-1602Q	overflow	4321b79b	after	Schedule 3 IPA (10)	10	0	10	0	False	12,750.00	False	3	none	2	0
+1602Q	filled	b9552e27	before	Schedule 2 Treaty (2)	2	2	0	0	True	4,000.00	True	3	none	2	0
+1602Q	filled	b9552e27	before	Schedule 3 IPA (2)	2	2	0	0	True	3,500.00	True	3	none	2	0
+1602Q	filled	4321b79b	after	Schedule 2 Treaty (2)	2	2	0	0	True	4,000.00	True	3	none	2	0
+1602Q	filled	4321b79b	after	Schedule 3 IPA (2)	2	2	0	0	True	3,500.00	True	3	none	2	0

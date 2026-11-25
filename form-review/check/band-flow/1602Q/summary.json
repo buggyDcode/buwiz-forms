@@ -1,5 +1,5 @@
 {
-  "overflow": {
+  "filled": {
     "before": {
       "pages": 3,
       "blank_pages": [],
@@ -7,46 +7,24 @@
         2
       ],
       "tables": {
-        "Schedule 2 Treaty (10)": {
-          "held": 10,
-          "printed_once": 0,
-          "missing": [
-            "TR01",
-            "TR02",
-            "TR03",
-            "TR04",
-            "TR05",
-            "TR06",
-            "TR07",
-            "TR08",
-            "TR09",
-            "TR10"
-          ],
+        "Schedule 2 Treaty (2)": {
+          "held": 2,
+          "printed_once": 2,
+          "missing": [],
           "duped": [],
-          "in_order": false,
-          "exp_total": "15,500.00",
-          "tot_in_pdf": "False",
+          "in_order": true,
+          "exp_total": "4,000.00",
+          "tot_in_pdf": "True",
           "sum_occ": 0
         },
-        "Schedule 3 IPA (10)": {
-          "held": 10,
-          "printed_once": 0,
-          "missing": [
-            "IPA01",
-            "IPA02",
-            "IPA03",
-            "IPA04",
-            "IPA05",
-            "IPA06",
-            "IPA07",
-            "IPA08",
-            "IPA09",
-            "IPA10"
-          ],
+        "Schedule 3 IPA (2)": {
+          "held": 2,
+          "printed_once": 2,
+          "missing": [],
           "duped": [],
-          "in_order": false,
-          "exp_total": "12,750.00",
-          "tot_in_pdf": "False",
+          "in_order": true,
+          "exp_total": "3,500.00",
+          "tot_in_pdf": "True",
           "sum_occ": 0
         }
       }
@@ -58,46 +36,24 @@
         2
       ],
       "tables": {
-        "Schedule 2 Treaty (10)": {
-          "held": 10,
-          "printed_once": 0,
-          "missing": [
-            "TR01",
-            "TR02",
-            "TR03",
-            "TR04",
-            "TR05",
-            "TR06",
-            "TR07",
-            "TR08",
-            "TR09",
-            "TR10"
-          ],
+        "Schedule 2 Treaty (2)": {
+          "held": 2,
+          "printed_once": 2,
+          "missing": [],
           "duped": [],
-          "in_order": false,
-          "exp_total": "15,500.00",
-          "tot_in_pdf": "False",
+          "in_order": true,
+          "exp_total": "4,000.00",
+          "tot_in_pdf": "True",
           "sum_occ": 0
         },
-        "Schedule 3 IPA (10)": {
-          "held": 10,
-          "printed_once": 0,
-          "missing": [
-            "IPA01",
-            "IPA02",
-            "IPA03",
-            "IPA04",
-            "IPA05",
-            "IPA06",
-            "IPA07",
-            "IPA08",
-            "IPA09",
-            "IPA10"
-          ],
+        "Schedule 3 IPA (2)": {
+          "held": 2,
+          "printed_once": 2,
+          "missing": [],
           "duped": [],
-          "in_order": false,
-          "exp_total": "12,750.00",
-          "tot_in_pdf": "False",
+          "in_order": true,
+          "exp_total": "3,500.00",
+          "tot_in_pdf": "True",
           "sum_occ": 0
         }
       }

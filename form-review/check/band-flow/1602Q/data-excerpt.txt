@@ -1,0 +1,6 @@
+# 1602Q Independent Band-Flow Check — Data Excerpt
+
+## Case filled
+  - Schedule 2 Treaty (2): 2 rows, exp_total=4,000.00, markers=['WF310', 'WF320']..WF320
+  - Schedule 3 IPA (2): 2 rows, exp_total=3,500.00, markers=['PEZA', 'BOI']..BOI
+
