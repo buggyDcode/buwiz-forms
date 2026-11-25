@@ -1,7 +1,7 @@
 {
   "overflow": {
     "before": {
-      "pages": 2,
+      "pages": 3,
       "blank_pages": [],
       "old_fallback_pages": [
         1,
@@ -10,54 +10,28 @@
       "tables": {
         "Real Properties (12)": {
           "held": 12,
-          "printed_once": 0,
-          "missing": [
-            "REALPROP-01",
-            "REALPROP-02",
-            "REALPROP-03",
-            "REALPROP-04",
-            "REALPROP-05",
-            "REALPROP-06",
-            "REALPROP-07",
-            "REALPROP-08",
-            "REALPROP-09",
-            "REALPROP-10",
-            "REALPROP-11",
-            "REALPROP-12"
-          ],
+          "printed_once": 12,
+          "missing": [],
           "duped": [],
-          "in_order": false,
+          "in_order": true,
           "exp_total": "798,000.00",
-          "tot_in_pdf": "False",
-          "sum_occ": 0
+          "tot_in_pdf": "True",
+          "sum_occ": 1
         },
         "Personal Properties (12)": {
           "held": 12,
-          "printed_once": 0,
-          "missing": [
-            "PERSPROP-01",
-            "PERSPROP-02",
-            "PERSPROP-03",
-            "PERSPROP-04",
-            "PERSPROP-05",
-            "PERSPROP-06",
-            "PERSPROP-07",
-            "PERSPROP-08",
-            "PERSPROP-09",
-            "PERSPROP-10",
-            "PERSPROP-11",
-            "PERSPROP-12"
-          ],
+          "printed_once": 12,
+          "missing": [],
           "duped": [],
-          "in_order": false,
+          "in_order": true,
           "exp_total": "159,000.00",
-          "tot_in_pdf": "False",
-          "sum_occ": 0
+          "tot_in_pdf": "True",
+          "sum_occ": 1
         }
       }
     },
     "after": {
-      "pages": 2,
+      "pages": 3,
       "blank_pages": [],
       "old_fallback_pages": [
         1,
@@ -66,49 +40,23 @@
       "tables": {
         "Real Properties (12)": {
           "held": 12,
-          "printed_once": 0,
-          "missing": [
-            "REALPROP-01",
-            "REALPROP-02",
-            "REALPROP-03",
-            "REALPROP-04",
-            "REALPROP-05",
-            "REALPROP-06",
-            "REALPROP-07",
-            "REALPROP-08",
-            "REALPROP-09",
-            "REALPROP-10",
-            "REALPROP-11",
-            "REALPROP-12"
-          ],
+          "printed_once": 12,
+          "missing": [],
           "duped": [],
-          "in_order": false,
+          "in_order": true,
           "exp_total": "798,000.00",
-          "tot_in_pdf": "False",
-          "sum_occ": 0
+          "tot_in_pdf": "True",
+          "sum_occ": 1
         },
         "Personal Properties (12)": {
           "held": 12,
-          "printed_once": 0,
-          "missing": [
-            "PERSPROP-01",
-            "PERSPROP-02",
-            "PERSPROP-03",
-            "PERSPROP-04",
-            "PERSPROP-05",
-            "PERSPROP-06",
-            "PERSPROP-07",
-            "PERSPROP-08",
-            "PERSPROP-09",
-            "PERSPROP-10",
-            "PERSPROP-11",
-            "PERSPROP-12"
-          ],
+          "printed_once": 12,
+          "missing": [],
           "duped": [],
-          "in_order": false,
+          "in_order": true,
           "exp_total": "159,000.00",
-          "tot_in_pdf": "False",
-          "sum_occ": 0
+          "tot_in_pdf": "True",
+          "sum_occ": 1
         }
       }
     }
