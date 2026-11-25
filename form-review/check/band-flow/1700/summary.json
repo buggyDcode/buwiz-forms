@@ -1,18 +1,17 @@
 {
   "before": {
-    "pages": 2,
-    "blank_pages": [],
+    "pages": 4,
+    "blank_pages": [
+      4
+    ],
     "old_fallback_pages": [
       2
     ],
     "tables": {
       "Schedule 1 (7 Employers)": {
         "held": 7,
-        "printed_once": 0,
+        "printed_once": 3,
         "missing": [
-          "EMPLOYER-01 INC",
-          "EMPLOYER-02 INC",
-          "EMPLOYER-03 INC",
           "EMPLOYER-04 INC",
           "EMPLOYER-05 INC",
           "EMPLOYER-06 INC",
@@ -26,19 +25,18 @@
     }
   },
   "after": {
-    "pages": 2,
-    "blank_pages": [],
+    "pages": 4,
+    "blank_pages": [
+      4
+    ],
     "old_fallback_pages": [
       2
     ],
     "tables": {
       "Schedule 1 (7 Employers)": {
         "held": 7,
-        "printed_once": 0,
+        "printed_once": 3,
         "missing": [
-          "EMPLOYER-01 INC",
-          "EMPLOYER-02 INC",
-          "EMPLOYER-03 INC",
           "EMPLOYER-04 INC",
           "EMPLOYER-05 INC",
           "EMPLOYER-06 INC",
