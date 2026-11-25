@@ -1,0 +1,5 @@
+# 1702MX Independent Overflow Check — Data Excerpt
+
+## Schedule 6 (3 base + 7 modal): 10 rows, expected total=123,000.00
+  markers: MX-SC6-BASE-01, MX-SC6-BASE-02, MX-SC6-BASE-03, MX-SC6-MORE-01, MX-SC6-MORE-02, MX-SC6-MORE-03, MX-SC6-MORE-04, MX-SC6-MORE-05, MX-SC6-MORE-06, MX-SC6-MORE-07
+
