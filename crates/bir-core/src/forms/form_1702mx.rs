@@ -399,7 +399,37 @@ impl Form1702MXDraft {
     /// - `derived:year_end_mm1` / `_mm2` / `_yy1` / `_yy2`: Item 2 Year
     ///   Ended (MM/20YY) over its four digit boxes.
     pub fn to_print_field_map(&self) -> BTreeMap<String, String> {
-        let mut fields = self.to_official_field_map();
+        let mut fields = self.to_bir_field_map();
+        // Overlay official values onto every key already in the sheet-aligned map,
+        // plus Part II Items 14-16 and Schedule 1-2 keys that `to_bir_field_map()`
+        // omitted (leaving unmapped Schedule 6/9 popup keys out of the print map).
+        for (k, v) in self.to_official_field_map() {
+            if matches!(
+                k.as_str(),
+                "frm1702MX:drpPg3Sc1I11CB"
+                    | "frm1702MX:txtPg2Pt4I34SpecialTaxRate"
+                    | "frm1702MX:txtPg2Sc2It14B"
+                    | "frm1702MX:txtPg2Sc2It14C"
+            ) || k.starts_with("frm1702MX:txtPg2Pt4I35")
+                || k.starts_with("frm1702MX:txtPg2Pt4I36")
+            {
+                continue;
+            }
+            if fields.contains_key(&k)
+                || matches!(
+                    k.as_str(),
+                    "frm1702MX:txtPg1Pt2I14TotalIncome"
+                        | "frm1702MX:txtPg1Pt2I15LessTotalTax"
+                        | "frm1702MX:txtPg1Pt2I16NetTaxPayable"
+                )
+                || k.starts_with("frm1702MX:txtPg2Sc2")
+                || k.starts_with("frm1702MX:txtPg2Pt4I31")
+                || k.starts_with("frm1702MX:txtPg2Pt4I32")
+                || k.starts_with("frm1702MX:txtPg2Pt4I33")
+            {
+                fields.insert(k, v);
+            }
+        }
         let tin_digits = super::print_map::digits_of(
             &fields,
             &[
