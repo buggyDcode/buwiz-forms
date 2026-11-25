@@ -217,3 +217,46 @@ fn form_1601c_prints_all_10_schedule1_rows_with_matching_item26_total() {
         "1601C Schedule I total must equal 5000.00"
     );
 }
+
+#[test]
+fn form_1702q_prints_all_6_schedule4_other_credits_with_total_and_tin() {
+    use bir_core::forms::form_1702q::{Form1702qDraft, Form1702qOtherCredit};
+    let profile = demo_profile();
+    let mut d = Form1702qDraft::new_from_profile(&profile, 2025, 1);
+    d.atc = "IC010_25%".to_string();
+    d.other_credits.clear();
+    for i in 1..=6usize {
+        d.other_credits.push(Form1702qOtherCredit {
+            description: format!("OTHER CREDIT {i:02}"),
+            amount: (i as f64) * 1_000.0,
+        });
+    }
+    d.recompute();
+    let fields = d.to_print_field_map();
+    let doc = filled_document_with_report("1702q-2018", &fields, None).unwrap();
+    let cells = bir_print::frozen_html::printed_cells(&doc.html);
+    let norm_cells: Vec<String> = cells
+        .values()
+        .map(|(v, _)| v.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect();
+    for i in 1..=6usize {
+        let desc = format!("OTHER CREDIT {i:02}");
+        let hits = norm_cells.iter().filter(|v| v.contains(&desc)).count()
+            + doc.html.matches(&desc).count();
+        assert!(
+            hits >= 1,
+            "1702Q Schedule 4 Other Credit row {i} ({desc}) must print"
+        );
+    }
+    assert!(
+        doc.html.contains("000-123-453-00000"),
+        "1702Q continuation header must carry filer TIN 000-123-453-00000"
+    );
+    assert_eq!(
+        fields
+            .get("frm1702q:Sched4:txtTax7")
+            .map(|s| s.replace(',', "")),
+        Some("21000.00".to_string()),
+        "1702Q Schedule 4 total must equal 21000.00"
+    );
+}

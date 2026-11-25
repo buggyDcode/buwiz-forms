@@ -847,7 +847,6 @@ impl Form1702qDraft {
         for row in &mut self.other_credits {
             row.amount = js_round(row.amount);
         }
-        self.other_credits.truncate(FORM_1702Q_OTHER_CREDIT_ROWS);
         while self
             .other_credits
             .last()
@@ -1202,6 +1201,23 @@ impl Form1702qDraft {
             derived.insert("sched3_rate".to_string(), rate);
         }
 
+        // Emit any saved Schedule 4 Other Credits past the 2-row paper capacity
+        // so the continuation sheet prints every row summed into Item 7.
+        for (index, row) in self
+            .other_credits
+            .iter()
+            .enumerate()
+            .skip(FORM_1702Q_OTHER_CREDIT_ROWS)
+        {
+            fields.insert(
+                format!("frm1702q:Sched4:txtOthrTxCrdts{index}"),
+                row.description.clone(),
+            );
+            fields.insert(
+                format!("frm1702q:Sched4:txtOthrTxCrdtAmnt{index}"),
+                format!("{:.2}", row.amount),
+            );
+        }
         for (key, text) in derived {
             fields.insert(format!("derived:{key}"), text);
         }

@@ -1065,6 +1065,25 @@ const POPUP_SCHEDULES: &[PopupScheduleDef] = &[
     // variations that prevent automatic column discovery from uniting all 14
     // columns).
     PopupScheduleDef {
+        slug: "1702q-2018",
+        heading: "Schedule 4 — Tax Credits / Payments (Other Tax Credits/Payments)",
+        printed_capacity: 2,
+        row_num_base: 1,
+        has_total: true,
+        columns: &[
+            PopupColDef {
+                key_template: "frm1702q:Sched4:txtOthrTxCrdts{n}",
+                heading: "Other Tax Credits/Payments (specify)",
+                is_amount: false,
+            },
+            PopupColDef {
+                key_template: "frm1702q:Sched4:txtOthrTxCrdtAmnt{n}",
+                heading: "Amount",
+                is_amount: true,
+            },
+        ],
+    },
+    PopupScheduleDef {
         slug: "2200p-2020",
         heading: "Schedule 1 — Summary of Removals and Excise Tax Due",
         printed_capacity: 27,
