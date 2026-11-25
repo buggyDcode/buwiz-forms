@@ -4725,12 +4725,56 @@ pub(crate) fn fill_continuation_fragment(
     Ok(strip_converted_rect_separators(&filled))
 }
 
+/// Promote any empty `<div id="{html_id}" ...></div>` cell explicitly joined in
+/// `writer-cells.json` (e.g. `1600wp-2010` Schedule 1.1 totals `p1c241`/`p1c243`,
+/// which the upstream generator emitted as empty `data-cell-kind="label"` boxes)
+/// into a fillable `<input>` without editing the frozen sheet on disk.
+fn promote_empty_joined_cells(html: &str, cells: &WriterCells) -> String {
+    if cells.joins.is_empty() {
+        return html.to_string();
+    }
+    let existing: BTreeSet<&str> = input_tags(html).into_iter().map(|t| t.name).collect();
+    let mut missing: Vec<&str> = Vec::new();
+    for html_ids in cells.joins.values() {
+        for html_id in html_ids {
+            if !existing.contains(html_id.as_str()) && !missing.contains(&html_id.as_str()) {
+                missing.push(html_id.as_str());
+            }
+        }
+    }
+    if missing.is_empty() {
+        return html.to_string();
+    }
+    let mut out = html.to_string();
+    for html_id in missing {
+        let needle = format!("<div id=\"{html_id}\"");
+        let Some(start) = out.find(&needle) else {
+            continue;
+        };
+        let Some(gt_rel) = out[start..].find('>') else {
+            continue;
+        };
+        let open_end = start + gt_rel + 1;
+        // Only promote empty <div></div> cells so real printed text labels are never overwritten.
+        if !out[open_end..].starts_with("</div>") {
+            continue;
+        }
+        let injected = format!(
+            "<input type=\"text\" class=\"fi fh5\" id=\"{html_id}-i\" name=\"{html_id}\" style=\"inset:0.96pt 1.92pt 0.96pt 2pt\" autocomplete=\"off\" spellcheck=\"false\">"
+        );
+        out.insert_str(open_end, &injected);
+    }
+    out
+}
+
 fn fill_bundle(
     html: &str,
     fields: &BTreeMap<String, String>,
     slug: &str,
 ) -> Result<String, String> {
     let cells = writer_cells(slug)?;
+    let promoted = promote_empty_joined_cells(html, &cells);
+    let html = promoted.as_str();
     validate_writer_cells(html, slug, &cells)?;
     let fields = &with_donor_estate_values(slug, fields);
     let filled = fill_donor_estate_dates(html, fields, slug);
@@ -4898,8 +4942,9 @@ pub fn unprinted_keys(
 ) -> Result<Vec<String>, String> {
     let loaded = bundle(slug).ok_or_else(|| format!("no frozen HTML bundle for {slug}"))?;
     let cells = writer_cells(slug)?;
-    validate_writer_cells(loaded.html, slug, &cells)?;
-    let tags = input_tags(loaded.html);
+    let promoted = promote_empty_joined_cells(loaded.html, &cells);
+    validate_writer_cells(&promoted, slug, &cells)?;
+    let tags = input_tags(&promoted);
     let stamped: BTreeSet<&str> = tags.iter().map(|tag| tag.name).collect();
     let joined = cells.joined_keys();
     Ok(fields
@@ -11221,6 +11266,47 @@ mod donor_estate_print_tests {
             assert!(
                 !tag.contains("text-align:right"),
                 "{cell_id} year must not right-align as money, got: {tag}"
+            );
+        }
+    }
+
+    #[test]
+    fn form_1600wp_schedule_1_1_totals_print_in_p1c241_and_p1c243() {
+        let mut fields = BTreeMap::new();
+        fields.insert("derived:sched_seq1".to_string(), "1".to_string());
+        fields.insert(
+            "frm1600WP:dtSched:txtName1".to_string(),
+            "SANTOS, JUANA MARIE".to_string(),
+        );
+        fields.insert(
+            "frm1600WP:dtSched:txtIncome1".to_string(),
+            "1,250,000.50".to_string(),
+        );
+        fields.insert(
+            "frm1600WP:dtSched:txtTaxWithheld1".to_string(),
+            "125,000.05".to_string(),
+        );
+        fields.insert(
+            "derived:sched_total_amount".to_string(),
+            "1,250,000.50".to_string(),
+        );
+        fields.insert(
+            "frm1600WP:dtSched:TotaltaxWithheld".to_string(),
+            "125,000.05".to_string(),
+        );
+
+        let html = filled_document("1600wp-2010", &fields).unwrap();
+        let tags = super::input_tags(&html);
+        for (cell_id, expected) in [("p1c241", "1,250,000.50"), ("p1c243", "125,000.05")] {
+            let tag = tags
+                .iter()
+                .find(|t| t.name == cell_id)
+                .unwrap_or_else(|| panic!("missing promoted 1600WP total cell {cell_id}"))
+                .tag;
+            assert_eq!(super::attr(tag, "value"), Some(expected), "{cell_id}");
+            assert!(
+                tag.contains("text-align:right"),
+                "{cell_id} must right-align, got: {tag}"
             );
         }
     }
