@@ -1308,106 +1308,143 @@ fn is_formatted_whole_peso_amount(value: &str) -> bool {
         && s.bytes().all(|b| b.is_ascii_digit() || b == b',')
 }
 
-/// Whether a cell (by writer key or printed caption) represents a currency/money amount.
-fn is_amount_typed_cell(key: &str, caption: Option<&str>) -> bool {
-    if is_amount_typed_key(key) {
-        return true;
-    }
-    let Some(caption) = caption else {
-        return false;
-    };
-    let pl = caption.to_ascii_lowercase();
-    for excluded in [
-        "rate",
-        "percent",
-        "%",
-        "taxable year",
-        "calendar year",
-        "fiscal year",
-        "year ended",
-        "year incurred",
-        "year of",
-        "date",
-        "tin",
-        "zip",
-        "rdo",
-        "atc",
-        "code",
-        "seq",
-        "sheet",
-        "page",
-        "name",
-        "address",
-        "title",
-        "description",
-        "classification",
-        "remarks",
-        "taxpayer",
-        "email",
-        "phone",
-        "tel",
-        "area",
-        "share",
-        "qty",
-        "quantity",
-        "volume",
-        "unit",
-        "count",
-    ] {
-        if pl.contains(excluded) {
-            return false;
-        }
-    }
-    if pl.ends_with(" year") {
-        return false;
-    }
+/// Whether `key` belongs to one of the nine whole-peso BIR income tax forms
+/// whose official sheets instruct "DO NOT enter Centavos".
+fn is_whole_peso_writer_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
     [
-        "sales",
-        "receipt",
-        "revenue",
-        "fees",
-        "returns",
-        "cost",
-        "gross",
-        "income",
-        "deduct",
-        "nolco",
-        "credit",
-        "payment",
-        "tax",
-        "mcit",
-        "amount",
-        "total",
-        "balance",
-        "payable",
-        "overpay",
-        "excess",
-        "loss",
-        "allowance",
-        "exemption",
-        "dividend",
-        "royalt",
-        "compensation",
-        "expense",
-        "asset",
-        "liabilit",
-        "equity",
-        "capital",
-        "profit",
-        "fmv",
-        "zonal",
-        "value",
-        "surcharge",
-        "interest",
-        "compromise",
-        "penalt",
-        "withheld",
-        "withholding",
-        "remit",
-        "refund",
+        "frm1700:",
+        "frm1701:",
+        "frm1701a:",
+        "frm1701ms:",
+        "frm1701q:",
+        "frm1702ex:",
+        "frm1702mx:",
+        "frm1702q:",
+        "frm1702rt:",
     ]
     .iter()
-    .any(|tok| pl.contains(tok))
+    .any(|prefix| lower.starts_with(prefix))
+}
+
+/// Format an unformatted plain-cell whole-peso integer (`"250000"`, `"-50000"`,
+/// `"(1250000)"`) with thousands commas (`"250,000"`, `"-50,000"`, `"(1,250,000)"`).
+/// Returns `None` when the text already has commas or has 3 or fewer digits.
+fn format_plain_whole_peso_with_commas(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.contains(',') {
+        return None;
+    }
+    let (prefix, digits, suffix) =
+        if let Some(inner) = trimmed.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
+            ("(", inner.trim(), ")")
+        } else if let Some(rest) = trimmed.strip_prefix('-') {
+            ("-", rest.trim(), "")
+        } else {
+            ("", trimmed, "")
+        };
+    if digits.len() <= 3 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!("{prefix}{}{suffix}", group_thousands(digits)))
+}
+
+/// Whether a cell (by writer key or printed caption) represents a currency/money amount.
+fn is_amount_typed_cell(key: &str, caption: Option<&str>) -> bool {
+    if let Some(caption) = caption {
+        let pl = caption.to_ascii_lowercase();
+        let words: Vec<&str> = pl
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|w| !w.is_empty())
+            .collect();
+        for excluded_phrase in [
+            "%",
+            "percent",
+            "taxable year",
+            "calendar year",
+            "fiscal year",
+            "year ended",
+            "year incurred",
+            "year of",
+            "description",
+            "classification",
+            "remarks",
+            "taxpayer identification",
+            "address",
+            "email",
+            "phone",
+            "title",
+            "quantity",
+            "volume",
+        ] {
+            if pl.contains(excluded_phrase) {
+                return false;
+            }
+        }
+        for excluded_word in [
+            "rate", "rates", "date", "dates", "tin", "zip", "rdo", "atc", "code", "codes", "seq",
+            "sheet", "sheets", "page", "pages", "name", "names", "tel", "area", "share", "shares",
+            "qty", "unit", "units", "count", "stock", "stocks",
+        ] {
+            if words.contains(&excluded_word) {
+                return false;
+            }
+        }
+        if pl.ends_with(" year") {
+            return false;
+        }
+        if is_amount_typed_key(key) {
+            return true;
+        }
+        return [
+            "sales",
+            "receipt",
+            "revenue",
+            "fees",
+            "returns",
+            "cost",
+            "gross",
+            "income",
+            "deduct",
+            "nolco",
+            "credit",
+            "payment",
+            "tax",
+            "mcit",
+            "amount",
+            "total",
+            "balance",
+            "payable",
+            "overpay",
+            "excess",
+            "loss",
+            "allowance",
+            "exemption",
+            "dividend",
+            "royalt",
+            "compensation",
+            "expense",
+            "asset",
+            "liabilit",
+            "equity",
+            "capital",
+            "profit",
+            "fmv",
+            "zonal",
+            "value",
+            "surcharge",
+            "interest",
+            "compromise",
+            "penalt",
+            "withheld",
+            "withholding",
+            "remit",
+            "refund",
+        ]
+        .iter()
+        .any(|tok| pl.contains(tok));
+    }
+    is_amount_typed_key(key)
 }
 
 /// Whether a writer key represents a currency/money amount field (not a rate,
@@ -2727,9 +2764,23 @@ fn fill_text_input(
         let formatted_rate = is_pct_rate_cell
             .then(|| format_percentage_rate(print, has_preprinted_percent_beside(html, input_name)))
             .flatten();
-        let display = formatted_rate.as_deref().unwrap_or(print);
-        let center_short_code =
-            !is_rate_cell && via_cell && !split && is_short_code_cell(name, caption, display);
+        let center_short_code = !is_rate_cell
+            && via_cell
+            && !split
+            && is_short_code_cell(name, caption, formatted_rate.as_deref().unwrap_or(print));
+        let formatted_plain_whole_peso = (!is_rate_cell
+            && !center_short_code
+            && via_cell
+            && !split
+            && is_whole_peso_writer_key(name)
+            && is_amount_typed_cell(name, caption)
+            && is_formatted_whole_peso_amount(print))
+        .then(|| format_plain_whole_peso_with_commas(print))
+        .flatten();
+        let display = formatted_rate
+            .as_deref()
+            .or(formatted_plain_whole_peso.as_deref())
+            .unwrap_or(print);
         // A value longer than its plain input wraps onto two lines when the
         // cell is at least 18 pt tall, shrinks down to PLAIN_TEXT_MIN_PT, and
         // truncates with "..." + an overflow warning if it still does not fit;
@@ -10884,5 +10935,160 @@ mod donor_estate_print_tests {
                 "{slug} second-person branch code {kb} must print over preprinted 00000"
             );
         }
+    }
+
+    #[test]
+    fn form_1701_schedule_3a_ten_digit_overflow_and_nine_digit_neighbor() {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "frm1701:txtPg2IShed3_8A".to_string(),
+            "1234567890".to_string(),
+        );
+        fields.insert(
+            "frm1701:txtPg2IShed3_8B".to_string(),
+            "987654321".to_string(),
+        );
+        let html = filled_document("1701-2018", &fields).expect("1701-2018 renders");
+        let tags = super::input_tags(&html);
+
+        // 10-digit amount overflows the 9-slot comb into a plain right-aligned
+        // comma-formatted rectangle (RULES 2).
+        let marker = "data-overflow-of=\"p2c98\"";
+        let pos = html
+            .find(marker)
+            .expect("10-digit Schedule 3.A 8A must render as a plain overflow rectangle");
+        let start = html[..pos].rfind("<input").expect("overflow <input");
+        let end = pos + html[pos..].find('>').expect("closing >") + 1;
+        let overflow_tag = &html[start..end];
+        assert_eq!(super::attr(overflow_tag, "value"), Some("1,234,567,890"));
+        let style = super::attr(overflow_tag, "style").unwrap_or("");
+        assert!(
+            style.contains("text-align:right") && style.contains("justify-content:flex-end"),
+            "10-digit overflow must right-align, got: {style}"
+        );
+        assert!(
+            super::attr(overflow_tag, "data-rect-box").is_some(),
+            "10-digit overflow must strip internal comb ticks via data-rect-box"
+        );
+
+        // Neighboring 9-digit amount keeps its 9 comb boxes untouched.
+        assert!(
+            !html.contains("data-overflow-of=\"p2c99\""),
+            "9-digit neighbor 8B must stay in its comb boxes"
+        );
+        let comb_digits: String = tags
+            .iter()
+            .filter(|t| t.name == "p2c99")
+            .filter_map(|t| super::attr(t.tag, "value"))
+            .collect();
+        assert_eq!(comb_digits, "987654321");
+    }
+
+    #[test]
+    fn form_1701_schedule_6_amounts_right_align_with_commas_and_respect_75pt_floor() {
+        let mut fields = BTreeMap::new();
+        fields.insert("frm1701:txtPg3IShed6_4Year".to_string(), "2023".to_string());
+        fields.insert("frm1701:txtPg3IShed6_4A".to_string(), "1250000".to_string());
+        fields.insert("frm1701:txtPg3IShed6_4B".to_string(), "250000".to_string());
+        fields.insert("frm1701:txtPg3IShed6_4C".to_string(), "0".to_string());
+        fields.insert("frm1701:txtPg3IShed6_4D".to_string(), "500000".to_string());
+        fields.insert("frm1701:txtPg3IShed6_4E".to_string(), "500000".to_string());
+        fields.insert("frm1701:txtPg3IShed6_8D".to_string(), "1500000".to_string());
+        fields.insert("frm1701:txtPg4IShed6_9A".to_string(), "850000".to_string());
+        fields.insert("frm1701:txtPg4IShed6_13D".to_string(), "425000".to_string());
+        let html = filled_document("1701-2018", &fields).expect("1701-2018 renders");
+        let tags = super::input_tags(&html);
+
+        // Year Incurred stays unformatted (no comma, not right-aligned as money).
+        let year = tags
+            .iter()
+            .find(|t| t.name == "p3c157")
+            .expect("p3c157 year incurred");
+        assert_eq!(super::attr(year.tag, "value"), Some("2023"));
+
+        // Every Schedule 6 amount cell right-aligns with thousands commas and no centavos.
+        for (cell_id, expected) in [
+            ("p3c158", "1,250,000"),
+            ("p3c159", "250,000"),
+            ("p3c160", "0"),
+            ("p3c161", "500,000"),
+            ("p3c162", "500,000"),
+            ("p3c186", "1,500,000"),
+            ("p4c18", "850,000"),
+            ("p4c46", "425,000"),
+        ] {
+            let tag = tags
+                .iter()
+                .find(|t| t.name == cell_id)
+                .unwrap_or_else(|| panic!("missing Schedule 6 cell {cell_id}"));
+            assert_eq!(
+                super::attr(tag.tag, "value"),
+                Some(expected),
+                "Schedule 6 cell {cell_id} must format whole pesos with commas"
+            );
+            let style = super::attr(tag.tag, "style").unwrap_or("");
+            assert!(
+                style.contains("text-align:right") && style.contains("justify-content:flex-end"),
+                "Schedule 6 cell {cell_id} must right-align, got: {style}"
+            );
+        }
+
+        // No 4.5px / sub-7.5pt print-overrides shrink rule remains on p3c186-i.
+        assert!(
+            !html.contains("#p3c186-i"),
+            "print-overrides must not shrink #p3c186-i below 7.5pt"
+        );
+    }
+
+    #[test]
+    fn form_1701a_part_ivb_additional_sheet_omits_stray_zero_centavo_boxes() {
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "frm1701A:txtTaxpayerName".to_string(),
+            "SANTOS, JUANA MARIE".to_string(),
+        );
+        for n in 1..=4 {
+            fields.insert(
+                format!("frm1701A:txtmodalPartIVBDesc_{n}C1"),
+                format!("OTHER INCOME ITEM {n}"),
+            );
+            fields.insert(
+                format!("frm1701A:txtmodalPartIVB_{n}C2"),
+                format!("{}.00", n * 50_000),
+            );
+            // Unused spouse column carries "0.00" in the official modal payload.
+            fields.insert(
+                format!("frm1701A:txtmodalPartIVB_{n}C3"),
+                "0.00".to_string(),
+            );
+        }
+        let html = filled_document("1701a-2018", &fields).expect("1701a-2018 renders");
+        let tags = super::input_tags(&html);
+
+        // Overflow rows 3 and 4 print on the band continuation page.
+        let cont_p2c64_digits: String = tags
+            .iter()
+            .filter(|t| t.name.starts_with("cont_") && t.name.ends_with("_p2c64"))
+            .filter_map(|t| super::attr(t.tag, "value"))
+            .collect();
+        assert!(
+            cont_p2c64_digits.contains("150000") && cont_p2c64_digits.contains("200000"),
+            "continuation Part IV-B taxpayer amounts must print as whole pesos, got: {cont_p2c64_digits:?}"
+        );
+        assert!(
+            !cont_p2c64_digits.contains('.'),
+            "continuation Part IV-B taxpayer whole-peso comb must not emit centavos, got: {cont_p2c64_digits:?}"
+        );
+
+        // Unused spouse column (0.00) must stay blank — no stray "0 . 0 0" boxes.
+        let cont_p2c65_digits: String = tags
+            .iter()
+            .filter(|t| t.name.starts_with("cont_") && t.name.ends_with("_p2c65"))
+            .filter_map(|t| super::attr(t.tag, "value"))
+            .collect();
+        assert!(
+            cont_p2c65_digits.trim().is_empty(),
+            "unused spouse column on 1701A Part IV-B additional sheet must stay blank, got: {cont_p2c65_digits:?}"
+        );
     }
 }

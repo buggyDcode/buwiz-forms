@@ -1206,12 +1206,30 @@ fn build_single_band_continuation_page(
                         } => {
                             let val = row.values.get(*col_idx).cloned().unwrap_or_default();
                             if !val.is_empty() {
-                                // Preserve the original writer_key prefix so
-                                // frozen_html's amount/quantity right-alignment
-                                // rules match identically to the official page.
                                 let syn_key = format!("{orig_writer_key}__cont_{syn_id}");
-                                syn_fields.insert(syn_key.clone(), val);
-                                extra_joins.entry(syn_key).or_default().push(syn_id);
+                                // Whole-peso amount combs cloned onto a band
+                                // continuation page (e.g. 1701A Part IV-A/IV-B
+                                // p2c31/p2c32/p2c64/p2c65) receive raw modal
+                                // amounts like "50000.00" and "0.00". Leave
+                                // zero amounts blank (matching the official
+                                // sheet and RULES 7 — avoiding stray "0 . 0 0"
+                                // boxes) and route non-zero amounts through
+                                // `extra_peso_joins` so they print as right-
+                                // aligned whole pesos (or RULES 2 overflow).
+                                if src_cell.raw_html.contains("data-comb-slots=")
+                                    && is_whole_peso_comb_key(orig_writer_key)
+                                {
+                                    if !is_numeric_zero(&val) {
+                                        syn_fields.insert(syn_key.clone(), val);
+                                        extra_peso_joins.push((syn_key, syn_id));
+                                    }
+                                } else {
+                                    // Preserve the original writer_key prefix so
+                                    // frozen_html's amount/quantity right-alignment
+                                    // rules match identically to the official page.
+                                    syn_fields.insert(syn_key.clone(), val);
+                                    extra_joins.entry(syn_key).or_default().push(syn_id);
+                                }
                             }
                         }
                         CellJoinKind::Money {
@@ -1603,6 +1621,28 @@ fn strip_templates(html: &str) -> String {
     }
     out.push_str(&html[cur..]);
     out
+}
+
+fn is_whole_peso_comb_key(key: &str) -> bool {
+    key.starts_with("derived:p2_")
+        || key.starts_with("derived:p3_")
+        || key.starts_with("derived:tp_p")
+        || key.starts_with("derived:sp_p")
+        || key.starts_with("derived:amount_")
+}
+
+fn is_numeric_zero(val: &str) -> bool {
+    let trimmed = val.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    let bare: String = trimmed
+        .chars()
+        .filter(|c| *c != ',' && *c != '(' && *c != ')')
+        .collect();
+    bare.parse::<f64>()
+        .map(|n| n.is_finite() && n.abs() < 0.005)
+        .unwrap_or(false)
 }
 
 fn strip_html_tags(s: &str) -> String {
