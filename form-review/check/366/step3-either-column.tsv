@@ -1,0 +1,8 @@
+box_key	gate_rule	head_live_ui	typed_value	saved_after_compute	upload_xml_behavior	official_basis
+frm1701:txtPg2IShed3_19Desc	either-graduated	open	SPOUSE CONSULTING FEE 19	SPOUSE CONSULTING FEE 19	emitted (any_graduated=true)	official behavior (single shared DOM input enabled by enableFieldsForGRRate, not disabled by disableFieldsForEightPerRate)
+frm1701:txtPg2IShed3_20Desc	either-graduated	open	SPOUSE ROYALTY FEE 20	SPOUSE ROYALTY FEE 20	emitted (any_graduated=true)	official behavior (single shared DOM input enabled by enableFieldsForGRRate, not disabled by disableFieldsForEightPerRate)
+frm1701:txtPg3IShed4_17dDesc	either-itemized	open	SPOUSE OFFICE SUPPLIES 17D	SPOUSE OFFICE SUPPLIES 17D	emitted (itemized_any=true)	official behavior (single shared DOM input for row 17d, kept enabled when either column is itemized)
+frm1701:txtPg2IShed3_19A	taxpayer-graduated	shut	-	0.0	0.00 (taxpayer is 8%)	correctly shut
+frm1701:txtPg2IShed3_19B	spouse-graduated	open	5000	5000.0 (5,000.00)	5000.00	correctly open
+frm1701:txtPg3IShed4_17dA	taxpayer-itemized	shut	-	0.0	0.00 (taxpayer is 8%)	correctly shut
+frm1701:txtPg3IShed4_17dB	spouse-itemized	open	2500	2500.0 (2,500.00)	2500.00 (Item 18B=2,500.00)	correctly open
