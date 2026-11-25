@@ -3,6 +3,7 @@ use bir_core::forms::form_1604e::Form1604eDraft;
 use bir_core::forms::form_1701::{
     Form1701CivilStatus, Form1701Draft, Form1701EmployerRow, Form1701Party,
 };
+use bir_core::forms::form_1702mx::{Form1702MXDraft, WholePeso};
 use bir_core::forms::form_1707a::Form1707ADraft;
 use bir_core::forms::form_1800::{
     Form1800Donee, Form1800Draft, Form1800PersonalProperty, Form1800RealProperty,
@@ -316,4 +317,64 @@ fn form_2200s_prints_schedule1_rows_and_part_iii_items() {
     assert_eq!(printed_cell(&doc, "p2c106").0, "9,000.00");
     // Grand total still prints
     assert_eq!(printed_cell(&doc, "p2c115").0, "129,006.00");
+}
+
+#[test]
+fn form_1702mx_prints_part_ii_and_schedule_1_details() {
+    let profile = demo_profile();
+    let mut d = Form1702MXDraft::new_from_profile(&profile, 2025);
+    d.relief_details.investment_promotion_agency = ["PEZA".into(), "BOI".into(), "SBMA".into()];
+    d.relief_details.legal_basis = ["RA 7916".into(), "EO 226".into(), "RA 7227".into()];
+    d.relief_details.registered_activity =
+        ["IT BPO".into(), "EXPORT MFG".into(), "LOGISTICS".into()];
+    d.schedule_2.items[0].exempt.set(WholePeso(123_456_789));
+    d.schedule_2.items[0].special.set(WholePeso(234_567_890));
+    d.schedule_2.items[0].regular.set(WholePeso(345_678_901));
+    d.schedule_3.items_20_to_33[0]
+        .regular
+        .set(WholePeso(10_000_000));
+    d.penalty.penalty_overrides.surcharge = Some(1_234.0);
+    d.penalty.penalty_overrides.interest = Some(2_345.0);
+    d.penalty.penalty_overrides.compromise = Some(3_456.0);
+    d.recompute();
+
+    let map = d.to_print_field_map();
+    let doc = filled_document("1702mx-2018c", &map).expect("1702mx-2018c render");
+
+    // Part II Items 14-21 (whole-peso combs)
+    assert_eq!(
+        printed_cell(&doc, "p1c59").0,
+        d.part_ii.item_14_total_tax_due_or_overpayment.0.to_string()
+    );
+    assert_eq!(
+        printed_cell(&doc, "p1c61").0,
+        d.part_ii.item_15_total_tax_credits.0.to_string()
+    );
+    assert_eq!(
+        printed_cell(&doc, "p1c63").0,
+        d.part_ii
+            .item_16_net_tax_payable_or_overpayment
+            .0
+            .to_string()
+    );
+    assert_eq!(printed_cell(&doc, "p1c66").0, "1234");
+    assert_eq!(printed_cell(&doc, "p1c68").0, "2345");
+    assert_eq!(printed_cell(&doc, "p1c70").0, "3456");
+    assert_eq!(printed_cell(&doc, "p1c72").0, "7035");
+
+    // Schedule 1 Items 1-3 (Investment Promotion Agency, Legal Basis, Registered Activity)
+    assert_eq!(printed_cell(&doc, "p2c17").0, "PEZA");
+    assert_eq!(printed_cell(&doc, "p2c18").0, "BOI");
+    assert_eq!(printed_cell(&doc, "p2c19").0, "SBMA");
+    assert_eq!(printed_cell(&doc, "p2c21").0, "RA 7916");
+    assert_eq!(printed_cell(&doc, "p2c22").0, "EO 226");
+    assert_eq!(printed_cell(&doc, "p2c23").0, "RA 7227");
+    assert_eq!(printed_cell(&doc, "p2c25").0, "IT BPO");
+    assert_eq!(printed_cell(&doc, "p2c26").0, "EXPORT MFG");
+    assert_eq!(printed_cell(&doc, "p2c27").0, "LOGISTICS");
+
+    // Schedule 2 sales row
+    assert_eq!(printed_cell(&doc, "p2c70").0, "123456789");
+    assert_eq!(printed_cell(&doc, "p2c71").0, "234567890");
+    assert_eq!(printed_cell(&doc, "p2c72").0, "345678901");
 }

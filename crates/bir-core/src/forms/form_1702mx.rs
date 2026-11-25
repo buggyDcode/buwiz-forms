@@ -399,7 +399,7 @@ impl Form1702MXDraft {
     /// - `derived:year_end_mm1` / `_mm2` / `_yy1` / `_yy2`: Item 2 Year
     ///   Ended (MM/20YY) over its four digit boxes.
     pub fn to_print_field_map(&self) -> BTreeMap<String, String> {
-        let mut fields = self.to_bir_field_map();
+        let mut fields = self.to_official_field_map();
         let tin_digits = super::print_map::digits_of(
             &fields,
             &[
