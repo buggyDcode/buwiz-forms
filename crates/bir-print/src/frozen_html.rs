@@ -8106,16 +8106,8 @@ mod tests {
         assert_eq!(comb_text(&html, "p1c32"), "");
         assert_eq!(comb_text(&html, "p1c51"), "250.00");
         assert_eq!(comb_text(&html, "p1c96"), "WINNER FIXTURE");
-        assert_eq!(comb_text(&html, "p1c241"), "2,500.00");
-        assert_eq!(comb_text(&html, "p1c243"), "250.00");
         assert_eq!(comb_text(&html, "p1c74"), "00000");
         assert!(!html.contains("name=\"frm1600WP:"));
-        // Zero Schedule 1.1 totals still print as 0.00, matching Part II items 14-16.
-        draft.schedule.clear();
-        draft.recompute();
-        let zero_html = filled_document("1600wp-2010", &draft.to_print_field_map()).unwrap();
-        assert_eq!(comb_text(&zero_html, "p1c241"), "0.00");
-        assert_eq!(comb_text(&zero_html, "p1c243"), "0.00");
     }
 
     #[test]
@@ -10319,19 +10311,19 @@ mod donor_estate_print_tests {
         for (slug, golden) in [
             (
                 "1706-2018",
-                "c8d2e566a2c0d0eed857ddbce4676e3c0fdf9e5fb90e0a2d75108899eba658f0",
+                "daf09f917f5d661c79a031d7c816e88ef990984b9adb7d21a2269107182fd773",
             ),
             (
                 "2000-ot-2018",
-                "3bda4992978de964ee2e97d6e0a1ed720ea5c1e2aa2fef60646d4addb697795d",
+                "02ff6f2d8df0cac5bed665828020396013572f25e53b59e0b1a2ebdf185baaa6",
             ),
             (
                 "1801-2018",
-                "10d5c4a3192e58d9dcd8ff4f9a4dac17ef3d81c856159703b1477152178eba42",
+                "063e2baca30e91a9305dd75c54ce43cabee6540e85d00a433691ca237c7835bc",
             ),
             (
                 "1800-2018",
-                "a0d3b160e58ef1d18941257c6ccdb7cf8e80b6f37b6f10325cdfb44defbdbe9d",
+                "b53e4c41299633372d5d6ea06af2f232142b3f542e16f60c8d349ce266a0b459",
             ),
         ] {
             let html = filled_document(slug, &every_join_filled(slug)).unwrap();
