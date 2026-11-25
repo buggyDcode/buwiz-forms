@@ -1,0 +1,74 @@
+{
+  "before": {
+    "pages": 4,
+    "blank_pages": [
+      4
+    ],
+    "old_fallback_pages": [],
+    "tables": {
+      "Schedule 1 (Minerals 16 rows)": {
+        "held": 16,
+        "printed_once": 0,
+        "missing": [
+          "MINERAL-01",
+          "MINERAL-02",
+          "MINERAL-03",
+          "MINERAL-04",
+          "MINERAL-05",
+          "MINERAL-06",
+          "MINERAL-07",
+          "MINERAL-08"
+        ],
+        "duped": [
+          "MINERAL-09",
+          "MINERAL-10",
+          "MINERAL-11",
+          "MINERAL-12",
+          "MINERAL-13",
+          "MINERAL-14",
+          "MINERAL-15",
+          "MINERAL-16"
+        ],
+        "in_order": false,
+        "exp_total": "31,130.00",
+        "tot_in_pdf": "True"
+      }
+    }
+  },
+  "after": {
+    "pages": 4,
+    "blank_pages": [
+      4
+    ],
+    "old_fallback_pages": [],
+    "tables": {
+      "Schedule 1 (Minerals 16 rows)": {
+        "held": 16,
+        "printed_once": 0,
+        "missing": [
+          "MINERAL-01",
+          "MINERAL-02",
+          "MINERAL-03",
+          "MINERAL-04",
+          "MINERAL-05",
+          "MINERAL-06",
+          "MINERAL-07",
+          "MINERAL-08"
+        ],
+        "duped": [
+          "MINERAL-09",
+          "MINERAL-10",
+          "MINERAL-11",
+          "MINERAL-12",
+          "MINERAL-13",
+          "MINERAL-14",
+          "MINERAL-15",
+          "MINERAL-16"
+        ],
+        "in_order": false,
+        "exp_total": "31,130.00",
+        "tot_in_pdf": "True"
+      }
+    }
+  }
+}
