@@ -671,6 +671,8 @@ impl Form1701Draft {
             fields.insert(format!("derived:sched1_row{n}_name_line2"), line2);
             fields.insert(format!("derived:sched1_row{n}_tin"), tin);
         }
+        let official = self.to_official_field_map();
+        super::print_map::match_upload_case("1701-v2018", &mut fields, Some(&official));
         fields
     }
 

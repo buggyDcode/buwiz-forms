@@ -2166,9 +2166,9 @@ mod tests {
         ];
         let fields = d.to_print_field_map();
         let line = |n: &str| fields[&format!("frm1702MX:txtPg1Pt1I10RegisteredAddress{n}")].clone();
-        assert_eq!(line(""), "Unit 5 Bldg A, 123 Ayala Avenue, Makati City");
+        assert_eq!(line(""), "UNIT 5 BLDG A, 123 AYALA AVENUE, MAKATI CITY");
         assert_eq!(line("2"), "", "already in the address");
-        assert_eq!(line("3"), "Annex Tower", "a line of its own still prints");
+        assert_eq!(line("3"), "ANNEX TOWER", "a line of its own still prints");
         // The upload keeps every line as stored.
         let upload = d.to_bir_field_map();
         assert_eq!(

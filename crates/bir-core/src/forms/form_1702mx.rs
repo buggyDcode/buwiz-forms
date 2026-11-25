@@ -400,9 +400,10 @@ impl Form1702MXDraft {
     ///   Ended (MM/20YY) over its four digit boxes.
     pub fn to_print_field_map(&self) -> BTreeMap<String, String> {
         let mut fields = self.to_bir_field_map();
-        // Overlay official values onto every key already in the sheet-aligned map,
-        // plus Part II Items 14-16 and Schedule 1-2 keys that `to_bir_field_map()`
-        // omitted (leaving unmapped Schedule 6/9 popup keys out of the print map).
+        // Overlay every official field value onto the sheet-aligned print map
+        // so all joined schedules (Part II Items 14-16 and Schedules 1-10) print
+        // the exact official values, skipping only official keys that
+        // `1702mx-2018c/writer-cells.json` does not yet join or list in `not_joined`.
         for (k, v) in self.to_official_field_map() {
             if matches!(
                 k.as_str(),
@@ -410,25 +411,26 @@ impl Form1702MXDraft {
                     | "frm1702MX:txtPg2Pt4I34SpecialTaxRate"
                     | "frm1702MX:txtPg2Sc2It14B"
                     | "frm1702MX:txtPg2Sc2It14C"
+                    | "frm1702MX:txtPg3Sc6I1CB"
+                    | "frm1702MX:txtPg3Sc6I2CB"
+                    | "frm1702MX:txtPg4Sc6I3CB"
             ) || k.starts_with("frm1702MX:txtPg2Pt4I35")
                 || k.starts_with("frm1702MX:txtPg2Pt4I36")
+                || k.starts_with("frm1702MX:txtPg3Sc6I4C")
+                || k.starts_with("frm1702MX:txtPg6Sc6_")
+                || ((k.starts_with("frm1702MX:txtPg6Sc6I1")
+                    || k.starts_with("frm1702MX:txtPg6Sc6I2")
+                    || k.starts_with("frm1702MX:txtPg6Sc6I3"))
+                    && (k.ends_with("CA") || k.ends_with("CC") || k.ends_with("CD")))
+                || (k.starts_with("frm1702MX:txtPg7Sc9I")
+                    && (k.ends_with("CD")
+                        || k.ends_with("CE")
+                        || k.ends_with("CF")
+                        || k.ends_with("CG")))
             {
                 continue;
             }
-            if fields.contains_key(&k)
-                || matches!(
-                    k.as_str(),
-                    "frm1702MX:txtPg1Pt2I14TotalIncome"
-                        | "frm1702MX:txtPg1Pt2I15LessTotalTax"
-                        | "frm1702MX:txtPg1Pt2I16NetTaxPayable"
-                )
-                || k.starts_with("frm1702MX:txtPg2Sc2")
-                || k.starts_with("frm1702MX:txtPg2Pt4I31")
-                || k.starts_with("frm1702MX:txtPg2Pt4I32")
-                || k.starts_with("frm1702MX:txtPg2Pt4I33")
-            {
-                fields.insert(k, v);
-            }
+            fields.insert(k, v);
         }
         let tin_digits = super::print_map::digits_of(
             &fields,
@@ -471,6 +473,7 @@ impl Form1702MXDraft {
                 fields.insert(format!("derived:year_end_{name}{}", at + 1), digit.clone());
             }
         }
+        super::print_map::match_upload_case("1702mx-v2018c", &mut fields, None);
         fields
     }
 
