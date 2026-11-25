@@ -1,0 +1,6 @@
+# 1800 Independent Band-Flow Check — Data Excerpt
+
+## Case overflow
+  - Real Properties (12): 12 rows, exp_total=798,000.00, markers=['REALPROP-01', 'REALPROP-02', 'REALPROP-03', 'REALPROP-04']..REALPROP-12
+  - Personal Properties (12): 12 rows, exp_total=159,000.00, markers=['PERSPROP-01', 'PERSPROP-02', 'PERSPROP-03', 'PERSPROP-04']..PERSPROP-12
+
