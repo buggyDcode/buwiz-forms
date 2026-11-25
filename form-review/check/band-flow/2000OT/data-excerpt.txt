@@ -1,0 +1,6 @@
+# 2000OT Independent Band-Flow Check — Data Excerpt
+
+## Case overflow
+  - Real Properties (10): 10 rows, exp_total=955,000.00, markers=['OTPROP-01', 'OTPROP-02', 'OTPROP-03', 'OTPROP-04']..OTPROP-10
+  - Shares (10): 10 rows, exp_total=15,500.00, markers=['OTCORP-01', 'OTCORP-02', 'OTCORP-03', 'OTCORP-04']..OTCORP-10
+
