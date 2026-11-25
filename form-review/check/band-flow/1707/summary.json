@@ -1,0 +1,96 @@
+{
+  "before": {
+    "pages": 5,
+    "blank_pages": [
+      5
+    ],
+    "old_fallback_pages": [
+      1,
+      2
+    ],
+    "tables": {
+      "Schedule 2 (Shares)": {
+        "held": 12,
+        "printed_once": 9,
+        "missing": [
+          "SHARESCORP-01",
+          "SHARESCORP-02",
+          "SHARESCORP-03"
+        ],
+        "duped": [],
+        "in_order": false,
+        "exp_total": "206,666.58",
+        "tot_in_pdf": "True"
+      },
+      "Schedule 3 (Expenses)": {
+        "held": 12,
+        "printed_once": 0,
+        "missing": [
+          "EXPITEM-01",
+          "EXPITEM-02",
+          "EXPITEM-03",
+          "EXPITEM-04",
+          "EXPITEM-05",
+          "EXPITEM-06",
+          "EXPITEM-07",
+          "EXPITEM-08",
+          "EXPITEM-09",
+          "EXPITEM-10",
+          "EXPITEM-11",
+          "EXPITEM-12"
+        ],
+        "duped": [],
+        "in_order": false,
+        "exp_total": "15,629.10",
+        "tot_in_pdf": "False"
+      }
+    }
+  },
+  "after": {
+    "pages": 5,
+    "blank_pages": [
+      5
+    ],
+    "old_fallback_pages": [
+      1,
+      2
+    ],
+    "tables": {
+      "Schedule 2 (Shares)": {
+        "held": 12,
+        "printed_once": 9,
+        "missing": [
+          "SHARESCORP-01",
+          "SHARESCORP-02",
+          "SHARESCORP-03"
+        ],
+        "duped": [],
+        "in_order": false,
+        "exp_total": "206,666.58",
+        "tot_in_pdf": "True"
+      },
+      "Schedule 3 (Expenses)": {
+        "held": 12,
+        "printed_once": 0,
+        "missing": [
+          "EXPITEM-01",
+          "EXPITEM-02",
+          "EXPITEM-03",
+          "EXPITEM-04",
+          "EXPITEM-05",
+          "EXPITEM-06",
+          "EXPITEM-07",
+          "EXPITEM-08",
+          "EXPITEM-09",
+          "EXPITEM-10",
+          "EXPITEM-11",
+          "EXPITEM-12"
+        ],
+        "duped": [],
+        "in_order": false,
+        "exp_total": "15,629.10",
+        "tot_in_pdf": "False"
+      }
+    }
+  }
+}

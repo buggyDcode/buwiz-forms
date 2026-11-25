@@ -1,0 +1,5 @@
+form	commit	side	table	held_rows	printed_once	missing_count	duped_count	in_order	exp_total	tot_in_pdf	pages	blank_pages	old_fallback_pages
+1707	b9552e27	before	Schedule 2 (Shares)	12	9	3	0	False	206,666.58	True	5	5	1,2
+1707	b9552e27	before	Schedule 3 (Expenses)	12	0	12	0	False	15,629.10	False	5	5	1,2
+1707	4321b79b	after	Schedule 2 (Shares)	12	9	3	0	False	206,666.58	True	5	5	1,2
+1707	4321b79b	after	Schedule 3 (Expenses)	12	0	12	0	False	15,629.10	False	5	5	1,2
