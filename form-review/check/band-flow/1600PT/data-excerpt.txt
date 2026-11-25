@@ -1,0 +1,36 @@
+# 1600PT Part II Independent Check — Data Excerpt
+
+## Case cap5 (Month 1, 5 rows held in saved draft, total_tax_withheld=1,343.29)
+  row 01: atc=WB030 base=10111.01 rate=3.0% withheld=303.33
+  row 02: atc=WB040 base=10222.02 rate=2.0% withheld=204.44
+  row 03: atc=WB050 base=10333.03 rate=3.0% withheld=309.99
+  row 04: atc=WB070 base=10444.04 rate=2.0% withheld=208.88
+  row 05: atc=WB080 base=10555.05 rate=3.0% withheld=316.65
+
+## Case cap8 (Month 2, 8 rows held in saved draft, total_tax_withheld=1,882.14)
+  row 01: atc=WB030 base=10111.01 rate=3.0% withheld=303.33
+  row 02: atc=WB040 base=10222.02 rate=2.0% withheld=204.44
+  row 03: atc=WB050 base=10333.03 rate=3.0% withheld=309.99
+  ... (2 middle rows omitted, all distinct bases) ...
+  row 06: atc=WB080 base=10666.06 rate=1.0% withheld=106.66
+  row 07: atc=WB082 base=10777.07 rate=3.0% withheld=323.31
+  row 08: atc=WB082 base=10888.08 rate=1.0% withheld=108.88
+
+## Case cap31 (Month 3, 31 rows held in saved draft, total_tax_withheld=20,653.65)
+  row 01: atc=WB030 base=10111.01 rate=3.0% withheld=303.33
+  row 02: atc=WB040 base=10222.02 rate=2.0% withheld=204.44
+  row 03: atc=WB050 base=10333.03 rate=3.0% withheld=309.99
+  ... (25 middle rows omitted, all distinct bases) ...
+  row 29: atc=WB108 base=13219.29 rate=5.0% withheld=660.96
+  row 30: atc=WB109 base=13330.30 rate=1.0% withheld=133.30
+  row 31: atc=WB110 base=13441.31 rate=5.0% withheld=672.07
+
+## Case cap40 (Month 4, 40 rows held in saved draft, total_tax_withheld=23,588.44)
+  row 01: atc=WB030 base=10111.01 rate=3.0% withheld=303.33
+  row 02: atc=WB040 base=10222.02 rate=2.0% withheld=204.44
+  row 03: atc=WB050 base=10333.03 rate=3.0% withheld=309.99
+  ... (34 middle rows omitted, all distinct bases) ...
+  row 38: atc=WB082 base=14218.38 rate=3.0% withheld=426.55
+  row 39: atc=WB082 base=14329.39 rate=1.0% withheld=143.29
+  row 40: atc=WB084 base=14440.40 rate=3.0% withheld=433.21
+

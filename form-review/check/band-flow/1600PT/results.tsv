@@ -1,0 +1,9 @@
+form	commit	side	case	table	held_rows	printed_once	missing	duped	in_order	exp_tax_withheld	printed_tot_in_pdf	rate_row1	pages	cont_pages_ok	blank_pages	preview_eq_pdf
+1600PT	b9552e27	before	cap5	Part II ATC	5	5	none	none	True	1,343.29	True	None	2	NA	none	False
+1600PT	b9552e27	before	cap8	Part II ATC	8	5	r6:WB080,r7:WB082,r8:WB082	none	False	1,882.14	True	None	2	NA	none	False
+1600PT	b9552e27	before	cap31	Part II ATC	31	5	r6:WB080,r7:WB082,r8:WB082,r9:WB084,r10:WB084,r11:WB090,r12:WB120,r13:WB121,r14:WB130,r15:WB140,r16:WB150,r17:WB160,r18:WB170,r19:WB180,r20:WB200,r21:WB201,r22:WB202,r23:WB203,r24:WB301,r25:WB303,r26:WB102,r27:WB103,r28:WB104,r29:WB108,r30:WB109,r31:WB110	none	False	20,653.65	True	None	2	NA	none	False
+1600PT	b9552e27	before	cap40	Part II ATC	40	5	r6:WB080,r7:WB082,r8:WB082,r9:WB084,r10:WB084,r11:WB090,r12:WB120,r13:WB121,r14:WB130,r15:WB140,r16:WB150,r17:WB160,r18:WB170,r19:WB180,r20:WB200,r21:WB201,r22:WB202,r23:WB203,r24:WB301,r25:WB303,r26:WB102,r27:WB103,r28:WB104,r29:WB108,r30:WB109,r31:WB110,r32:WB030,r33:WB040,r34:WB050,r35:WB070,r36:WB080,r37:WB080,r38:WB082,r39:WB082,r40:WB084	none	False	23,588.44	True	None	2	NA	none	False
+1600PT	4321b79b	after	cap5	Part II ATC	5	5	none	none	True	1,343.29	True	None	2	NA	none	False
+1600PT	4321b79b	after	cap8	Part II ATC	8	8	none	none	True	1,882.14	True	None	3	False	none	False
+1600PT	4321b79b	after	cap31	Part II ATC	31	31	none	none	True	20,653.65	True	None	3	False	none	False
+1600PT	4321b79b	after	cap40	Part II ATC	40	40	none	none	True	23,588.44	True	None	3	False	none	False

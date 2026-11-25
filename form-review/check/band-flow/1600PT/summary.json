@@ -1,0 +1,220 @@
+{
+  "before": {
+    "cap5": {
+      "pages": 2,
+      "held": 5,
+      "present_once": 5,
+      "missing": [],
+      "duped": [],
+      "in_order": true,
+      "exp_wh": "1,343.29",
+      "tot_in_pdf": true,
+      "rate_row1": null,
+      "cont_checks": [],
+      "blank_pages": [],
+      "preview_matches_pdf": false
+    },
+    "cap8": {
+      "pages": 2,
+      "held": 8,
+      "present_once": 5,
+      "missing": [
+        "r6:WB080",
+        "r7:WB082",
+        "r8:WB082"
+      ],
+      "duped": [],
+      "in_order": false,
+      "exp_wh": "1,882.14",
+      "tot_in_pdf": true,
+      "rate_row1": null,
+      "cont_checks": [],
+      "blank_pages": [],
+      "preview_matches_pdf": false
+    },
+    "cap31": {
+      "pages": 2,
+      "held": 31,
+      "present_once": 5,
+      "missing": [
+        "r6:WB080",
+        "r7:WB082",
+        "r8:WB082",
+        "r9:WB084",
+        "r10:WB084",
+        "r11:WB090",
+        "r12:WB120",
+        "r13:WB121",
+        "r14:WB130",
+        "r15:WB140",
+        "r16:WB150",
+        "r17:WB160",
+        "r18:WB170",
+        "r19:WB180",
+        "r20:WB200",
+        "r21:WB201",
+        "r22:WB202",
+        "r23:WB203",
+        "r24:WB301",
+        "r25:WB303",
+        "r26:WB102",
+        "r27:WB103",
+        "r28:WB104",
+        "r29:WB108",
+        "r30:WB109",
+        "r31:WB110"
+      ],
+      "duped": [],
+      "in_order": false,
+      "exp_wh": "20,653.65",
+      "tot_in_pdf": true,
+      "rate_row1": null,
+      "cont_checks": [],
+      "blank_pages": [],
+      "preview_matches_pdf": false
+    },
+    "cap40": {
+      "pages": 2,
+      "held": 40,
+      "present_once": 5,
+      "missing": [
+        "r6:WB080",
+        "r7:WB082",
+        "r8:WB082",
+        "r9:WB084",
+        "r10:WB084",
+        "r11:WB090",
+        "r12:WB120",
+        "r13:WB121",
+        "r14:WB130",
+        "r15:WB140",
+        "r16:WB150",
+        "r17:WB160",
+        "r18:WB170",
+        "r19:WB180",
+        "r20:WB200",
+        "r21:WB201",
+        "r22:WB202",
+        "r23:WB203",
+        "r24:WB301",
+        "r25:WB303",
+        "r26:WB102",
+        "r27:WB103",
+        "r28:WB104",
+        "r29:WB108",
+        "r30:WB109",
+        "r31:WB110",
+        "r32:WB030",
+        "r33:WB040",
+        "r34:WB050",
+        "r35:WB070",
+        "r36:WB080",
+        "r37:WB080",
+        "r38:WB082",
+        "r39:WB082",
+        "r40:WB084"
+      ],
+      "duped": [],
+      "in_order": false,
+      "exp_wh": "23,588.44",
+      "tot_in_pdf": true,
+      "rate_row1": null,
+      "cont_checks": [],
+      "blank_pages": [],
+      "preview_matches_pdf": false
+    }
+  },
+  "after": {
+    "cap5": {
+      "pages": 2,
+      "held": 5,
+      "present_once": 5,
+      "missing": [],
+      "duped": [],
+      "in_order": true,
+      "exp_wh": "1,343.29",
+      "tot_in_pdf": true,
+      "rate_row1": null,
+      "cont_checks": [],
+      "blank_pages": [],
+      "preview_matches_pdf": false
+    },
+    "cap8": {
+      "pages": 3,
+      "held": 8,
+      "present_once": 8,
+      "missing": [],
+      "duped": [],
+      "in_order": true,
+      "exp_wh": "1,882.14",
+      "tot_in_pdf": true,
+      "rate_row1": null,
+      "cont_checks": [
+        {
+          "page": 2,
+          "form": true,
+          "tin": false,
+          "page_label": true,
+          "has_part2_rows": false,
+          "table_head": true
+        }
+      ],
+      "blank_pages": [],
+      "preview_matches_pdf": false
+    },
+    "cap31": {
+      "pages": 3,
+      "held": 31,
+      "present_once": 31,
+      "missing": [],
+      "duped": [],
+      "in_order": true,
+      "exp_wh": "20,653.65",
+      "tot_in_pdf": true,
+      "rate_row1": null,
+      "cont_checks": [
+        {
+          "page": 2,
+          "form": true,
+          "tin": false,
+          "page_label": true,
+          "has_part2_rows": false,
+          "table_head": true
+        }
+      ],
+      "blank_pages": [],
+      "preview_matches_pdf": false
+    },
+    "cap40": {
+      "pages": 3,
+      "held": 40,
+      "present_once": 40,
+      "missing": [],
+      "duped": [],
+      "in_order": true,
+      "exp_wh": "23,588.44",
+      "tot_in_pdf": true,
+      "rate_row1": null,
+      "cont_checks": [
+        {
+          "page": 1,
+          "form": true,
+          "tin": true,
+          "page_label": true,
+          "has_part2_rows": true,
+          "table_head": true
+        },
+        {
+          "page": 2,
+          "form": true,
+          "tin": false,
+          "page_label": true,
+          "has_part2_rows": true,
+          "table_head": true
+        }
+      ],
+      "blank_pages": [],
+      "preview_matches_pdf": false
+    }
+  }
+}
