@@ -1,0 +1,7 @@
+# 2550M Independent Band-Flow Check — Data Excerpt
+
+## Case overflow
+  - Sales Schedule (10): 10 rows, exp_total=18,600.00, markers=['VM01', 'VM02', 'VM03', 'VM04']..VM10
+  - Schedule 2 (10): 10 rows, exp_total=6,660.00, markers=['M2550-S2-01', 'M2550-S2-02', 'M2550-S2-03', 'M2550-S2-04']..M2550-S2-10
+  - Schedule 3A (10): 10 rows, exp_total=2,000.00, markers=['M2550-S3A-01', 'M2550-S3A-02', 'M2550-S3A-03', 'M2550-S3A-04']..M2550-S3A-10
+
