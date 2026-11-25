@@ -1,0 +1,10 @@
+case	box_key	typed_or_seeded	saved_at_main	filer_sees_at_head	after_open_and_save_at_head	classification
+main-saved-8pct-single	frm1701:txtPg2IShed3_19Desc	MAIN SAVED DESC 19	MAIN SAVED DESC 19 (kept in data_json)	hidden (shut), no notice	MAIN SAVED DESC 19 (kept in data_json, empty in XML)	kept silently in data_json, hidden in UI
+main-saved-8pct-single	frm1701:txtPg3IShed4_17dDesc	MAIN SAVED DEDUCTION 17D	MAIN SAVED DEDUCTION 17D (kept in data_json)	hidden (shut), no notice	MAIN SAVED DEDUCTION 17D (kept in data_json, empty in XML)	kept silently in data_json, hidden in UI
+main-saved-8pct-single	frm1701:txtPg2IShed3_19A	12345	0.0 (already zeroed by main compute)	hidden (shut), no notice	0.0	already silently zeroed at main
+main-saved-8pct-single	frm1701:txtPg3IShed4_1A	6789	0.0 (already zeroed by main compute)	hidden (shut), no notice	0.0	already silently zeroed at main
+main-saved-8pct-single	frm1701:txtPg3IShed6_4Year	2024	'' (already blanked by main compute)	hidden (shut), no notice	''	already silently blanked at main
+seeded-nonzero-data-json	frm1701:txtPg2IShed3_19A	12345.0 in data_json	12345.0	hidden (shut), no notice	0.0 (zeroed on open+save)	lost silently (zeroed, no notice)
+seeded-nonzero-data-json	frm1701:txtPg3IShed4_1A	6789.0 in data_json	6789.0	hidden (shut), no notice	0.0 (zeroed on open+save)	lost silently (zeroed, no notice)
+seeded-nonzero-data-json	frm1701:txtPg3IShed6_4Year	2024 in data_json	2024	hidden (shut), no notice	'' (blanked on open+save)	lost silently (blanked, no notice)
+seeded-nonzero-data-json	frm1701:txtPg3IShed6_4A	10000.0 in data_json	10000.0	hidden (shut), no notice	0.0 (zeroed on open+save)	lost silently (zeroed, no notice)
