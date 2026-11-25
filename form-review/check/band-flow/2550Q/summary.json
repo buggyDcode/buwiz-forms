@@ -1,0 +1,250 @@
+{
+  "before": {
+    "cap2": {
+      "pages": 2,
+      "held": 2,
+      "present_once": 2,
+      "missing": [],
+      "duped": [],
+      "in_order": true,
+      "exp_amt": "260,737.39",
+      "exp_tax": "31,288.49",
+      "exp_allow": "1,564.42",
+      "exp_bal": "29,724.07",
+      "pdf_has_exp_tax": true,
+      "pdf_has_exp_allow": false,
+      "pdf_has_exp_bal": false,
+      "html_totals": {
+        "p2c202": null,
+        "p2c203": null,
+        "p2c204": null,
+        "p2c205": null
+      },
+      "cont_checks": [],
+      "blank_pages": [],
+      "preview_matches_pdf": true
+    },
+    "cap5": {
+      "pages": 2,
+      "held": 5,
+      "present_once": 5,
+      "missing": [],
+      "duped": [],
+      "in_order": true,
+      "exp_amt": "753,686.95",
+      "exp_tax": "90,442.44",
+      "exp_allow": "4,522.11",
+      "exp_bal": "85,920.33",
+      "pdf_has_exp_tax": true,
+      "pdf_has_exp_allow": false,
+      "pdf_has_exp_bal": false,
+      "html_totals": {
+        "p2c202": null,
+        "p2c203": null,
+        "p2c204": null,
+        "p2c205": null
+      },
+      "cont_checks": [],
+      "blank_pages": [],
+      "preview_matches_pdf": true
+    },
+    "cap12": {
+      "pages": 2,
+      "held": 12,
+      "present_once": 10,
+      "missing": [
+        "CAPGOOD-11",
+        "CAPGOOD-12"
+      ],
+      "duped": [],
+      "in_order": false,
+      "exp_amt": "2,379,172.14",
+      "exp_tax": "285,500.66",
+      "exp_allow": "14,275.02",
+      "exp_bal": "271,225.64",
+      "pdf_has_exp_tax": true,
+      "pdf_has_exp_allow": false,
+      "pdf_has_exp_bal": false,
+      "html_totals": {
+        "p2c202": null,
+        "p2c203": null,
+        "p2c204": null,
+        "p2c205": null
+      },
+      "cont_checks": [],
+      "blank_pages": [],
+      "preview_matches_pdf": true
+    },
+    "cap40": {
+      "pages": 2,
+      "held": 40,
+      "present_once": 10,
+      "missing": [
+        "CAPGOOD-11",
+        "CAPGOOD-12",
+        "CAPGOOD-13",
+        "CAPGOOD-14",
+        "CAPGOOD-15",
+        "CAPGOOD-16",
+        "CAPGOOD-17",
+        "CAPGOOD-18",
+        "CAPGOOD-19",
+        "CAPGOOD-20",
+        "CAPGOOD-21",
+        "CAPGOOD-22",
+        "CAPGOOD-23",
+        "CAPGOOD-24",
+        "CAPGOOD-25",
+        "CAPGOOD-26",
+        "CAPGOOD-27",
+        "CAPGOOD-28",
+        "CAPGOOD-29",
+        "CAPGOOD-30",
+        "CAPGOOD-31",
+        "CAPGOOD-32",
+        "CAPGOOD-33",
+        "CAPGOOD-34",
+        "CAPGOOD-35",
+        "CAPGOOD-36",
+        "CAPGOOD-37",
+        "CAPGOOD-38",
+        "CAPGOOD-39",
+        "CAPGOOD-40"
+      ],
+      "duped": [],
+      "in_order": false,
+      "exp_amt": "15,534,886.60",
+      "exp_tax": "1,864,186.39",
+      "exp_allow": "93,209.31",
+      "exp_bal": "1,770,977.08",
+      "pdf_has_exp_tax": true,
+      "pdf_has_exp_allow": false,
+      "pdf_has_exp_bal": false,
+      "html_totals": {
+        "p2c202": null,
+        "p2c203": null,
+        "p2c204": null,
+        "p2c205": null
+      },
+      "cont_checks": [],
+      "blank_pages": [],
+      "preview_matches_pdf": true
+    }
+  },
+  "after": {
+    "cap2": {
+      "pages": 2,
+      "held": 2,
+      "present_once": 2,
+      "missing": [],
+      "duped": [],
+      "in_order": true,
+      "exp_amt": "260,737.39",
+      "exp_tax": "31,288.49",
+      "exp_allow": "1,564.42",
+      "exp_bal": "29,724.07",
+      "pdf_has_exp_tax": true,
+      "pdf_has_exp_allow": false,
+      "pdf_has_exp_bal": false,
+      "html_totals": {
+        "p2c202": null,
+        "p2c203": null,
+        "p2c204": null,
+        "p2c205": null
+      },
+      "cont_checks": [],
+      "blank_pages": [],
+      "preview_matches_pdf": true
+    },
+    "cap5": {
+      "pages": 2,
+      "held": 5,
+      "present_once": 5,
+      "missing": [],
+      "duped": [],
+      "in_order": true,
+      "exp_amt": "753,686.95",
+      "exp_tax": "90,442.44",
+      "exp_allow": "4,522.11",
+      "exp_bal": "85,920.33",
+      "pdf_has_exp_tax": true,
+      "pdf_has_exp_allow": false,
+      "pdf_has_exp_bal": false,
+      "html_totals": {
+        "p2c202": null,
+        "p2c203": null,
+        "p2c204": null,
+        "p2c205": null
+      },
+      "cont_checks": [],
+      "blank_pages": [],
+      "preview_matches_pdf": true
+    },
+    "cap12": {
+      "pages": 3,
+      "held": 12,
+      "present_once": 12,
+      "missing": [],
+      "duped": [],
+      "in_order": true,
+      "exp_amt": "2,379,172.14",
+      "exp_tax": "285,500.66",
+      "exp_allow": "14,275.02",
+      "exp_bal": "271,225.64",
+      "pdf_has_exp_tax": true,
+      "pdf_has_exp_allow": false,
+      "pdf_has_exp_bal": false,
+      "html_totals": {
+        "p2c202": null,
+        "p2c203": null,
+        "p2c204": null,
+        "p2c205": null
+      },
+      "cont_checks": [
+        {
+          "page": 3,
+          "form": true,
+          "tin": false,
+          "page_label": true,
+          "table_head": false,
+          "has_row": false
+        }
+      ],
+      "blank_pages": [],
+      "preview_matches_pdf": true
+    },
+    "cap40": {
+      "pages": 3,
+      "held": 40,
+      "present_once": 40,
+      "missing": [],
+      "duped": [],
+      "in_order": true,
+      "exp_amt": "15,534,886.60",
+      "exp_tax": "1,864,186.39",
+      "exp_allow": "93,209.31",
+      "exp_bal": "1,770,977.08",
+      "pdf_has_exp_tax": true,
+      "pdf_has_exp_allow": false,
+      "pdf_has_exp_bal": false,
+      "html_totals": {
+        "p2c202": null,
+        "p2c203": null,
+        "p2c204": null,
+        "p2c205": null
+      },
+      "cont_checks": [
+        {
+          "page": 3,
+          "form": true,
+          "tin": false,
+          "page_label": true,
+          "table_head": true,
+          "has_row": true
+        }
+      ],
+      "blank_pages": [],
+      "preview_matches_pdf": true
+    }
+  }
+}

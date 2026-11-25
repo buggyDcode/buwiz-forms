@@ -1,0 +1,31 @@
+# 2550Q Schedule 1 Independent Check — Data Excerpt
+
+## Case cap2 (Q1, 2 rows held in saved draft)
+  row 01: date=01/01/2021 src=D desc=CAPGOOD-01 amt=123579.13 tax=14829.50 allow=741.48 bal=14088.02
+  row 02: date=02/02/2021 src=I desc=CAPGOOD-02 amt=137158.26 tax=16458.99 allow=822.95 bal=15636.04
+
+## Case cap5 (Q2, 5 rows held in saved draft)
+  row 01: date=01/01/2021 src=D desc=CAPGOOD-01 amt=123579.13 tax=14829.50 allow=741.48 bal=14088.02
+  row 02: date=02/02/2021 src=I desc=CAPGOOD-02 amt=137158.26 tax=16458.99 allow=822.95 bal=15636.04
+  row 03: date=03/03/2021 src=D desc=CAPGOOD-03 amt=150737.39 tax=18088.49 allow=904.42 bal=17184.07
+  row 04: date=04/04/2021 src=I desc=CAPGOOD-04 amt=164316.52 tax=19717.98 allow=985.90 bal=18732.08
+  row 05: date=05/05/2021 src=D desc=CAPGOOD-05 amt=177895.65 tax=21347.48 allow=1067.37 bal=20280.11
+
+## Case cap12 (Q3, 12 rows held in saved draft)
+  row 01: date=01/01/2021 src=D desc=CAPGOOD-01 amt=123579.13 tax=14829.50 allow=741.48 bal=14088.02
+  row 02: date=02/02/2021 src=I desc=CAPGOOD-02 amt=137158.26 tax=16458.99 allow=822.95 bal=15636.04
+  row 03: date=03/03/2021 src=D desc=CAPGOOD-03 amt=150737.39 tax=18088.49 allow=904.42 bal=17184.07
+  ... (6 middle rows omitted, all distinct CAPGOOD-04..CAPGOOD-09) ...
+  row 10: date=10/10/2021 src=I desc=CAPGOOD-10 amt=245791.30 tax=29494.96 allow=1474.75 bal=28020.21
+  row 11: date=11/11/2021 src=D desc=CAPGOOD-11 amt=259370.43 tax=31124.45 allow=1556.22 bal=29568.23
+  row 12: date=12/12/2021 src=I desc=CAPGOOD-12 amt=272949.56 tax=32753.95 allow=1637.70 bal=31116.25
+
+## Case cap40 (Q4, 40 rows held in saved draft)
+  row 01: date=01/01/2021 src=D desc=CAPGOOD-01 amt=123579.13 tax=14829.50 allow=741.48 bal=14088.02
+  row 02: date=02/02/2021 src=I desc=CAPGOOD-02 amt=137158.26 tax=16458.99 allow=822.95 bal=15636.04
+  row 03: date=03/03/2021 src=D desc=CAPGOOD-03 amt=150737.39 tax=18088.49 allow=904.42 bal=17184.07
+  ... (34 middle rows omitted, all distinct CAPGOOD-04..CAPGOOD-37) ...
+  row 38: date=02/13/2021 src=I desc=CAPGOOD-38 amt=626006.94 tax=75120.83 allow=3756.04 bal=71364.79
+  row 39: date=03/14/2021 src=D desc=CAPGOOD-39 amt=639586.07 tax=76750.33 allow=3837.52 bal=72912.81
+  row 40: date=04/15/2021 src=I desc=CAPGOOD-40 amt=653165.20 tax=78379.82 allow=3918.99 bal=74460.83
+

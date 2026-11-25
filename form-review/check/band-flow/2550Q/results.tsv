@@ -1,0 +1,9 @@
+form	commit	side	case	table	held_rows	printed_once	missing	duped	in_order	exp_input_tax	printed_tax_in_pdf	pages	cont_pages_ok	blank_pages	preview_eq_pdf
+2550Q	b9552e27	before	cap2	Schedule 1	2	2	none	none	True	31,288.49	True	2	NA	none	True
+2550Q	b9552e27	before	cap5	Schedule 1	5	5	none	none	True	90,442.44	True	2	NA	none	True
+2550Q	b9552e27	before	cap12	Schedule 1	12	10	CAPGOOD-11,CAPGOOD-12	none	False	285,500.66	True	2	NA	none	True
+2550Q	b9552e27	before	cap40	Schedule 1	40	10	CAPGOOD-11,CAPGOOD-12,CAPGOOD-13,CAPGOOD-14,CAPGOOD-15,CAPGOOD-16,CAPGOOD-17,CAPGOOD-18,CAPGOOD-19,CAPGOOD-20,CAPGOOD-21,CAPGOOD-22,CAPGOOD-23,CAPGOOD-24,CAPGOOD-25,CAPGOOD-26,CAPGOOD-27,CAPGOOD-28,CAPGOOD-29,CAPGOOD-30,CAPGOOD-31,CAPGOOD-32,CAPGOOD-33,CAPGOOD-34,CAPGOOD-35,CAPGOOD-36,CAPGOOD-37,CAPGOOD-38,CAPGOOD-39,CAPGOOD-40	none	False	1,864,186.39	True	2	NA	none	True
+2550Q	4321b79b	after	cap2	Schedule 1	2	2	none	none	True	31,288.49	True	2	NA	none	True
+2550Q	4321b79b	after	cap5	Schedule 1	5	5	none	none	True	90,442.44	True	2	NA	none	True
+2550Q	4321b79b	after	cap12	Schedule 1	12	12	none	none	True	285,500.66	True	3	True	none	True
+2550Q	4321b79b	after	cap40	Schedule 1	40	40	none	none	True	1,864,186.39	True	3	True	none	True
