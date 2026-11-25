@@ -1294,6 +1294,122 @@ fn is_formatted_money_amount(value: &str) -> bool {
         && whole.bytes().all(|b| b.is_ascii_digit() || b == b',')
 }
 
+/// Whether `value` is a formatted whole-peso amount (`0`, `1,234`, `-500`, `(500)`).
+fn is_formatted_whole_peso_amount(value: &str) -> bool {
+    let s = value.trim();
+    let s = if let Some(inner) = s.strip_prefix('(').and_then(|v| v.strip_suffix(')')) {
+        inner.trim()
+    } else {
+        s.strip_prefix('-').unwrap_or(s)
+    };
+    !s.is_empty()
+        && !s.contains('.')
+        && s.bytes().any(|b| b.is_ascii_digit())
+        && s.bytes().all(|b| b.is_ascii_digit() || b == b',')
+}
+
+/// Whether a cell (by writer key or printed caption) represents a currency/money amount.
+fn is_amount_typed_cell(key: &str, caption: Option<&str>) -> bool {
+    if is_amount_typed_key(key) {
+        return true;
+    }
+    let Some(caption) = caption else {
+        return false;
+    };
+    let pl = caption.to_ascii_lowercase();
+    for excluded in [
+        "rate",
+        "percent",
+        "%",
+        "taxable year",
+        "calendar year",
+        "fiscal year",
+        "year ended",
+        "year incurred",
+        "year of",
+        "date",
+        "tin",
+        "zip",
+        "rdo",
+        "atc",
+        "code",
+        "seq",
+        "sheet",
+        "page",
+        "name",
+        "address",
+        "title",
+        "description",
+        "classification",
+        "remarks",
+        "taxpayer",
+        "email",
+        "phone",
+        "tel",
+        "area",
+        "share",
+        "qty",
+        "quantity",
+        "volume",
+        "unit",
+        "count",
+    ] {
+        if pl.contains(excluded) {
+            return false;
+        }
+    }
+    if pl.ends_with(" year") {
+        return false;
+    }
+    [
+        "sales",
+        "receipt",
+        "revenue",
+        "fees",
+        "returns",
+        "cost",
+        "gross",
+        "income",
+        "deduct",
+        "nolco",
+        "credit",
+        "payment",
+        "tax",
+        "mcit",
+        "amount",
+        "total",
+        "balance",
+        "payable",
+        "overpay",
+        "excess",
+        "loss",
+        "allowance",
+        "exemption",
+        "dividend",
+        "royalt",
+        "compensation",
+        "expense",
+        "asset",
+        "liabilit",
+        "equity",
+        "capital",
+        "profit",
+        "fmv",
+        "zonal",
+        "value",
+        "surcharge",
+        "interest",
+        "compromise",
+        "penalt",
+        "withheld",
+        "withholding",
+        "remit",
+        "refund",
+    ]
+    .iter()
+    .any(|tok| pl.contains(tok))
+}
+
 /// Whether a writer key represents a currency/money amount field (not a rate,
 /// area, quantity, share count, identifier, date, or text caption).
 fn is_amount_typed_key(key: &str) -> bool {
@@ -1815,11 +1931,10 @@ struct TextTarget<'a> {
     sheet: &'a SheetType,
 }
 
-fn is_percentage_rate_cell(writer_key: &str, caption: Option<&str>) -> bool {
-    if writer_key.starts_with("derived:")
-        || writer_key.starts_with("frm2200")
-        || writer_key.starts_with("frm2000")
-    {
+/// Whether a cell is a tax-rate box (percentage rate, DST rate like 2000OT item 16,
+/// or excise unit rate) that RULES 4 centers and never right-aligns as money.
+fn is_rate_cell(writer_key: &str, caption: Option<&str>) -> bool {
+    if writer_key.starts_with("derived:") {
         return false;
     }
     let Some(caption) = caption else {
@@ -1856,6 +1971,13 @@ fn is_percentage_rate_cell(writer_key: &str, caption: Option<&str>) -> bool {
         || pl.contains("schedule 2 rate")
         || pl.contains("schedule 3 rate")
         || pl.ends_with(" rate")
+}
+
+fn is_percentage_rate_cell(writer_key: &str, caption: Option<&str>) -> bool {
+    if writer_key.starts_with("frm2200") || writer_key.starts_with("frm2000") {
+        return false;
+    }
+    is_rate_cell(writer_key, caption)
 }
 
 /// Whether a plain cell or rectangle holds a short code (ATC, treaty code,
@@ -2531,7 +2653,8 @@ fn fill_text_input(
             }
             return;
         }
-        let is_rate_cell = via_cell && !split && is_percentage_rate_cell(name, caption);
+        let is_rate_cell = via_cell && !split && is_rate_cell(name, caption);
+        let is_pct_rate_cell = is_rate_cell && is_percentage_rate_cell(name, caption);
         let preprinted_dot =
             if !is_rate_cell && via_cell && !split && is_formatted_money_amount(print) {
                 preprinted_decimal_mark(html, input_name)
@@ -2580,7 +2703,7 @@ fn fill_text_input(
             }
             return;
         }
-        let formatted_rate = is_rate_cell
+        let formatted_rate = is_pct_rate_cell
             .then(|| format_percentage_rate(print, has_preprinted_percent_beside(html, input_name)))
             .flatten();
         let display = formatted_rate.as_deref().unwrap_or(print);
@@ -2597,7 +2720,8 @@ fn fill_text_input(
             && !center_short_code
             && via_cell
             && !split
-            && ((is_amount_typed_key(name) && is_formatted_money_amount(print))
+            && ((is_amount_typed_cell(name, caption)
+                && (is_formatted_money_amount(print) || is_formatted_whole_peso_amount(print)))
                 || (is_quantity_typed_key(name) && is_formatted_numeric_quantity(print)));
         for &index in indices {
             let writer = via_cell.then_some(print);
@@ -9937,11 +10061,11 @@ mod donor_estate_print_tests {
             ),
             (
                 "2000-ot-2018",
-                "b53217afe4991a92e9875afa559a90e777ee77a24b5d8ac6002959daaa6389ad",
+                "3bda4992978de964ee2e97d6e0a1ed720ea5c1e2aa2fef60646d4addb697795d",
             ),
             (
                 "1801-2018",
-                "cc52af4fcd819902b734d2477be7d1a0049fa1505bbccff235764e09e3e5bb17",
+                "10d5c4a3192e58d9dcd8ff4f9a4dac17ef3d81c856159703b1477152178eba42",
             ),
             (
                 "1800-2018",
@@ -10372,5 +10496,61 @@ mod donor_estate_print_tests {
             .and_then(|s| s.parse::<f64>().ok())
             .expect("font-size on p2c391");
         assert!(sz >= 7.5, "p2c391 font-size {sz}pt went below 7.5pt floor");
+    }
+
+    #[test]
+    fn form_2000ot_item_16_tax_rate_centers_default_and_atc_rate() {
+        for value in ["0.00", "P15 / P1,000", "P1.50 / P200"] {
+            let mut fields = BTreeMap::new();
+            fields.insert("frm2000OT:txtTax16".to_string(), value.to_string());
+            let html = filled_document("2000-ot-2018", &fields).expect("fill 2000OT");
+            let tag = super::input_tags(&html)
+                .into_iter()
+                .find(|t| t.name == "p1c58")
+                .expect("2000OT item 16 input");
+            assert!(
+                tag.tag.contains("text-align:center;justify-content:center"),
+                "2000OT item 16 ({value}) must be centered: {}",
+                tag.tag
+            );
+            assert!(
+                !tag.tag.contains("text-align:right"),
+                "2000OT item 16 ({value}) must not be right-aligned: {}",
+                tag.tag
+            );
+            assert!(
+                tag.tag.contains(&format!("value=\"{value}\"")),
+                "2000OT item 16 ({value}) must keep its rate value without appending %: {}",
+                tag.tag
+            );
+        }
+    }
+
+    #[test]
+    fn form_1702mx_schedules_2_and_3_whole_peso_zeros_right_align() {
+        let mut fields = BTreeMap::new();
+        fields.insert("frm1702MX:txtPg2Sc2Itm1A".to_string(), "0".to_string());
+        fields.insert(
+            "frm1702MX:txtPg2Sc2Itm1B".to_string(),
+            "150,000".to_string(),
+        );
+        fields.insert(
+            "frm1702MX:txtPg2Sc2Itm5C".to_string(),
+            "(50,000)".to_string(),
+        );
+        fields.insert("frm1702MX:txtPg2Sc3It20A".to_string(), "0".to_string());
+        let html = filled_document("1702mx-2018c", &fields).expect("fill 1702MX");
+        for id in ["p2c70", "p2c71", "p2c92", "p2c180"] {
+            let tag = super::input_tags(&html)
+                .into_iter()
+                .find(|t| t.name == id)
+                .unwrap_or_else(|| panic!("missing {id}"));
+            assert!(
+                tag.tag
+                    .contains("text-align:right;justify-content:flex-end"),
+                "1702MX {id} whole-peso cell must be right-aligned: {}",
+                tag.tag
+            );
+        }
     }
 }

@@ -407,8 +407,9 @@ pub fn continuation_pages_html_with_truncated(
             format!("Additional sheet ({page_num} of {total_pages})")
         };
 
+        let _ = height;
         out.push_str(&format!(
-            "<div class=\"page page-continuation\" id=\"{id_attr}\" style=\"width:{width};min-height:{height};height:auto;overflow:visible;padding:24pt 28pt;box-sizing:border-box;font-family:'eBIRForms Arimo',Arial,Helvetica,sans-serif;font-size:8.5pt;line-height:1.3;color:#000;background:#fff\">"
+            "<div class=\"page page-continuation\" id=\"{id_attr}\" style=\"width:{width};height:auto;overflow:visible;padding:24pt 28pt;box-sizing:border-box;font-family:'eBIRForms Arimo',Arial,Helvetica,sans-serif;font-size:8.5pt;line-height:1.3;color:#000;background:#fff\">"
         ));
 
         // Header block
@@ -2067,17 +2068,7 @@ fn extract_header_meta(slug: &str, fields: &BTreeMap<String, String>) -> HeaderM
         .unwrap_or_default();
 
     let tin = extract_tin(fields);
-    let taxpayer_name = first_matching_field(
-        fields,
-        &[
-            "txtTaxpayerName",
-            "registeredName",
-            "txtDonorName",
-            "txtAgentName",
-            "txtWithholdingAgentName",
-        ],
-    )
-    .unwrap_or_else(|| "—".to_string());
+    let taxpayer_name = extract_taxpayer_name(fields);
 
     let period = extract_return_period(slug, fields);
 
@@ -2115,6 +2106,84 @@ fn extract_tin(fields: &BTreeMap<String, String>) -> String {
             return format!("{t1}-{t2}-{t3}");
         }
         return format!("{t1}-{t2}-{t3}-{br}");
+    }
+    "—".to_string()
+}
+
+fn first_matching_field_ci(fields: &BTreeMap<String, String>, suffixes: &[&str]) -> Option<String> {
+    for suffix in suffixes {
+        for (key, value) in fields {
+            let tail = key.rsplit(':').next().unwrap_or(key);
+            if tail.eq_ignore_ascii_case(suffix) {
+                let trimmed = value.trim();
+                if !trimmed.is_empty() {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn join_matching_fields_ci(fields: &BTreeMap<String, String>, suffixes: &[&str]) -> Option<String> {
+    let mut parts = Vec::new();
+    for suffix in suffixes {
+        if let Some(val) = first_matching_field_ci(fields, &[suffix]) {
+            parts.push(val);
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
+}
+
+fn extract_taxpayer_name(fields: &BTreeMap<String, String>) -> String {
+    // Single-field taxpayer / seller / withholding-agent / donor / estate name keys across all 43 forms.
+    if let Some(name) = first_matching_field_ci(
+        fields,
+        &[
+            "txtTaxpayerName",
+            "registeredName",
+            "taxpayerName",
+            "txtDonorName",
+            "txtAgentName",
+            "txtWithholdingAgentName",
+            "txtPg1Pt1I7WithholdingAgentsName",
+            "txtWthhldngAgntsNme",
+            "txtSellerName",
+            "txtPg1I7TaxpayerName",
+            "txtPg1I8TaxpayerName",
+            "txtTaxpayerNo8a",
+            "txtI8RegisteredName",
+            "registeredName_1",
+            "txtPg1Pt1I7RegisteredName",
+            "txtPg1Pt1I6RegisteredName",
+            "txtPg1Pt1I6Name",
+            "txtTPName",
+        ],
+    ) {
+        return name;
+    }
+    // Multi-line / split name keys (1702MX, 1702RT, 1707, 1702EX, 1702Q).
+    for group in [
+        &[
+            "txtPg1Pt1I9RegisteredName",
+            "txtPg1Pt1I9RegisteredName2",
+            "txtPg1Pt1I9RegisteredName3",
+        ][..],
+        &["txtPg1Pt1I8Name1", "txtPg1Pt1I8Name2", "txtPg1Pt1I8Name3"][..],
+        &[
+            "txtPg1I6SellerName0",
+            "txtPg1I6SellerName1",
+            "txtPg1I6SellerName2",
+        ][..],
+        &["name_line1", "name_line2", "name_line3"][..],
+    ] {
+        if let Some(joined) = join_matching_fields_ci(fields, group) {
+            return joined;
+        }
     }
     "—".to_string()
 }
@@ -3409,5 +3478,62 @@ mod tests {
         );
         assert!(html_with_date.contains("Date of Transaction:</span> 06/15/2026"));
         assert!(!html_with_date.contains("Return Period:"));
+    }
+
+    #[test]
+    fn additional_sheet_header_resolves_taxpayer_name_across_form_key_variants() {
+        let cases = [
+            ("1706-2018", "frm1706:txtSellerName"),
+            ("2550m-2007", "frm2550m:txtTaxPayerName"),
+            ("0605-1999", "frm0605:txtTaxPayerName"),
+            ("1600-pt-2018", "frm1600PT:txtPg1Pt1I7WithholdingAgentsName"),
+            ("1604e-2018", "frm1604e:txtWthhldngAgntsNme"),
+            ("1606-2018", "frm1606:txtSellerName"),
+            ("1700-2018", "frm1700:txtPg1I7TaxpayerName"),
+            ("1701-2018", "frm1701:txtPg1I8TaxpayerName"),
+            ("1701ms-2024", "frm1701MS:txtTaxpayerNo8a"),
+            ("1702ex-2018", "derived:name_line1"),
+            ("1702mx-2018c", "frm1702MX:txtPg1Pt1I9RegisteredName"),
+            ("1702q-2018", "derived:name_line1"),
+            ("1702rt-2018c", "frm1702RT:txtPg1Pt1I8Name1"),
+            ("1707-2021", "frm1707:txtPg1I6SellerName0"),
+            ("1707a-2021", "frm1707Av2021:txtI8RegisteredName"),
+            ("1801-2018", "frm1801v2018:registeredName_1"),
+            ("2200c-2018", "frm2200C:txtPg1Pt1I7RegisteredName"),
+            ("2200m-2018", "frm2200M:txtPg1Pt1I6RegisteredName"),
+            ("2200p-2020", "frm2200P:txtPg1Pt1I6RegisteredName"),
+            ("2200s-2018", "frm2200S:taxpayerName"),
+            ("2550q-2024", "frm2550qv2024:taxpayerName"),
+            ("2552-2018", "frm2552:txtPg1Pt1I6Name"),
+            ("2553-1999", "frm2553:txtTPName"),
+        ];
+        let truncated = vec![TruncatedEntry {
+            page_number: 1,
+            label: "Address".into(),
+            full_text: "VERY LONG REGISTERED ADDRESS FOR TEST".into(),
+        }];
+        for (slug, key) in cases {
+            let mut fields = BTreeMap::new();
+            fields.insert(
+                key.to_string(),
+                "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA".to_string(),
+            );
+            let html = continuation_pages_html_with_truncated(
+                slug,
+                &fields,
+                &OverflowReport::default(),
+                &truncated,
+                "612pt",
+                "936pt",
+            );
+            assert!(
+                html.contains("Taxpayer's Name:</span> SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA"),
+                "{slug} ({key}) printed dash instead of taxpayer name"
+            );
+            assert!(
+                !html.contains("min-height:936pt"),
+                "{slug} continuation sheet must not force unscaled min-height that emits a blank trailing page"
+            );
+        }
     }
 }
