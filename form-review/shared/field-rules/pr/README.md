@@ -1,9 +1,9 @@
 # Part 3 Proof — Print Field Rules (`feat/store-launch-field-rules`)
 
-- **Before (`before/`):** `origin/main` (`00a20033`)
-- **After (`after/`, `recordings/`):** `feat/store-launch-field-rules` (`22c43bf5`, rebased onto `00a20033`, including Part 1a–j and 1600WP Schedule 1.1 total restoration)
+- **Before (`before/`):** `origin/main` (`92b3e201`, with `nsh` pinned at `8c78cfd6d`)
+- **After (`after/`, `recordings/`):** `feat/store-launch-field-rules` (`2d3773c1`, merged with `origin/main` `92b3e201`, including Part 1a–j and 1600WP Schedule 1.1 total restoration)
 - **Additional artifacts:**
-  - `1600wp-restore/` — 1600WP page 1 with filled Schedule 1.1 rows 1–2 and totals (`p1c241` / `p1c243`) at `before-merge.png` (`de513578`), `after-merge.png` (`8eb9b5d6`), and `after-restore.png` (`22c43bf5`).
+  - `1600wp-restore/` — 1600WP page 1 with filled Schedule 1.1 rows 1–2 and totals (`p1c241` / `p1c243`) at `before-merge.png` (`de513578`), `after-merge.png` (`f8e8ed8a`), and `after-restore.png` (`3074d666`, preserved at `2d3773c1`).
   - `font-sizes.md` — Rendered font-size audit measured via headless Chromium (`getComputedStyle` under `@media print`) across all 43 frozen forms.
 
 ## Directory Layout & What Each File Shows
@@ -17,8 +17,7 @@
 
 1. **1702MX typed NOLCO columns A–D (Part 1j):** PR #326 is not yet on `main`, so the app's 1702MX draft only populates row 7 A & E (not typed rows 4–6 A–D). Part 1j's `.00` stripping, thousands grouping, and right alignment on typed columns A–D are proven by `frozen_html::tests::form_1702mx_schedules_7_and_8_whole_peso_right_align_and_row7_default`; page 4 in `after/1702MX/pdf/p4.png` shows the live right-aligned comma-formatted row 7 and untouched zeros.
 2. **1701 Part IV item 1 Spouse TIN (Part 1f):** The Part 3 harness filled Spouse Name, RDO, Contact, Citizenship, Foreign Tax No., and Schedules 3.A/4/6 spouse columns, but left Spouse TIN blank on both `before` and `after`. Full 14-digit second-person TIN + non-zero branch code printing is proven by `frozen_html::tests::second_person_tins_print_all_fourteen_digits_including_branch_code`.
-3. **`before/0605-137`:** On `origin/main`, the `0605-137` capture printed the standard demo name/address rather than the 137-character strings; `after/0605-137` shows the exact 137-character name and 137-character address wrapped onto two readable lines at `>= 7.5pt` for side-by-side comparison with Android print.
-4. **Preview vs. PDF page count on `1707` (6 vs. 7) and `2000OT` (8 vs. 9):** Additional-sheet overflow tables render inside one scrollable `.page-continuation` container in preview and paginate cleanly into physical pages in PDF; there are no blank trailing pages.
+3. **Preview vs. PDF page count on `1707` (6 vs. 7) and `2000OT` (8 vs. 9):** Additional-sheet overflow tables render inside one scrollable `.page-continuation` container in preview and paginate cleanly into physical pages in PDF; there are no blank trailing pages.
 
 ---
 
@@ -32,8 +31,8 @@
 
 ### `0605-137` (1 page before / 1 page after; recording 6s)
 - **Page 1:**
-  - *Before:* Standard demo name/address (see "What This Proof Does NOT Show" #3); Part II amounts left-aligned.
-  - *After:* Full 137-character Taxpayer's Name (item 13) and 137-character Registered Address (item 15) wrap onto two lines at `>= 7.5pt` without clipping or shrinking below the Android ~8 px floor; Part II amounts right-aligned.
+  - *Before:* Full 137-character Taxpayer's Name (item 13) shrinks to tiny single-line text (~4.8pt) and 137-character Registered Address (item 15) shrinks to ~4.65pt and clips at the right edge (`...MAKATI CITY METRO`, losing `MANILA PH.`); Part II amounts left-aligned.
+  - *After:* Full 137-character Taxpayer's Name (item 13) and 137-character Registered Address (item 15) wrap onto two readable lines at `>= 7.5pt` without clipping or dropping below the Android ~8 px floor; Part II amounts right-aligned on the preprinted decimal dot.
 
 ### `1601C` (2 pages before / 2 pages after; recording 10s)
 - **Page 1:**
@@ -136,5 +135,5 @@
 
 ### `1600wp-restore/` (3 images)
 - `before-merge.png` (`de513578`): Schedule 1.1 rows 1–2 and TOTAL row print `P 1,500,000.00` (`p1c241`) and `P 150,000.00` (`p1c243`).
-- `after-merge.png` (`8eb9b5d6`): Taking `origin/main`'s regenerated `html-frozen/1600wp-2010/index.html` made `p1c241` and `p1c243` empty `data-cell-kind="label"` divs, leaving both TOTAL boxes blank.
-- `after-restore.png` (`22c43bf5`): Restored both joins in `writer-cells.json` and added runtime promotion of explicitly joined empty `<div></div>` cells in `frozen_html.rs`; both TOTAL boxes print `P 1,500,000.00` and `P 150,000.00` identically to `before-merge.png` while `freeze_html.py --verify` (`43 bundles`) stays green.
+- `after-merge.png` (`f8e8ed8a`): Taking `origin/main`'s regenerated `html-frozen/1600wp-2010/index.html` made `p1c241` and `p1c243` empty `data-cell-kind="label"` divs, leaving both TOTAL boxes blank.
+- `after-restore.png` (`3074d666`, unchanged at `2d3773c1`): Restored both joins in `writer-cells.json` and added runtime promotion of explicitly joined empty `<div></div>` cells in `frozen_html.rs`; both TOTAL boxes print `P 1,500,000.00` and `P 150,000.00` identically to `before-merge.png` while `freeze_html.py --verify` (`43 bundles`) stays green.

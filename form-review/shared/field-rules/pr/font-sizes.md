@@ -1,6 +1,6 @@
 # Rendered Font-Size Audit (All 43 Frozen Forms)
 
-Measured directly from headless Chromium (`getComputedStyle(el).fontSize` under `@media print`, `1pt = 1.3333px`) on rendered filled sheets at `feat/store-launch-field-rules` (`22c43bf5`), with every joined writer key populated (including 137-char names/addresses and overflowing amounts to exercise the shrink engine).
+Measured directly from headless Chromium (`getComputedStyle(el).fontSize` under `@media print`, `1pt = 1.3333px`) on rendered filled sheets at `feat/store-launch-field-rules` (`2d3773c1`, merged with `origin/main` `92b3e201`; `html-frozen/` and `crates/bir-print/` unchanged since `3074d666`), with every joined writer key populated (including 137-char names/addresses and overflowing amounts to exercise the shrink engine).
 
 ## Summary
 
