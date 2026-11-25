@@ -1167,6 +1167,7 @@ fn is_amount_typed_key(key: &str) -> bool {
         "zonal",
         "ftd",
         "total",
+        "notdirect",
         "tax",
         "income",
         "payment",

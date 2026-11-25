@@ -1108,32 +1108,54 @@ fn extract_rule6_overflow_text(official_filled: &str, field: &Rule6Field) -> Opt
     let cell_gt = cell_html.find('>')?;
     let cell_open = &cell_html[..cell_gt + 1];
     let cell_w = extract_style_pt(cell_open, "width:").unwrap_or(0.0);
+    let body = &cell_html[cell_gt + 1..];
 
-    // Find inner `<span class="fi ...">...</span>`.
-    let span_start = cell_html[cell_gt + 1..].find("<span")? + cell_gt + 1;
-    let span_gt = cell_html[span_start..].find('>')? + span_start;
-    let span_open = &cell_html[span_start..span_gt + 1];
-    let span_close = cell_html[span_gt + 1..].find("</span>")? + span_gt + 1;
-    let raw_inner = &cell_html[span_gt + 1..span_close];
-    let text = unescape_html_basic(&strip_html_tags(raw_inner))
-        .trim()
-        .to_string();
+    // Extract inner text & tag open from either `<input ... value="...">` (normal
+    // `filled_document` output) or `<span class="fi ...">...</span>` (static HTML).
+    let (inner_open, text): (&str, String) = if let Some(inp_start) = body.find("<input") {
+        let inp_gt = body[inp_start..].find('>')? + inp_start;
+        let inp_open = &body[inp_start..inp_gt + 1];
+        let raw_val = extract_attr(inp_open, "data-writer-value")
+            .or_else(|| extract_attr(inp_open, "value"))
+            .unwrap_or_default();
+        (inp_open, unescape_html_basic(raw_val).trim().to_string())
+    } else {
+        let span_start = body.find("<span")?;
+        let span_gt = body[span_start..].find('>')? + span_start;
+        let span_open = &body[span_start..span_gt + 1];
+        let span_close = body[span_gt + 1..].find("</span>")? + span_gt + 1;
+        let raw_inner = &body[span_gt + 1..span_close];
+        (
+            span_open,
+            unescape_html_basic(&strip_html_tags(raw_inner))
+                .trim()
+                .to_string(),
+        )
+    };
+
     if text.is_empty() {
         return None;
     }
 
-    // 1. Primary signal: `frozen_html` had to shrink the inline font below 7.5pt.
-    if let Some(fs) = extract_style_pt(span_open, "font-size:") {
+    // 1. Primary signal: `frozen_html` had to shrink the inline font below 7.5pt,
+    //    or emitted a comb-overflow replacement line inside the cell.
+    if body.contains("data-overflow-warning=") || body.contains("data-overflow-of=") {
+        return Some(text);
+    }
+    if let Some(fs) = extract_style_pt(inner_open, "font-size:") {
         if fs < RULE6_MIN_FONT_PT - 0.01 {
             return Some(text);
         }
+        return None;
     }
 
-    // 2. Geometric fallback: text width at 7.5pt exceeds the inline box width.
+    // 2. Geometric fallback when no explicit inline `font-size:` was written:
+    //    only trigger when the text clearly exceeds the box width (so fitting text
+    //    stays byte-for-byte unchanged on every sheet).
     if cell_w > 0.0 {
-        let (inset_r, inset_l) = extract_inset_lr(span_open).unwrap_or((2.0, 2.0));
+        let (inset_r, inset_l) = extract_inset_lr(inner_open).unwrap_or((2.0, 2.0));
         let inner_w = (cell_w - inset_r - inset_l).max(20.0);
-        if (text.chars().count() as f64) * 4.2 > inner_w {
+        if (text.chars().count() as f64) * 3.6 > inner_w * 1.15 {
             return Some(text);
         }
     }
@@ -1176,14 +1198,45 @@ pub(crate) fn has_rule6_overflow(slug: &str, raw_html: &str, official_filled: &s
     !collect_rule6_insertions_by_page(slug, explicit_layout.as_ref(), official_filled).is_empty()
 }
 
-/// Clear the inline text inside a Rule 6 cell's `<span class="fi ...">...</span>`
-/// so the small specify box stays blank while the label, item number, and amount
-/// box remain untouched on their original row.
+/// Clear the inline text inside a Rule 6 cell's `<input ... value="...">` or
+/// `<span class="fi ...">...</span>` so the small specify box stays blank while
+/// the label, item number, and amount box remain untouched on their original row.
 fn clear_rule6_cell_inline_text(dom: &mut FlowPageDom, cell_id: &str) {
     for cell in &mut dom.cells {
         if cell.id != cell_id {
             continue;
         }
+        // Clear `value="..."` on every `<input ...>` inside the cell, and remove
+        // any inline comb-overflow replacement `<input data-overflow-of=...>` or `<span ...>`.
+        let mut out = String::with_capacity(cell.raw_html.len());
+        let mut rest = cell.raw_html.as_str();
+        while let Some(pos) = rest.find("<input") {
+            out.push_str(&rest[..pos]);
+            let Some(gt) = rest[pos..].find('>') else {
+                out.push_str(&rest[pos..]);
+                rest = "";
+                break;
+            };
+            let tag = &rest[pos..pos + gt + 1];
+            if !tag.contains("data-overflow-of=") && !tag.contains("data-overflow-warning=") {
+                // Blank out `value="..."` while preserving the input element itself.
+                if let Some(vpos) = tag.find(" value=\"") {
+                    let after = &tag[vpos + 8..];
+                    if let Some(vend) = after.find('"') {
+                        out.push_str(&tag[..vpos + 8]);
+                        out.push_str(&after[vend..]);
+                    } else {
+                        out.push_str(tag);
+                    }
+                } else {
+                    out.push_str(tag);
+                }
+            }
+            rest = &rest[pos + gt + 1..];
+        }
+        out.push_str(rest);
+        cell.raw_html = out;
+
         if let Some(span_start) = cell.raw_html.find("<span") {
             if let Some(gt_rel) = cell.raw_html[span_start..].find('>') {
                 let text_start = span_start + gt_rel + 1;
@@ -1649,15 +1702,22 @@ fn render_extra_rows_for_band(
                     }
                 };
                 elem = replace_inner_text(&elem, &label);
-                // Item G: keep longer suffix labels (e.g. `42a`, `3aa`, `18a`) clear
-                // of the right vertical divider by nudging left and trimming font size.
+                // Items G & K: match the table's own label style and never drop
+                // below 7.5pt (RULES 3). When a suffix makes the label wider than
+                // the template (e.g. `42a`, `18a`), nudge left inside the number
+                // column and clamp any slight fit reduction to `>= 7.5pt`.
                 let orig_len = orig_t.plain_text.trim().len();
                 if label.len() > orig_len {
                     let extra_chars = (label.len() - orig_len) as f64;
-                    let nudged_left = (orig_t.left - 1.8 * extra_chars).max(layout.table_x0 + 1.5);
+                    let nudged_left = (orig_t.left - 2.0 * extra_chars).max(layout.table_x0 + 1.0);
                     elem = set_left_in_style(&elem, nudged_left);
                     if label.len() >= 3 {
-                        elem = set_font_size_in_style(&elem, 6.2);
+                        let orig_fs =
+                            extract_style_pt(&orig_t.raw_html, "font-size:").unwrap_or(8.5);
+                        let target_fs = (orig_fs - 1.0).max(RULE6_MIN_FONT_PT);
+                        if target_fs < orig_fs {
+                            elem = set_font_size_in_style(&elem, target_fs);
+                        }
                     }
                 }
             }
@@ -4539,8 +4599,8 @@ mod tests {
         );
     }
 
-    /// Item G: 1701A suffix labels are nudged left away from the divider and
-    /// trimmed to 6.2pt when 3+ chars long.
+    /// Item G & K: 1701A suffix labels are nudged left away from the divider
+    /// while staying >= 7.5pt (RULES 3).
     #[test]
     fn sweep2_g_suffix_labels_nudged_clear_of_divider_on_1701a_and_1601c() {
         let mut fields = BTreeMap::new();
@@ -4557,9 +4617,15 @@ mod tests {
         let (doc, _) = run_flow_for_form("1701a-2018", 2, &fields);
         let pos = doc.find(">42a<").expect("1701A extra row 42a present");
         let open = &doc[doc[..pos].rfind("<div ").unwrap()..pos];
+        let left = extract_style_pt(open, "left:").expect("42a left");
+        let fs = extract_style_pt(open, "font-size:").expect("42a font-size");
         assert!(
-            open.contains("font-size:6.2pt"),
-            "1701A suffix label 42a should use trimmed 6.2pt font size to clear divider: {open}"
+            left < 17.04,
+            "1701A suffix label 42a should be nudged left of template 17.04pt: {open}"
+        );
+        assert!(
+            fs >= RULE6_MIN_FONT_PT,
+            "1701A suffix label 42a must stay >= 7.5pt (RULES 3), got {fs}pt: {open}"
         );
     }
 
@@ -4644,5 +4710,136 @@ mod tests {
             doc.contains("1,448.52"),
             "2550Q grown-row tax must format with thousands commas (1,448.52)"
         );
+    }
+
+    /// Item K: Grown-row labels match the table's own label style (font-family,
+    /// font-weight) and never shrink below 7.5pt (RULES 3).
+    #[test]
+    fn sweep3_k_grown_row_labels_match_table_style_and_never_under_7_5pt() {
+        let mut fields = BTreeMap::new();
+        for i in 1..=9 {
+            fields.insert(format!("frm1601EQ:txtAtcCd{i}"), "WC010".into());
+            fields.insert(
+                format!("frm1601EQ:txtTaxBase{i}"),
+                format!("{},111,111.23", 100 + i),
+            );
+            fields.insert(format!("frm1601EQ:txtTaxRate{i}"), "5%".into());
+            fields.insert(
+                format!("frm1601EQ:txtTaxbeWithHeld{i}"),
+                format!("{},055,555.56", 5 + i),
+            );
+        }
+        let (doc, _) = run_flow_for_form("1601eq-2019", 1, &fields);
+        for lbl in ["18a", "18b", "18c"] {
+            let needle = format!(">{lbl}<");
+            let pos = doc
+                .find(&needle)
+                .unwrap_or_else(|| panic!("1601EQ extra row {lbl} present"));
+            let open = &doc[doc[..pos].rfind("<div ").unwrap()..pos];
+            let fs = extract_style_pt(open, "font-size:").expect("label font-size");
+            assert!(
+                fs >= RULE6_MIN_FONT_PT,
+                "1601EQ grown label {lbl} must be >= 7.5pt (RULES 3), got {fs}pt: {open}"
+            );
+            assert!(
+                open.contains("font-weight:700") && open.contains("Arimo"),
+                "1601EQ grown label {lbl} must match template row bold Arimo style: {open}"
+            );
+        }
+    }
+
+    /// Item M: 2550M Schedule 5 ratable-portion row (`txtProductnotDirectSched5`)
+    /// right-aligns its amount like Schedule 4 (`txtTotalInputTaxnotDirectSched4`).
+    #[test]
+    fn sweep3_m_2550m_schedule5_ratable_portion_right_aligned() {
+        let mut fields = BTreeMap::new();
+        fields.insert("txtTotalInputTaxnotDirectSched4".into(), "0.00".into());
+        fields.insert("txtProductnotDirectSched5".into(), "0.00".into());
+        let doc = crate::frozen_html::filled_document("2550m-2007", &fields)
+            .expect("2550m filled_document");
+        let p2c81_start = doc.find("id=\"p2c81\"").expect("p2c81 cell present");
+        let p2c81_slice = &doc[p2c81_start..p2c81_start + 500];
+        assert!(
+            p2c81_slice.contains("text-align:right"),
+            "2550M Schedule 5 ratable-portion cell p2c81 must right-align: {p2c81_slice}"
+        );
+    }
+
+    fn assert_rule6_field_triggers(slug: &str, writer_key: &str) {
+        let long_text = "CREDITABLE WITHHOLDING TAX PER BIR FORM 2307 AND PRIOR YEAR EXCESS CREDIT CARRYOVER SCHEDULE ANNEX A";
+        let mut fields = BTreeMap::new();
+        fields.insert(writer_key.to_string(), long_text.to_string());
+        let doc = crate::frozen_html::filled_document(slug, &fields)
+            .unwrap_or_else(|e| panic!("{slug} {writer_key} filled_document: {e}"));
+        assert!(
+            doc.contains("rule6-inserted-line"),
+            "{slug} {writer_key}: expected Rule 6 inserted full-width line band"
+        );
+        assert!(
+            doc.contains(long_text),
+            "{slug} {writer_key}: expected full specify text inside Rule 6 inserted band"
+        );
+        let r6_pos = doc.find("rule6-inserted-line").unwrap();
+        let r6_slice = &doc[r6_pos..doc.len().min(r6_pos + 600)];
+        let fs = extract_style_pt(r6_slice, "font-size:").unwrap_or(0.0);
+        assert!(
+            fs >= RULE6_MIN_FONT_PT,
+            "{slug} {writer_key}: Rule 6 inserted text must be >= 7.5pt, got {fs}pt"
+        );
+    }
+
+    #[test]
+    fn rule6_2551q_item17_inserts_full_width_line() {
+        assert_rule6_field_triggers("2551q-2018", "frm2551Qv2018:txt17Specify");
+    }
+
+    #[test]
+    fn rule6_2550q_item19_inserts_full_width_line() {
+        assert_rule6_field_triggers("2550q-2024", "frm2550qv2024:addSpecifyNo19");
+    }
+
+    #[test]
+    fn rule6_1700_item57_inserts_full_width_line() {
+        assert_rule6_field_triggers("1700-2018", "frm1700:txtPg2I57Desc");
+    }
+
+    #[test]
+    fn rule6_1701a_item63_inserts_full_width_line() {
+        assert_rule6_field_triggers("1701a-2018", "frm1701A:txt63Desc");
+    }
+
+    #[test]
+    fn rule6_1701q_item61_inserts_full_width_line() {
+        assert_rule6_field_triggers("1701q-2018", "frm1701q:txt61Desc");
+    }
+
+    #[test]
+    fn rule6_1701ms_item7_inserts_full_width_line() {
+        assert_rule6_field_triggers("1701ms-2024", "derived:foreign_tax_credits_description");
+    }
+
+    #[test]
+    fn rule6_1701ms_item9_inserts_full_width_line() {
+        assert_rule6_field_triggers("1701ms-2024", "derived:other_credits_description");
+    }
+
+    #[test]
+    fn rule6_1601c_item20_inserts_full_width_line() {
+        assert_rule6_field_triggers("1601c-2018", "frm1601c:txt20Other");
+    }
+
+    #[test]
+    fn rule6_1603q_item16_inserts_full_width_line() {
+        assert_rule6_field_triggers("1603q-2018", "frm1603Q:txt16Other");
+    }
+
+    #[test]
+    fn rule6_remains_off_for_1702ex_1702rt_and_1702q() {
+        for slug in ["1702ex-2018", "1702rt-2018c", "1702q-2018"] {
+            assert!(
+                !RULE6_ENABLED_FIELDS.iter().any(|&(s, _)| s == slug),
+                "{slug} must stay OFF for RULES 6"
+            );
+        }
     }
 }
