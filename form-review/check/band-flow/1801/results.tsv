@@ -1,0 +1,13 @@
+form	commit	side	case	table	held_rows	printed_once	missing_count	duped_count	in_order	exp_exclusive	exc_in_pdf	pages	cont_pages_ok	blank_pages
+1801	b9552e27	before	09162025	Schedule 1 (Real Properties)	21	21	0	0	True	24,200,028.80	True	3	True	none
+1801	b9552e27	before	09162025	Schedule 1A (Family Home)	7	7	0	0	True	0.00	True	3	True	none
+1801	b9552e27	before	09162025	Schedule 2 (Shares of Stock)	7	7	0	0	True	302,700.55	True	3	True	none
+1801	b9552e27	before	09162025	Schedule 2A (Other Personal)	7	7	0	0	True	51,881.25	True	3	True	none
+1801	b9552e27	before	09162025	Schedule 3 (Taxable Transfers)	7	7	0	0	True	16,750.00	True	3	True	none
+1801	b9552e27	before	09162025	Schedule 4 (Business Interest)	7	7	0	0	True	40,000.00	True	3	True	none
+1801	4321b79b	after	09162025	Schedule 1 (Real Properties)	21	21	0	0	True	24,200,028.80	True	3	True	none
+1801	4321b79b	after	09162025	Schedule 1A (Family Home)	7	7	0	0	True	0.00	True	3	True	none
+1801	4321b79b	after	09162025	Schedule 2 (Shares of Stock)	7	7	0	0	True	302,700.55	True	3	True	none
+1801	4321b79b	after	09162025	Schedule 2A (Other Personal)	7	7	0	0	True	51,881.25	True	3	True	none
+1801	4321b79b	after	09162025	Schedule 3 (Taxable Transfers)	7	7	0	0	True	16,750.00	True	3	True	none
+1801	4321b79b	after	09162025	Schedule 4 (Business Interest)	7	7	0	0	True	40,000.00	True	3	True	none

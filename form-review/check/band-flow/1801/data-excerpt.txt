@@ -1,0 +1,50 @@
+# 1801 Independent Check — Data Excerpt (from 1801-09162025.plain.xml)
+
+## Schedule 1 (Real Properties): 21 rows
+  row 01: id='T-12345' exc=1,200,000.00 conj=0.00
+  row 02: id='T-00002' exc=200,000.25 conj=0.00
+  row 03: id='T-00003' exc=300,000.38 conj=0.00
+  ... (16 middle rows omitted) ...
+  row 20: id='T-00020' exc=2,000,002.50 conj=0.00
+  row 21: id='T-00021' exc=2,100,002.63 conj=0.00
+
+## Schedule 1A (Family Home): 7 rows
+  row 01: id='T-67890' exc=0.00 conj=2,000,000.00
+  row 02: id='F-002' exc=0.00 conj=2,001.00
+  row 03: id='F-003' exc=0.00 conj=3,001.50
+  ... (2 middle rows omitted) ...
+  row 06: id='F-006' exc=0.00 conj=6,003.00
+  row 07: id='F-007' exc=0.00 conj=7,003.50
+
+## Schedule 2 (Shares of Stock): 7 rows
+  row 01: id='SAMPLE CORP' exc=300,000.55 conj=0.00
+  row 02: id='CORP 2' exc=200.00 conj=0.00
+  row 03: id='CORP 3' exc=300.00 conj=0.00
+  ... (2 middle rows omitted) ...
+  row 06: id='CORP 6' exc=600.00 conj=0.00
+  row 07: id='CORP 7' exc=700.00 conj=0.00
+
+## Schedule 2A (Other Personal): 7 rows
+  row 01: id='CAR' exc=50,000.00 conj=0.00
+  row 02: id='JEWELRY' exc=0.00 conj=25,000.13
+  row 03: id='ITEM 3' exc=225.75 conj=0.00
+  ... (2 middle rows omitted) ...
+  row 06: id='ITEM 6' exc=451.50 conj=0.00
+  row 07: id='ITEM 7' exc=526.75 conj=0.00
+
+## Schedule 3 (Taxable Transfers): 7 rows
+  row 01: id='CASH IN BANK, SAMPLE BANK 0001' exc=10,000.00 conj=0.00
+  row 02: id='TRANSFER 2' exc=500.00 conj=0.00
+  row 03: id='TRANSFER 3' exc=750.00 conj=0.00
+  ... (2 middle rows omitted) ...
+  row 06: id='TRANSFER 6' exc=1,500.00 conj=0.00
+  row 07: id='TRANSFER 7' exc=1,750.00 conj=0.00
+
+## Schedule 4 (Business Interest): 7 rows
+  row 01: id='SAMPLE STORE' exc=40,000.00 conj=0.00
+  row 02: id='SHOP 2' exc=0.00 conj=1,000.00
+  row 03: id='SHOP 3' exc=0.00 conj=1,500.00
+  ... (2 middle rows omitted) ...
+  row 06: id='SHOP 6' exc=0.00 conj=3,000.00
+  row 07: id='SHOP 7' exc=0.00 conj=3,500.00
+

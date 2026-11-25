@@ -1,0 +1,164 @@
+{
+  "before": {
+    "pages": 3,
+    "blank_pages": [],
+    "cont_checks": [
+      {
+        "page": 3,
+        "form": true,
+        "tin": true,
+        "page_label": true,
+        "table_head": true
+      }
+    ],
+    "schedules": {
+      "Schedule 1 (Real Properties)": {
+        "held": 21,
+        "printed_once": 21,
+        "missing": [],
+        "duped": [],
+        "in_order": true,
+        "exp_exc": "24,200,028.80",
+        "exc_in_pdf": true,
+        "exp_conj": "0.00",
+        "conj_in_pdf": true
+      },
+      "Schedule 1A (Family Home)": {
+        "held": 7,
+        "printed_once": 7,
+        "missing": [],
+        "duped": [],
+        "in_order": true,
+        "exp_exc": "0.00",
+        "exc_in_pdf": true,
+        "exp_conj": "2,027,013.50",
+        "conj_in_pdf": true
+      },
+      "Schedule 2 (Shares of Stock)": {
+        "held": 7,
+        "printed_once": 7,
+        "missing": [],
+        "duped": [],
+        "in_order": true,
+        "exp_exc": "302,700.55",
+        "exc_in_pdf": true,
+        "exp_conj": "0.00",
+        "conj_in_pdf": true
+      },
+      "Schedule 2A (Other Personal)": {
+        "held": 7,
+        "printed_once": 7,
+        "missing": [],
+        "duped": [],
+        "in_order": true,
+        "exp_exc": "51,881.25",
+        "exc_in_pdf": true,
+        "exp_conj": "25,000.13",
+        "conj_in_pdf": true
+      },
+      "Schedule 3 (Taxable Transfers)": {
+        "held": 7,
+        "printed_once": 7,
+        "missing": [],
+        "duped": [],
+        "in_order": true,
+        "exp_exc": "16,750.00",
+        "exc_in_pdf": true,
+        "exp_conj": "0.00",
+        "conj_in_pdf": true
+      },
+      "Schedule 4 (Business Interest)": {
+        "held": 7,
+        "printed_once": 7,
+        "missing": [],
+        "duped": [],
+        "in_order": true,
+        "exp_exc": "40,000.00",
+        "exc_in_pdf": true,
+        "exp_conj": "13,500.00",
+        "conj_in_pdf": true
+      }
+    }
+  },
+  "after": {
+    "pages": 3,
+    "blank_pages": [],
+    "cont_checks": [
+      {
+        "page": 3,
+        "form": true,
+        "tin": true,
+        "page_label": true,
+        "table_head": true
+      }
+    ],
+    "schedules": {
+      "Schedule 1 (Real Properties)": {
+        "held": 21,
+        "printed_once": 21,
+        "missing": [],
+        "duped": [],
+        "in_order": true,
+        "exp_exc": "24,200,028.80",
+        "exc_in_pdf": true,
+        "exp_conj": "0.00",
+        "conj_in_pdf": true
+      },
+      "Schedule 1A (Family Home)": {
+        "held": 7,
+        "printed_once": 7,
+        "missing": [],
+        "duped": [],
+        "in_order": true,
+        "exp_exc": "0.00",
+        "exc_in_pdf": true,
+        "exp_conj": "2,027,013.50",
+        "conj_in_pdf": true
+      },
+      "Schedule 2 (Shares of Stock)": {
+        "held": 7,
+        "printed_once": 7,
+        "missing": [],
+        "duped": [],
+        "in_order": true,
+        "exp_exc": "302,700.55",
+        "exc_in_pdf": true,
+        "exp_conj": "0.00",
+        "conj_in_pdf": true
+      },
+      "Schedule 2A (Other Personal)": {
+        "held": 7,
+        "printed_once": 7,
+        "missing": [],
+        "duped": [],
+        "in_order": true,
+        "exp_exc": "51,881.25",
+        "exc_in_pdf": true,
+        "exp_conj": "25,000.13",
+        "conj_in_pdf": true
+      },
+      "Schedule 3 (Taxable Transfers)": {
+        "held": 7,
+        "printed_once": 7,
+        "missing": [],
+        "duped": [],
+        "in_order": true,
+        "exp_exc": "16,750.00",
+        "exc_in_pdf": true,
+        "exp_conj": "0.00",
+        "conj_in_pdf": true
+      },
+      "Schedule 4 (Business Interest)": {
+        "held": 7,
+        "printed_once": 7,
+        "missing": [],
+        "duped": [],
+        "in_order": true,
+        "exp_exc": "40,000.00",
+        "exc_in_pdf": true,
+        "exp_conj": "13,500.00",
+        "conj_in_pdf": true
+      }
+    }
+  }
+}
