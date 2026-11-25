@@ -1,3 +1,6 @@
+use bir_core::forms::form_1800::{
+    Form1800Donee, Form1800Draft, Form1800PersonalProperty, Form1800RealProperty,
+};
 use bir_core::forms::form_1801::{
     Form1801Draft, Form1801Particular, Form1801RealProperty, Form1801Split,
 };
@@ -83,3 +86,39 @@ fn form_1801_prints_item5_tin_items_16_and_24_and_specify_boxes() {
     );
 }
 
+#[test]
+fn form_1800_prints_item_14_total_net_gifts() {
+    let profile = demo_profile();
+    let mut d = Form1800Draft::new_from_profile(&profile, 2025, 1);
+    d.donation_month = 3;
+    d.donation_day = 15;
+    d.donation_year = 2025;
+    d.donees.push(Form1800Donee {
+        name: "SANTOS, PEDRO".into(),
+        tin: "00098765400000".into(),
+    });
+    d.personal_properties.push(Form1800PersonalProperty {
+        particulars: "CASH GIFT SAVINGS".into(),
+        fair_market_value: 123_456_789.45,
+    });
+    d.real_properties.push(Form1800RealProperty {
+        title_number: "TCT-9001".into(),
+        tax_declaration_number: "TD-8001".into(),
+        location: "MAKATI CITY".into(),
+        lot_or_improvement: "LOT".into(),
+        classification: "RESIDENTIAL".into(),
+        area: "300 SQM".into(),
+        fmv_per_tax_declaration: "85000000.00".into(),
+        fmv_per_zonal_value: "110222333.50".into(),
+        fair_market_value: 110_222_333.50,
+    });
+    d.compute();
+
+    let map = d.print_field_map();
+    let doc = filled_document("1800-2018", &map).expect("1800-2018 render");
+
+    assert_eq!(printed_cell(&doc, "p1c62").0, "233429122");
+    assert_eq!(printed_cell(&doc, "p1c64").0, "95");
+    assert_eq!(printed_cell(&doc, "p1c70").0, "14005747");
+    assert_eq!(printed_cell(&doc, "p1c72").0, "38");
+}
