@@ -12097,4 +12097,37 @@ mod donor_estate_print_tests {
             );
         }
     }
+
+    #[test]
+    fn form_1701_item_6_marks_compensation_earner_only_when_mixed_income_flag_is_set() {
+        use bir_core::forms::form_1701::{Form1701Atc, Form1701Draft, Form1701TaxpayerType};
+
+        let profile: bir_core::profile::TaxpayerProfile = serde_json::from_value(serde_json::json!({
+            "id": null,
+            "full_name": "SANTOS, JUANA",
+            "tin": bir_core::Tin::parse_digits("00012345300000").unwrap(),
+            "rdo_code": "039",
+            "line_of_business": "CONSULTING SERVICES",
+            "registered_address": "123 SAMPLE STREET, MAKATI",
+            "zip_code": "1229",
+            "phone": "09171234567",
+            "email": "juana.santos@example.com",
+            "default_form_type": "1701"
+        }))
+        .unwrap();
+
+        let mut single_only = Form1701Draft::new_from_profile(&profile, 2025, 12);
+        single_only.taxpayer_type = Some(Form1701TaxpayerType::SingleProprietor);
+        single_only.taxpayer_also_compensation_earner = false;
+        single_only.atc = Some(Form1701Atc::Ii013);
+        let html_single = filled_document("1701-2018", &single_only.to_print_field_map()).unwrap();
+        assert_eq!(cell_value(&html_single, "p1c23").as_deref(), Some("X"));
+        assert_eq!(cell_value(&html_single, "p1c27"), None);
+
+        let mut mixed = single_only.clone();
+        mixed.taxpayer_also_compensation_earner = true;
+        let html_mixed = filled_document("1701-2018", &mixed.to_print_field_map()).unwrap();
+        assert_eq!(cell_value(&html_mixed, "p1c23").as_deref(), Some("X"));
+        assert_eq!(cell_value(&html_mixed, "p1c27").as_deref(), Some("X"));
+    }
 }
