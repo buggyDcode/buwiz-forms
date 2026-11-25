@@ -1,0 +1,5 @@
+# 1601C Independent Band-Flow Check — Data Excerpt
+
+## Case specify_and_s1
+  - Schedule 1 (10 rows): 10 rows, exp_total=5,000.00, markers=['PAYNUM-001', 'PAYNUM-002', 'PAYNUM-003', 'PAYNUM-004']..PAYNUM-010
+

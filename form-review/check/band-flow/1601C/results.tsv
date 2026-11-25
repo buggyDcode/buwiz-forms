@@ -1,0 +1,3 @@
+form	case	commit	side	table	held_rows	printed_once	missing_count	duped_count	in_order	exp_total	tot_in_pdf	pages	blank_pages	old_fallback_pages	sum_occurrences
+1601C	specify_and_s1	b9552e27	before	Schedule 1 (10 rows)	10	3	7	0	False	5,000.00	True	3	none	3	0
+1601C	specify_and_s1	4321b79b	after	Schedule 1 (10 rows)	10	3	7	0	False	5,000.00	True	2	none	2	0

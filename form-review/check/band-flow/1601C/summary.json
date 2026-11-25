@@ -1,0 +1,58 @@
+{
+  "specify_and_s1": {
+    "before": {
+      "pages": 3,
+      "blank_pages": [],
+      "old_fallback_pages": [
+        3
+      ],
+      "tables": {
+        "Schedule 1 (10 rows)": {
+          "held": 10,
+          "printed_once": 3,
+          "missing": [
+            "PAYNUM-004",
+            "PAYNUM-005",
+            "PAYNUM-006",
+            "PAYNUM-007",
+            "PAYNUM-008",
+            "PAYNUM-009",
+            "PAYNUM-010"
+          ],
+          "duped": [],
+          "in_order": false,
+          "exp_total": "5,000.00",
+          "tot_in_pdf": "True",
+          "sum_occ": 0
+        }
+      }
+    },
+    "after": {
+      "pages": 2,
+      "blank_pages": [],
+      "old_fallback_pages": [
+        2
+      ],
+      "tables": {
+        "Schedule 1 (10 rows)": {
+          "held": 10,
+          "printed_once": 3,
+          "missing": [
+            "PAYNUM-004",
+            "PAYNUM-005",
+            "PAYNUM-006",
+            "PAYNUM-007",
+            "PAYNUM-008",
+            "PAYNUM-009",
+            "PAYNUM-010"
+          ],
+          "duped": [],
+          "in_order": false,
+          "exp_total": "5,000.00",
+          "tot_in_pdf": "True",
+          "sum_occ": 0
+        }
+      }
+    }
+  }
+}
