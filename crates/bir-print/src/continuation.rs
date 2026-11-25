@@ -2358,6 +2358,7 @@ fn extract_return_period(
             "txtDateMonth",
             "DateWithholdingMonth",
             "txtPg1I1Month",
+            "ddlPg1I2Date",
             "txtMonth1",
             "txtMonth",
             "rtnMonth",
@@ -2381,6 +2382,7 @@ fn extract_return_period(
             "txtDateYear",
             "DateWithholdingYear",
             "txtPg1I1Year",
+            "txtPg1I2YearEnd",
             "txtYear",
             "txtForYr",
             "rtnYear",
@@ -3893,6 +3895,61 @@ mod tests {
             "forms with missing/wrong Additional Sheet TIN ({}/43): {}",
             missing.len(),
             missing.join(", ")
+        );
+    }
+
+    #[test]
+    fn additional_sheet_header_includes_return_period_for_1702mx_and_1702ex() {
+        use bir_core::forms::{form_1702ex, form_1702mx};
+        use bir_core::profile::TaxpayerProfile;
+
+        let profile: TaxpayerProfile = serde_json::from_value(serde_json::json!({
+            "id": null,
+            "full_name": "ACME CORP.",
+            "tin": bir_core::Tin::parse_digits("00012345300000").unwrap(),
+            "rdo_code": "044",
+            "line_of_business": "TRADING",
+            "registered_address": "123 AYALA AVE",
+            "zip_code": "1226",
+            "phone": "0281234567",
+            "email": "tax@acme.ph",
+            "default_form_type": "1702MX"
+        }))
+        .expect("demo profile");
+        let truncated = vec![TruncatedEntry {
+            page_number: 1,
+            label: "Registered Name".into(),
+            full_text: "VERY LONG REGISTERED NAME FOR TEST".into(),
+        }];
+
+        let mx_fields =
+            form_1702mx::Form1702MXDraft::new_from_profile(&profile, 2025).to_print_field_map();
+        let mx_html = continuation_pages_html_with_truncated(
+            "1702mx-2018c",
+            &mx_fields,
+            &OverflowReport::default(),
+            &truncated,
+            "612pt",
+            "936pt",
+        );
+        assert!(
+            mx_html.contains("Return Period:</span> 12/25"),
+            "1702MX additional sheet must include Return Period, got: {mx_html}"
+        );
+
+        let ex_fields =
+            form_1702ex::Form1702ExDraft::new_from_profile(&profile, 2025).to_print_field_map();
+        let ex_html = continuation_pages_html_with_truncated(
+            "1702ex-2018",
+            &ex_fields,
+            &OverflowReport::default(),
+            &truncated,
+            "612pt",
+            "936pt",
+        );
+        assert!(
+            ex_html.contains("Return Period:</span> 12/25"),
+            "1702EX additional sheet must include Return Period, got: {ex_html}"
         );
     }
 }
