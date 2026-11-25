@@ -1186,7 +1186,9 @@ fn fit_plain_text(
         return None;
     }
     let shrunk = shrunk_room(room);
-    let min_pt = sheet.a4_min_text_pt().min(default_size.max(PLAIN_TEXT_MIN_PT));
+    let min_pt = sheet
+        .a4_min_text_pt()
+        .min(default_size.max(PLAIN_TEXT_MIN_PT));
     let start_size = default_size.max(min_pt);
     let default_inner_height = input_height(height, tag);
     let needed_two_line = min_pt * PLAIN_TWO_LINE_HEIGHT_FACTOR;
@@ -6358,11 +6360,7 @@ fn overflow_input_with_fit(
     } else {
         (text.to_string(), proposed_size, false, false, false)
     };
-    let inset_css = if tight_inset {
-        "inset:0.40pt 1pt;"
-    } else {
-        ""
-    };
+    let inset_css = if tight_inset { "inset:0.40pt 1pt;" } else { "" };
     let lh_css = if two_lines {
         format!("line-height:{PLAIN_TWO_LINE_CSS_HEIGHT};")
     } else {
@@ -11454,7 +11452,10 @@ mod donor_estate_print_tests {
             .and_then(|s| s.split("pt").next())
             .and_then(|s| s.parse::<f64>().ok())
             .expect("font-size on p2c391");
-        assert!(sz >= 8.55, "p2c391 font-size {sz}pt went below 7.5pt A4 floor");
+        assert!(
+            sz >= 8.55,
+            "p2c391 font-size {sz}pt went below 7.5pt A4 floor"
+        );
     }
 
     #[test]
@@ -12175,19 +12176,20 @@ mod donor_estate_print_tests {
     fn form_1701_item_6_marks_compensation_earner_only_when_mixed_income_flag_is_set() {
         use bir_core::forms::form_1701::{Form1701Atc, Form1701Draft, Form1701TaxpayerType};
 
-        let profile: bir_core::profile::TaxpayerProfile = serde_json::from_value(serde_json::json!({
-            "id": null,
-            "full_name": "SANTOS, JUANA",
-            "tin": bir_core::Tin::parse_digits("00012345300000").unwrap(),
-            "rdo_code": "039",
-            "line_of_business": "CONSULTING SERVICES",
-            "registered_address": "123 SAMPLE STREET, MAKATI",
-            "zip_code": "1229",
-            "phone": "09171234567",
-            "email": "juana.santos@example.com",
-            "default_form_type": "1701"
-        }))
-        .unwrap();
+        let profile: bir_core::profile::TaxpayerProfile =
+            serde_json::from_value(serde_json::json!({
+                "id": null,
+                "full_name": "SANTOS, JUANA",
+                "tin": bir_core::Tin::parse_digits("00012345300000").unwrap(),
+                "rdo_code": "039",
+                "line_of_business": "CONSULTING SERVICES",
+                "registered_address": "123 SAMPLE STREET, MAKATI",
+                "zip_code": "1229",
+                "phone": "09171234567",
+                "email": "juana.santos@example.com",
+                "default_form_type": "1701"
+            }))
+            .unwrap();
 
         let mut single_only = Form1701Draft::new_from_profile(&profile, 2025, 12);
         single_only.taxpayer_type = Some(Form1701TaxpayerType::SingleProprietor);
