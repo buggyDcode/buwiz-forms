@@ -546,6 +546,33 @@ impl<'de> Deserialize<'de> for PenaltySlot {
     }
 }
 
+fn split_employer_name_lines(raw: &str, line1_max: usize, line2_max: usize) -> (String, String) {
+    let trimmed = raw.trim();
+    let chars: Vec<char> = trimmed.chars().collect();
+    if chars.len() <= line1_max {
+        return (trimmed.to_string(), String::new());
+    }
+    // Prefer splitting at the last whitespace within line1_max so words aren't broken
+    // and line 2 never starts with a leading space.
+    let split_at = chars[..=line1_max.min(chars.len() - 1)]
+        .iter()
+        .rposition(|c| c.is_whitespace())
+        .filter(|&idx| idx > 0)
+        .unwrap_or(line1_max);
+    let line1: String = chars[..split_at]
+        .iter()
+        .collect::<String>()
+        .trim_end()
+        .to_string();
+    let rest: String = chars[split_at..]
+        .iter()
+        .collect::<String>()
+        .trim_start()
+        .to_string();
+    let line2: String = rest.chars().take(line2_max).collect();
+    (line1, line2)
+}
+
 impl Form1701Draft {
     /// The print sheet's field map: the upload map plus `derived:` keys
     /// that only shape the print.
@@ -630,9 +657,7 @@ impl Form1701Draft {
                 })
                 .map(|s| s.trim().to_string())
                 .unwrap_or_default();
-            let name: Vec<char> = raw_name.chars().collect();
-            let line1: String = name.iter().take(35).collect();
-            let line2: String = name.iter().skip(35).take(16).collect();
+            let (line1, line2) = split_employer_name_lines(&raw_name, 35, 16);
             let tin = super::print_map::digits_of(
                 &fields,
                 &[

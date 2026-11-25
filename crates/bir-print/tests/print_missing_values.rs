@@ -165,18 +165,24 @@ fn form_1701_prints_schedule1_employer_names_and_tins() {
     assert_eq!(printed_cell(&doc, "p2c54").0, "X");
     assert_eq!(
         printed_cell(&doc, "p2c55").0,
-        "ACME PACIFIC HOLDINGS CORPORATION P"
+        "ACME PACIFIC HOLDINGS CORPORATION"
     );
-    assert_eq!(printed_cell(&doc, "p2c56").0, "HILIPPINES");
+    assert_eq!(printed_cell(&doc, "p2c56").0, "PHILIPPINES");
     assert_eq!(printed_cell(&doc, "p2c58").0, "00077788800001");
 
     assert_eq!(printed_cell(&doc, "p2c59").0, "X");
-    assert_eq!(
-        printed_cell(&doc, "p2c60").0,
-        "MANILA GLOBAL ENTERPRISES INCORPORA"
-    );
-    assert_eq!(printed_cell(&doc, "p2c61").0, "TED");
+    assert_eq!(printed_cell(&doc, "p2c60").0, "MANILA GLOBAL ENTERPRISES");
+    assert_eq!(printed_cell(&doc, "p2c61").0, "INCORPORATED");
     assert_eq!(printed_cell(&doc, "p2c63").0, "00099911100002");
+
+    // Space right at char 35 must not leave a leading space on line 2
+    d.employers[0].employer_name = "PHILIPPINE NATIONAL INFRASTRUCTURE CORP".into();
+    let doc2 = filled_document("1701-2018", &d.print_field_map()).expect("1701-2018 render");
+    assert_eq!(
+        printed_cell(&doc2, "p2c55").0,
+        "PHILIPPINE NATIONAL INFRASTRUCTURE"
+    );
+    assert_eq!(printed_cell(&doc2, "p2c56").0, "CORP");
 }
 
 #[test]
@@ -193,6 +199,12 @@ fn form_1604c_prints_two_digit_year_after_preprinted_20() {
     assert_eq!(map.get("frm1604c:txtYear").map(String::as_str), Some("25"));
     let doc = filled_document("1604c-2018", &map).expect("1604c-2018 render");
     assert_eq!(printed_cell(&doc, "p1c4").0, "25");
+
+    // Years outside 2000..=2099 print blank rather than a wrong century after preprinted "20"
+    let d1999 = Form1604cDraft::new_from_profile(&profile, 1999);
+    let doc1999 = filled_document("1604c-2018", &d1999.to_print_field_map()).unwrap();
+    assert_eq!(printed_cell(&doc1999, "p1c4").0, "");
+    assert_eq!(d1999.to_bir_field_map()["frm1604c:txtYear"], "1999");
 }
 
 #[test]
@@ -209,6 +221,12 @@ fn form_1604e_prints_two_digit_year_after_preprinted_20() {
     assert_eq!(map.get("frm1604e:txtYear").map(String::as_str), Some("25"));
     let doc = filled_document("1604e-2018", &map).expect("1604e-2018 render");
     assert_eq!(printed_cell(&doc, "p1c4").0, "25");
+
+    // Years outside 2000..=2099 print blank rather than a wrong century after preprinted "20"
+    let d1999 = Form1604eDraft::new_from_profile(&profile, 1999);
+    let doc1999 = filled_document("1604e-2018", &d1999.to_print_field_map()).unwrap();
+    assert_eq!(printed_cell(&doc1999, "p1c4").0, "");
+    assert_eq!(d1999.to_bir_field_map()["frm1604e:txtYear"], "1999");
 }
 
 #[test]
