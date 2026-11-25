@@ -308,13 +308,35 @@ pub fn detect_overflow(
             continue;
         }
 
-        let columns: Vec<OverflowColumn> = spec
-            .columns
+        // Some forms mirror one logical cell into two writer keys — 2200M
+        // copies the description into `txtSched1_descriptionCont{n}` for the
+        // official continuation table (`populateTable2Desc`). Detected as
+        // separate columns, both print the same value twice per row. Drop any
+        // column whose values duplicate an earlier column's in every row.
+        let mut kept: Vec<usize> = Vec::new();
+        for ci in 0..spec.columns.len() {
+            let duplicates_earlier = kept
+                .iter()
+                .any(|&ki| rows.iter().all(|r| r.values[ki] == r.values[ci]));
+            if !duplicates_earlier {
+                kept.push(ci);
+            }
+        }
+        if kept.len() < spec.columns.len() {
+            for r in rows.iter_mut() {
+                r.values = kept.iter().map(|&ki| r.values[ki].clone()).collect();
+            }
+            col_sums = kept.iter().map(|&ki| col_sums[ki]).collect();
+            col_has_numeric = kept.iter().map(|&ki| col_has_numeric[ki]).collect();
+        }
+
+        let columns: Vec<OverflowColumn> = kept
             .iter()
             .enumerate()
-            .map(|(ci, col)| {
-                let subtotal = if spec.has_total && col.is_amount && col_has_numeric[ci] {
-                    Some(format_amount(col_sums[ci]))
+            .map(|(pos, &ci)| {
+                let col = &spec.columns[ci];
+                let subtotal = if spec.has_total && col.is_amount && col_has_numeric[pos] {
+                    Some(format_amount(col_sums[pos]))
                 } else {
                     None
                 };
@@ -1470,8 +1492,8 @@ const POPUP_SCHEDULES: &[PopupScheduleDef] = &[
     PopupScheduleDef {
         slug: "1707a-2021",
         heading: "Schedule 1",
-        printed_capacity: 4,
-        row_num_base: 4,
+        printed_capacity: 3,
+        row_num_base: 3,
         has_total: true,
         columns: &[
             PopupColDef {
@@ -1509,8 +1531,8 @@ const POPUP_SCHEDULES: &[PopupScheduleDef] = &[
     PopupScheduleDef {
         slug: "1707a-2021",
         heading: "Schedule 2",
-        printed_capacity: 4,
-        row_num_base: 4,
+        printed_capacity: 3,
+        row_num_base: 3,
         has_total: true,
         columns: &[
             PopupColDef {
@@ -1544,8 +1566,8 @@ const POPUP_SCHEDULES: &[PopupScheduleDef] = &[
     PopupScheduleDef {
         slug: "1700-2018",
         heading: "Schedule 1",
-        printed_capacity: 4,
-        row_num_base: 4,
+        printed_capacity: 3,
+        row_num_base: 3,
         has_total: true,
         columns: &[
             PopupColDef {

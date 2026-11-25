@@ -177,3 +177,68 @@ fn form_1600pt_continuation_pages_carry_tin_and_name() {
         );
     }
 }
+
+/// fixes-3 item 4b: 1707A's additional-sheet rows must number from #4 —
+/// the paper holds 3 rows (formgen band capacity 3), so the first overflow
+/// row is row 4, not row 5.
+#[test]
+fn form_1707a_additional_sheet_numbering_starts_at_row_4() {
+    let mut draft = Form1707ADraft::new_from_profile(&demo_profile(), 2025, 1);
+    draft.set_atc(Form1707AAtc::Individual);
+    draft.year_end_year = 2023;
+    draft.number_of_attached_sheets = 1;
+    for k in 1..=8u32 {
+        draft.gains.push(row(
+            "02/10/2023",
+            &format!("Gain Co {k}"),
+            f64::from(k) * 2_000.0,
+            f64::from(k) * 1_000.0,
+            0.0,
+        ));
+    }
+    draft.recompute();
+    let fields = draft.to_print_field_map();
+    let doc = filled_document_with_report("1707a-2021", &fields, None).unwrap();
+    assert!(
+        doc.html.contains("continuing after 3 printed rows"),
+        "1707A paper holds 3 Schedule 1 rows; the continuation must say so"
+    );
+    assert!(
+        !doc.html.contains("continuing after 4 printed rows"),
+        "numbering after 4 printed rows skips row #4"
+    );
+}
+
+/// fixes-3 item 4c: 2200M's continuation table must not print the row
+/// description twice — the print map mirrors it into a second key family
+/// (txtSched1_descriptionCont) for the official continuation table, and the
+/// fallback used to emit both as separate columns.
+#[test]
+fn form_2200m_continuation_rows_print_the_description_once() {
+    use bir_core::forms::form_2200m::Form2200MDraft;
+    let mut draft = Form2200MDraft::new_from_profile(&demo_profile(), 2025, 3);
+    for index in 10..16usize {
+        if let Some(row) = draft.row_mut(index) {
+            row.description = format!("Added mineral {index}");
+            row.place_of_removal = format!("Site {index}");
+            row.local_tax_due = Some(index as f64 * 100.0);
+            row.total_tax_due = Some(index as f64 * 100.0);
+        }
+    }
+    draft.recompute();
+    let fields = draft.to_print_field_map();
+    let doc = filled_document_with_report("2200m-2018", &fields, None).unwrap();
+    let up = doc.html.to_uppercase();
+    assert!(
+        up.contains("ADDED MINERAL 10"),
+        "overflow rows must print on the continuation"
+    );
+    // 6 added rows, one description cell each.
+    let occurrences = (10..16)
+        .map(|k| up.matches(&format!("ADDED MINERAL {k}")).count())
+        .sum::<usize>();
+    assert_eq!(
+        occurrences, 6,
+        "each description must print exactly once per row, got {occurrences} total for 6 rows"
+    );
+}
