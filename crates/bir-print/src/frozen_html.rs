@@ -5895,11 +5895,34 @@ fn inline_local_assets(html: &str, loaded: &FrozenBundle) -> String {
         "<link rel=\"stylesheet\" href=\"form.css\">",
         &format!("<style>{form}</style>"),
     );
+    document = strip_relative_font_preloads(&document);
     for (name, bytes) in loaded.assets {
         let uri = data_uri("image/png", bytes);
         document = document.replace(&format!("../assets/{name}"), &uri);
     }
     document
+}
+
+/// Remove `<link ... href="../fonts/..." ...>` preload tags because every font
+/// face is already inlined as a `data:font/woff2;base64,...` URI in `<style>`.
+fn strip_relative_font_preloads(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(pos) = rest.find("<link ") {
+        let Some(end_rel) = rest[pos..].find('>') else {
+            break;
+        };
+        let tag = &rest[pos..=pos + end_rel];
+        if tag.contains("../fonts/") {
+            out.push_str(&rest[..pos]);
+            rest = &rest[pos + end_rel + 1..];
+        } else {
+            out.push_str(&rest[..=pos + end_rel]);
+            rest = &rest[pos + end_rel + 1..];
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn data_uri(mime: &str, bytes: &[u8]) -> String {
@@ -12313,5 +12336,36 @@ mod donor_estate_print_tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn no_printed_document_keeps_relative_fonts_reference() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../html-frozen");
+        let mut slugs: Vec<String> = std::fs::read_dir(root)
+            .unwrap()
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                entry
+                    .path()
+                    .join("index.html")
+                    .exists()
+                    .then(|| entry.file_name().to_string_lossy().into_owned())
+            })
+            .collect();
+        slugs.sort();
+        assert_eq!(slugs.len(), 43, "expected all 43 frozen sheets");
+        let empty = BTreeMap::new();
+        let mut offenders = Vec::new();
+        for slug in &slugs {
+            let html = filled_document(slug, &empty).unwrap();
+            if html.contains("../fonts/") {
+                offenders.push(slug.as_str());
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "printed documents must inline all fonts and keep no ../fonts/ reference; found in: {:?}",
+            offenders
+        );
     }
 }
