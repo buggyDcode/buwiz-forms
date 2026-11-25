@@ -3,6 +3,7 @@ use bir_core::forms::form_1604e::Form1604eDraft;
 use bir_core::forms::form_1701::{
     Form1701CivilStatus, Form1701Draft, Form1701EmployerRow, Form1701Party,
 };
+use bir_core::forms::form_1707a::Form1707ADraft;
 use bir_core::forms::form_1800::{
     Form1800Donee, Form1800Draft, Form1800PersonalProperty, Form1800RealProperty,
 };
@@ -203,4 +204,17 @@ fn form_1604e_prints_two_digit_year_after_preprinted_20() {
     assert_eq!(map.get("frm1604e:txtYear").map(String::as_str), Some("25"));
     let doc = filled_document("1604e-2018", &map).expect("1604e-2018 render");
     assert_eq!(printed_cell(&doc, "p1c4").0, "25");
+}
+
+#[test]
+fn form_1707a_prints_item_12a_tax_relief_specify() {
+    let profile = demo_profile();
+    let mut d = Form1707ADraft::new_from_profile(&profile, 2025, 12);
+    d.tax_relief = Some("PH-US TAX TREATY".to_string());
+    d.recompute();
+
+    let map = d.to_print_field_map();
+    let doc = filled_document("1707a-2021", &map).expect("1707a-2021 render");
+    assert_eq!(printed_cell(&doc, "p1c42").0, "X");
+    assert_eq!(printed_cell(&doc, "p1c207").0, "PH-US TAX TREATY");
 }
