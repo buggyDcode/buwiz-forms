@@ -1,0 +1,98 @@
+{
+  "before": {
+    "pages": 4,
+    "blank_pages": [
+      4
+    ],
+    "old_fallback_pages": [],
+    "tables": {
+      "Schedule 1 (Petroleum 31 rows)": {
+        "held": 31,
+        "printed_once": 2,
+        "missing": [
+          "PETROL-01",
+          "PETROL-02",
+          "PETROL-03",
+          "PETROL-04",
+          "PETROL-05",
+          "PETROL-06",
+          "PETROL-07",
+          "PETROL-08",
+          "PETROL-09",
+          "PETROL-10",
+          "PETROL-11",
+          "PETROL-12",
+          "PETROL-13",
+          "PETROL-14",
+          "PETROL-15",
+          "PETROL-16",
+          "PETROL-17",
+          "PETROL-18",
+          "PETROL-19",
+          "PETROL-20",
+          "PETROL-21",
+          "PETROL-22",
+          "PETROL-23",
+          "PETROL-24",
+          "PETROL-25",
+          "PETROL-28",
+          "PETROL-29",
+          "PETROL-30",
+          "PETROL-31"
+        ],
+        "duped": [],
+        "in_order": false,
+        "exp_total": "43,028.00",
+        "tot_in_pdf": "True"
+      }
+    }
+  },
+  "after": {
+    "pages": 4,
+    "blank_pages": [
+      4
+    ],
+    "old_fallback_pages": [],
+    "tables": {
+      "Schedule 1 (Petroleum 31 rows)": {
+        "held": 31,
+        "printed_once": 2,
+        "missing": [
+          "PETROL-01",
+          "PETROL-02",
+          "PETROL-03",
+          "PETROL-04",
+          "PETROL-05",
+          "PETROL-06",
+          "PETROL-07",
+          "PETROL-08",
+          "PETROL-09",
+          "PETROL-10",
+          "PETROL-11",
+          "PETROL-12",
+          "PETROL-13",
+          "PETROL-14",
+          "PETROL-15",
+          "PETROL-16",
+          "PETROL-17",
+          "PETROL-18",
+          "PETROL-19",
+          "PETROL-20",
+          "PETROL-21",
+          "PETROL-22",
+          "PETROL-23",
+          "PETROL-24",
+          "PETROL-25",
+          "PETROL-28",
+          "PETROL-29",
+          "PETROL-30",
+          "PETROL-31"
+        ],
+        "duped": [],
+        "in_order": false,
+        "exp_total": "43,028.00",
+        "tot_in_pdf": "True"
+      }
+    }
+  }
+}
