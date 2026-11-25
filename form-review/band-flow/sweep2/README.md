@@ -10,9 +10,9 @@ All proofs were captured from real saved returns in the running Linux GPUI deskt
 - `recording.mp4` (16.9s): Opening saved `1800` return, saving, opening print preview, and paging through Pages 1–3.
 - **Does not show**: `1602Q` Schedule 4 static-prefix repetition (covered by `sweep2_a_repeated_section_title_and_gapped_table_head_on_breaks` in `crates/bir-print/src/band_flow.rs`); `1800` Schedule B Continuation's `p2b25` header band also holds row 1 in the frozen layout metadata (`repeat_on_break: false`), so row 1 is not duplicated on Page 3.
 
-### Item B — Safe `(continued)` labels & `2550M` `Page 2 (continued)` (`item-b-2550m/`)
+### Item B & M — Safe `(continued)` labels, `2550M` `Page 2 (continued)` & Schedule 5 right-alignment (`item-b-2550m/`)
 - `before-1.png`: Sweep-2 baseline (`2550M/cap_p40-p-3.png`, showing `(continued)` colliding with column captions and missing `Page 2 (continued)`).
-- `preview-page-{1..3}.png`, `pdf-page-{1..3}.png`: Real saved `2550M` return with 60 Schedule 3A capital-goods rows (every column filled, amounts `110,123,456.78`+, verified deferred total `805,459,257.07`). Page 3 shows unclipped `BIR Form 2550M - February 2007 (ENCS)    Page 2 (continued)` with zero header collisions.
+- `preview-page-{1..3}.png`, `pdf-page-{1..3}.png`: Real saved `2550M` return with 60 Schedule 3A capital-goods rows (every column filled, amounts `110,123,456.78`+, verified deferred total `805,459,257.07`). Page 3 shows unclipped `BIR Form 2550M - February 2007 (ENCS)    Page 2 (continued)`, zero header collisions, and Schedule 5 ratable-portion `0.00` right-aligned like Schedule 4 (Item M).
 - `recording.mp4` (14.3s): Opening saved `2550M` return, saving, opening print preview, and paging through Pages 1–3.
 - **Does not show**: `2551Q`, `2200C`, `2000` (all share the same engine path verified by `sweep2_b_continued_never_collides_with_column_headers_and_2550m_page2_label`).
 
@@ -46,11 +46,11 @@ All proofs were captured from real saved returns in the running Linux GPUI deskt
 - `recording.mp4` (13.7s): Opening saved `1701A` return, saving, opening print preview, and paging through Pages 1–3.
 - **Does not show**: `1601C` (uses the same suffix-label sizing rule tested in `sweep2_g_suffix_labels_nudged_clear_of_divider_on_1701a_and_1601c`).
 
-### Items H & J — `1601-EQ` at +3 rows: closing border, unshrunk Machine Validation, and full-column real values (`item-h-1601eq-plus3/`)
+### Items H, J, K & N — `1601-EQ` at +3 rows: closing border, unshrunk Machine Validation, `8pt` matching labels, and form-page flow recording (`item-h-1601eq-plus3/`)
 - `before-1.png`, `before-2.png`: Sweep-2 baseline (`1601EQ/cap_p3-p-1.png` and `cap_p3-p-2.png`, showing missing bottom border on page 1, shrunk Machine Validation box on page 2, and blank amount/rate columns).
-- `preview-page-{1..3}.png`, `pdf-page-{1..3}.png`: Real saved `1601-EQ` return with 9 ATC rows (`13..18` + `18a..18c`). Every column (ATC, Tax Base `134,567,900.23`–`223,456,789.11`, Tax Rate `1%`–`15%`, Tax Withheld) prints on all 9 rows, verified Item 19 `Total Taxes Withheld = 98,481,480.90` and Item 31 `129,918,743.02`. Page 1 keeps its closing bottom border under Item 35; `Page 1 (continued)` renders the Machine Validation box at its full official `54.48pt` height (3 extra rows need `52.20pt` > `22.68pt` elastic slack + `1.00pt` free space, so the page breaks and the moved box is not shrunk).
-- `recording.mp4` (13.7s): Opening saved `1601-EQ` return, saving, opening print preview, and paging through Pages 1–3.
-- **Does not show**: Live submission to BIR (never performed; dry-run/test env only).
+- `preview-page-{1..3}.png`, `pdf-page-{1..3}.png`: Real saved `1601-EQ` return with 9 ATC rows (`13..18` + `18a..18c`). Grown-row labels `18a`, `18b`, `18c` render in the table's own bold `"eBIRForms Arimo"` style at `8pt` (`>= 7.5pt`, RULES 3, Item K). Every column (ATC, Tax Base `134,567,900.23`–`223,456,789.11`, Tax Rate `1%`–`15%`, Tax Withheld) prints on all 9 rows, verified Item 19 `Total Taxes Withheld = 98,481,480.90` and Item 31 `129,918,743.02`. Page 1 keeps its closing bottom border under Item 35; `Page 1 (continued)` renders the Machine Validation box at its full official `54.48pt` height (3 extra rows need `52.20pt` > `22.68pt` elastic slack + `1.00pt` free space, so the page breaks and the moved box is not shrunk).
+- `recording.mp4` (redone for Item N): Live frames of the running eBIRForms GPUI app window open on the **1601-EQ form page** (Part II Computation of Tax rows `13`–`18` and Additional ATC rows `7`–`9` added past printed capacity, `✓ Saved`), followed by all 3 print sheets produced by clicking **Print preview** (`fp-print`). Note: the app's native WebKit print preview window cannot be grabbed directly via `x11grab` on this headless Linux X11 desktop, so the recording shows the live form-page portion directly from the GPUI app and the sheet portion from the exact `sheet.html` emitted by `fp-print`.
+- **Does not show**: Native WebKit print dialog chrome or live submission to BIR (never performed; dry-run/test env only).
 
 ### Item I — Thousands separators & two decimals in plain grown rows (`item-i-2550q/`)
 - `before-1.png`: Sweep-2 baseline (`2550Q/cap_p3-p-3.png`, showing `12071.00` without commas).
