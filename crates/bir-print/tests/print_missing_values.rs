@@ -1,3 +1,6 @@
+use bir_core::forms::form_1701::{
+    Form1701CivilStatus, Form1701Draft, Form1701EmployerRow, Form1701Party,
+};
 use bir_core::forms::form_1800::{
     Form1800Donee, Form1800Draft, Form1800PersonalProperty, Form1800RealProperty,
 };
@@ -121,4 +124,49 @@ fn form_1800_prints_item_14_total_net_gifts() {
     assert_eq!(printed_cell(&doc, "p1c64").0, "95");
     assert_eq!(printed_cell(&doc, "p1c70").0, "14005747");
     assert_eq!(printed_cell(&doc, "p1c72").0, "38");
+}
+
+#[test]
+fn form_1701_prints_schedule1_employer_names_and_tins() {
+    let profile = demo_profile();
+    let mut d = Form1701Draft::new_from_profile(&profile, 2025, 12);
+    d.civil_status = Some(Form1701CivilStatus::Married);
+    d.spouse_has_income = Some(true);
+    d.spouse.name = "SANTOS, JUANITO".into();
+    d.spouse.tin = "00045678900000".into();
+    d.spouse_rdo_code = "044".into();
+    d.employers[0] = Form1701EmployerRow {
+        owner: Some(Form1701Party::Taxpayer),
+        employer_name: "ACME PACIFIC HOLDINGS CORPORATION PHILIPPINES".into(),
+        employer_tin: "00077788800001".into(),
+        compensation_income: Some(125_456_789.45),
+        tax_withheld: Some(31_234_567.89),
+    };
+    d.employers[1] = Form1701EmployerRow {
+        owner: Some(Form1701Party::Spouse),
+        employer_name: "MANILA GLOBAL ENTERPRISES INCORPORATED".into(),
+        employer_tin: "00099911100002".into(),
+        compensation_income: Some(110_222_333.50),
+        tax_withheld: Some(25_111_222.25),
+    };
+    d.compute();
+
+    let map = d.print_field_map();
+    let doc = filled_document("1701-2018", &map).expect("1701-2018 render");
+
+    assert_eq!(printed_cell(&doc, "p2c54").0, "X");
+    assert_eq!(
+        printed_cell(&doc, "p2c55").0,
+        "ACME PACIFIC HOLDINGS CORPORATION P"
+    );
+    assert_eq!(printed_cell(&doc, "p2c56").0, "HILIPPINES");
+    assert_eq!(printed_cell(&doc, "p2c58").0, "00077788800001");
+
+    assert_eq!(printed_cell(&doc, "p2c59").0, "X");
+    assert_eq!(
+        printed_cell(&doc, "p2c60").0,
+        "MANILA GLOBAL ENTERPRISES INCORPORA"
+    );
+    assert_eq!(printed_cell(&doc, "p2c61").0, "TED");
+    assert_eq!(printed_cell(&doc, "p2c63").0, "00099911100002");
 }

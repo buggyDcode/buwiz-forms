@@ -615,6 +615,37 @@ impl Form1701Draft {
                 self.page_header_name(),
             );
         }
+        // Page 2 Schedule 1 employer name (35 + 16 comb slots) and 14-digit TIN
+        // share one row per employer regardless of Taxpayer/Spouse owner, whereas
+        // the XML splits TPName/SName and TIN1/TIN2/TIN3/BranchCode.
+        for n in 1..=2 {
+            let base = format!("frm1701:txtPg2IShed{n}a");
+            let raw_name = fields
+                .get(&format!("{base}_{n}TPName"))
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| {
+                    fields
+                        .get(&format!("{base}_{n}SName"))
+                        .filter(|s| !s.trim().is_empty())
+                })
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default();
+            let name: Vec<char> = raw_name.chars().collect();
+            let line1: String = name.iter().take(35).collect();
+            let line2: String = name.iter().skip(35).take(16).collect();
+            let tin = super::print_map::digits_of(
+                &fields,
+                &[
+                    &format!("{base}_TIN1"),
+                    &format!("{base}_TIN2"),
+                    &format!("{base}_TIN3"),
+                    &format!("{base}_BranchCode"),
+                ],
+            );
+            fields.insert(format!("derived:sched1_row{n}_name_line1"), line1);
+            fields.insert(format!("derived:sched1_row{n}_name_line2"), line2);
+            fields.insert(format!("derived:sched1_row{n}_tin"), tin);
+        }
         fields
     }
 
