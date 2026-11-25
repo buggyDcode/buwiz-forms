@@ -1,0 +1,5 @@
+# 1700 Independent Overflow Check — Data Excerpt
+
+## Schedule 1 (7 Employers): 7 rows, expected total=1,011,108.00
+  markers: EMPLOYER-01 INC, EMPLOYER-02 INC, EMPLOYER-03 INC, EMPLOYER-04 INC, EMPLOYER-05 INC, EMPLOYER-06 INC, EMPLOYER-07 INC
+
