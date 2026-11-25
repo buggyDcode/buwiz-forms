@@ -4,5 +4,5 @@
 - **Verdict:** **`fail`**.
 
 ## Results (`results.tsv`)
-### Case `overflow` (before=2p blanks=[] -> after=2p blanks=[] old_fallback=[2])
-- **Other Credits (10):** before=0/10 (occ=0) -> after=0/10 (missing=10, duped=0, tot=77,500.00 in_pdf=False occ=0).
+### Case `credits6` (before=2p blanks=[] -> after=2p blanks=[] old_fallback=[2])
+- **Other Credits (6):** before=0/6 (occ=0) -> after=0/6 (missing=6, duped=0, tot=40,500.00 in_pdf=False occ=0).
