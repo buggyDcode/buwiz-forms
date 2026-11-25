@@ -2,13 +2,39 @@
 //!
 //! Ported from the retired painted preview's A4 fit implementation. Each
 //! `.page` sits in a paper-sized `.sheet` (the wrappers are
-//! written by [`crate::static_html`]), the page is zoomed to fit A4, and
+//! written by [`crate::static_html`]), the page is scaled to fit A4, and
 //! html/body are pinned to the paper width so WebKit doesn't re-scale the
 //! print layout. Without that pin a 4-page form printed as 8 pages.
+//!
+//! Page scaling is chosen per engine: WebKit systems (macOS, iOS, Linux) use
+//! `transform: scale()` so WebKit paints the natural layout scaled without
+//! quantizing sub-1 zoomed text wider; Chromium systems (Windows, Android)
+//! keep `zoom` because `transform` there costs the saved PDF its text layer.
+//! Every emitted `.page` stays at the form's native size inside its fixed A4
+//! `.sheet` so both CSS forms paginate 1-to-1 with no blank spill page.
 
 pub const PAPER_WIDTH_PT: f32 = 595.28;
 pub const PAPER_HEIGHT_PT: f32 = 841.89;
 const SAFETY_PT: f32 = 10.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PageScaleMode {
+    /// WebKit (macOS, iOS, Linux): `transform: scale(...)`.
+    Transform,
+    /// Chromium (Windows, Android): `zoom: ...`.
+    Zoom,
+}
+
+pub const fn default_scale_mode() -> PageScaleMode {
+    #[cfg(any(target_os = "windows", target_os = "android"))]
+    {
+        PageScaleMode::Zoom
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "android")))]
+    {
+        PageScaleMode::Transform
+    }
+}
 
 /// The sheet's native `@page size` (e.g. 612pt × 936pt folio).
 fn document_sheet_size(html: &str) -> Option<(f32, f32)> {
@@ -27,8 +53,25 @@ fn fit_scale(native: (f32, f32)) -> f32 {
     sx.min(sy).min(1.0)
 }
 
-fn fit_css(native: (f32, f32)) -> String {
+fn fit_css_with_mode(native: (f32, f32), mode: PageScaleMode) -> String {
     let scale = fit_scale(native);
+    let page_rule = match mode {
+        PageScaleMode::Transform => {
+            // The scaled page keeps its native box (a transform does not relayout):
+            // center it as `margin:0 auto` did, and pull its bottom edge up by what
+            // the scale shrinks so a `.sheet-flow` wraps the painted size.
+            let left = ((PAPER_WIDTH_PT - native.0 * scale) / 2.0).max(0.0);
+            let bottom = (1.0 - scale) * native.1;
+            format!(
+                ".sheet>.page{{transform:scale({scale:.4});transform-origin:0 0;margin:0 0 -{bottom:.4}pt {left:.4}pt;break-after:auto;page-break-after:auto}}"
+            )
+        }
+        PageScaleMode::Zoom => {
+            format!(
+                ".sheet>.page{{zoom:{scale:.4};margin:0 auto;break-after:auto;page-break-after:auto}}"
+            )
+        }
+    };
     format!(
         "@page{{size:{w:.2}pt {h:.2}pt;margin:0}}\
 html,body{{width:{w:.2}pt;margin:0 auto;padding:0;background:#fff}}\
@@ -36,7 +79,7 @@ body>:not(.sheet){{display:none !important}}\
 .sheet{{position:relative;width:{w:.2}pt;height:{sheet_h:.2}pt;overflow:hidden;background:#fff;padding-top:{safety:.0}pt;break-after:page;page-break-after:always}}\
 .sheet:last-of-type{{break-after:auto;page-break-after:auto}}\
 .sheet-flow{{height:auto;min-height:{sheet_h:.2}pt;overflow:visible}}\
-.sheet>.page{{zoom:{scale:.4};margin:0 auto;break-after:auto;page-break-after:auto}}",
+{page_rule}",
         w = PAPER_WIDTH_PT,
         h = PAPER_HEIGHT_PT,
         sheet_h = PAPER_HEIGHT_PT - 1.0,
@@ -46,7 +89,7 @@ body>:not(.sheet){{display:none !important}}\
 
 /// Screen-only extras (grey desk, gap and shadow between sheets, page label).
 /// Inside `@media screen` and limited to `.sheet` margins/shadow, never its
-/// height, so the print layout is exactly `fit_css`.
+/// height, so the print layout is exactly `fit_css_with_mode`.
 const SCREEN_CSS: &str = "@media screen{\
 html{width:auto !important;background:#5f6368 !important}\
 body{background:transparent !important;padding:24px 0 8px !important}\
@@ -58,10 +101,15 @@ font:600 9px -apple-system,sans-serif;color:#888;pointer-events:none}}";
 /// Run [`crate::static_html::staticize`] on the result to get the `.sheet`
 /// wrappers and the script-free markup.
 pub fn prepare_html(html: &str) -> String {
+    prepare_html_with_mode(html, default_scale_mode())
+}
+
+/// Add the A4 paper CSS using an explicit [`PageScaleMode`].
+pub fn prepare_html_with_mode(html: &str, mode: PageScaleMode) -> String {
     let native = document_sheet_size(html).unwrap_or((612.0, 936.0));
     let style = format!(
         "<style id=\"preview-paper\">{}{}</style>",
-        fit_css(native),
+        fit_css_with_mode(native, mode),
         SCREEN_CSS
     );
     match html.rfind("</head>") {
@@ -220,5 +268,78 @@ mod tests {
         let expected = overrides.canonicalize().unwrap_or(overrides);
         assert_eq!(super::overrides_dir_from(None, Some(exe)), expected);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn flowed_three_page_document_yields_three_sheets_under_both_transform_and_zoom() {
+        let mut fields = std::collections::BTreeMap::new();
+        fields.insert("frm1707:txtPg1I6SellerTIN0".into(), "00012345300000".into());
+        fields.insert("frm1707:txtPg1I6SellerName0".into(), "SANTOS, JUANA".into());
+        fields.insert(
+            "frm1707:txtPg2P4Sch3Particulars1".into(),
+            "ACQUISITION COST".into(),
+        );
+        fields.insert("frm1707:txtPg2P4Sch3Amount1".into(), "180000.00".into());
+        fields.insert(
+            "frm1707:txtPg2P4Sch3Particulars2".into(),
+            "BROKERAGE".into(),
+        );
+        fields.insert("frm1707:txtPg2P4Sch3Amount2".into(), "12500.00".into());
+        fields.insert("frm1707:txtPg2P4Sch3Particulars3".into(), "DST PAID".into());
+        fields.insert("frm1707:txtPg2P4Sch3Amount3".into(), "3250.50".into());
+        for i in 1..=18 {
+            fields.insert(
+                format!("frm1707:txtPg2Pt4S3_{i}Col1"),
+                format!("EXPENSE ITEM {i:02}"),
+            );
+            fields.insert(
+                format!("frm1707:txtPg2Pt4S3_{i}Col2"),
+                format!("{}.00", 1000 + i * 50),
+            );
+        }
+        fields.insert("frm1707:txtPg2P4Sch3TotAmount".into(), "240257.75".into());
+
+        let filled = bir_print::frozen_html::filled_document("1707-2021", &fields)
+            .expect("1707 flowed document");
+        assert!(
+            filled.contains("page-2-cont-1"),
+            "22-row 1707 must flow to 3 pages"
+        );
+
+        for (mode, expected_rule) in [
+            (
+                super::PageScaleMode::Transform,
+                ".sheet>.page{transform:scale(",
+            ),
+            (super::PageScaleMode::Zoom, ".sheet>.page{zoom:"),
+        ] {
+            let prepared = super::prepare_html_with_mode(&filled, mode);
+            let staticized = crate::static_html::staticize(&prepared);
+            assert!(
+                staticized.contains(expected_rule),
+                "mode {mode:?} must emit `{expected_rule}`"
+            );
+            assert_eq!(
+                staticized.matches("<div class=\"sheet\"").count(),
+                3,
+                "mode {mode:?}: flowed 3-page document must yield exactly 3 fixed A4 sheets"
+            );
+            assert_eq!(
+                staticized.matches("sheet-flow").count(),
+                1,
+                "mode {mode:?}: only the CSS rule `.sheet-flow` should appear, never a `.sheet-flow` div"
+            );
+            assert!(staticized.contains("data-preview-label=\"Page 1 of 3\""));
+            assert!(staticized.contains("data-preview-label=\"Page 2 of 3\""));
+            assert!(staticized.contains("data-preview-label=\"Page 3 of 3\""));
+            assert!(
+                staticized.contains(".sheet:last-of-type{break-after:auto;page-break-after:auto}"),
+                "mode {mode:?}: last sheet must suppress trailing page break so no blank spill page prints"
+            );
+            assert!(
+                staticized.contains("width:595.28pt;height:840.89pt;overflow:hidden"),
+                "mode {mode:?}: each sheet must stay fixed at A4 with overflow:hidden"
+            );
+        }
     }
 }

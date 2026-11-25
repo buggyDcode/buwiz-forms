@@ -116,6 +116,10 @@ pub(crate) struct BandRow {
     pub cells: Vec<BandCell>,
     #[serde(default)]
     pub texts: Vec<BandText>,
+    /// Un-ID'd structural SVG rects (comb group-mark ticks, decorative shading)
+    /// inside this row, emitted per `form-review/BAND-FORMAT.md` section 6.
+    #[serde(default)]
+    pub structural_rects: Vec<BandRect>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -237,7 +241,7 @@ pub(crate) fn build_continuation_pages(
 
 /// How one cell in a band's template row maps to an `OverflowSchedule` column.
 #[derive(Debug, Clone)]
-enum CellJoinKind {
+pub(crate) enum CellJoinKind {
     Text {
         col_idx: usize,
         orig_writer_key: String,
@@ -258,32 +262,32 @@ enum CellJoinKind {
 }
 
 #[derive(Debug, Clone)]
-struct MatchedBand {
-    band: FormgenBand,
+pub(crate) struct MatchedBand {
+    pub(crate) band: FormgenBand,
     /// `template_cell_id -> CellJoinKind`
-    cell_map: BTreeMap<String, CellJoinKind>,
+    pub(crate) cell_map: BTreeMap<String, CellJoinKind>,
     /// Earliest `y` of row 1 of the columns in this band (may be above `band.row_y[0]`
     /// when e.g. rows 1–3 sit above a band starting at row 4, as on 1800 Schedule A).
-    first_printed_row_cell_ids: Vec<String>,
+    pub(crate) first_printed_row_cell_ids: Vec<String>,
 }
 
-struct ScheduleBandPlan {
-    page_num: usize,
-    bands: Vec<MatchedBand>,
+pub(crate) struct ScheduleBandPlan {
+    pub(crate) page_num: usize,
+    pub(crate) bands: Vec<MatchedBand>,
     /// Official total writer key(s) and their html_id(s) for this schedule's TOTAL row.
-    total_joins: Vec<TotalJoinInfo>,
+    pub(crate) total_joins: Vec<TotalJoinInfo>,
 }
 
 #[derive(Debug, Clone)]
-struct TotalJoinInfo {
-    writer_key: String,
-    html_id: String,
-    cents_html_id: Option<String>,
-    is_money: bool,
-    is_peso: bool,
+pub(crate) struct TotalJoinInfo {
+    pub(crate) writer_key: String,
+    pub(crate) html_id: String,
+    pub(crate) cents_html_id: Option<String>,
+    pub(crate) is_money: bool,
+    pub(crate) is_peso: bool,
 }
 
-fn match_schedule_to_bands(
+pub(crate) fn match_schedule_to_bands(
     sched: &OverflowSchedule,
     bands: &[FormgenBand],
     wc: &Value,
@@ -1774,7 +1778,7 @@ fn push_svg_rect(structural: &mut String, decorative: &mut String, r: &SvgRect, 
     ));
 }
 
-fn push_band_rect(target: &mut String, r: &BandRect, dy: f64) {
+pub(crate) fn push_band_rect(target: &mut String, r: &BandRect, dy: f64) {
     target.push_str(&format!(
         "<rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{}\"/>",
         fmt_pt(r.x),
@@ -1785,12 +1789,12 @@ fn push_band_rect(target: &mut String, r: &BandRect, dy: f64) {
     ));
 }
 
-fn fmt_pt(v: f64) -> String {
+pub(crate) fn fmt_pt(v: f64) -> String {
     let s = format!("{v:.2}");
     s.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
-fn clone_cell_div(raw_html: &str, orig_id: &str, new_id: &str, dy: f64) -> String {
+pub(crate) fn clone_cell_div(raw_html: &str, orig_id: &str, new_id: &str, dy: f64) -> String {
     let shifted = shift_top_in_tag(raw_html, dy);
     // Replace the outer div id="orig_id", inner input name="orig_id", and input id="orig_id-..."
     shifted
@@ -1802,7 +1806,7 @@ fn clone_cell_div(raw_html: &str, orig_id: &str, new_id: &str, dy: f64) -> Strin
         .replace(&format!("id=\"{orig_id}-"), &format!("id=\"{new_id}-"))
 }
 
-fn shift_top_in_tag(elem: &str, dy: f64) -> String {
+pub(crate) fn shift_top_in_tag(elem: &str, dy: f64) -> String {
     let Some(gt) = elem.find('>') else {
         return elem.to_string();
     };
@@ -1851,7 +1855,7 @@ fn set_left_in_tag(elem: &str, new_left: f64) -> String {
     )
 }
 
-fn replace_inner_text(elem: &str, new_text: &str) -> String {
+pub(crate) fn replace_inner_text(elem: &str, new_text: &str) -> String {
     let Some(gt) = elem.find('>') else {
         return elem.to_string();
     };
@@ -1866,7 +1870,7 @@ fn replace_inner_text(elem: &str, new_text: &str) -> String {
     )
 }
 
-fn escape_html(text: &str) -> String {
+pub(crate) fn escape_html(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {
         match ch {
@@ -1881,7 +1885,7 @@ fn escape_html(text: &str) -> String {
     out
 }
 
-fn extract_attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+pub(crate) fn extract_attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
     let needle = format!("{name}=\"");
     let pos = tag.find(&needle)?;
     let start = pos + needle.len();
@@ -1889,7 +1893,7 @@ fn extract_attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
     Some(&tag[start..start + end])
 }
 
-fn extract_style_pt(tag: &str, prop: &str) -> Option<f64> {
+pub(crate) fn extract_style_pt(tag: &str, prop: &str) -> Option<f64> {
     let pos = tag.find(prop)?;
     let start = pos + prop.len();
     let rest = &tag[start..];
@@ -1897,7 +1901,7 @@ fn extract_style_pt(tag: &str, prop: &str) -> Option<f64> {
     rest[..pt].trim().parse::<f64>().ok()
 }
 
-fn strip_templates(html: &str) -> String {
+pub(crate) fn strip_templates(html: &str) -> String {
     let mut out = String::with_capacity(html.len());
     let mut cur = 0;
     while let Some(rel) = html[cur..].find("<template") {
@@ -1912,7 +1916,7 @@ fn strip_templates(html: &str) -> String {
     out
 }
 
-fn strip_html_tags(s: &str) -> String {
+pub(crate) fn strip_html_tags(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut in_tag = false;
     for ch in s.chars() {
@@ -1926,7 +1930,7 @@ fn strip_html_tags(s: &str) -> String {
     out.replace("&amp;", "&")
 }
 
-fn find_matching_div_end(html: &str, open_at: usize) -> Option<usize> {
+pub(crate) fn find_matching_div_end(html: &str, open_at: usize) -> Option<usize> {
     let mut depth = 0usize;
     let mut cur = open_at;
     while cur < html.len() {
@@ -2216,8 +2220,8 @@ mod tests {
         assert_eq!(doc1707.overflow.schedules.len(), 2);
         assert!(doc1707.html.contains("CORP 1") && doc1707.html.contains("CORP 3"));
         assert!(
-            doc1707.html.contains("page-continuation-band"),
-            "1707 Schedule 3 uses cloned band p2g1"
+            doc1707.html.contains("bf_p2_p2g1_r0_"),
+            "1707 Schedule 3 grows in place via band flow on p2g1"
         );
         assert!(doc1707.html.contains("EXPENSE 1") || doc1707.html.contains("value=\"E\""));
 
@@ -2404,47 +2408,41 @@ mod tests {
             "plain fallback must repeat the official total value"
         );
 
-        // Cloned band for Schedule 3 must label rows E, F, G (not D), preserve decorative
-        // vertical group ticks + grey decimal box + decimal dot, spell <=24-char Particulars
-        // one character per comb slot, and fill cloned header TIN/Name.
-        let band_pos = doc1707
-            .html
-            .find("<div class=\"page page-continuation-band\"")
-            .unwrap();
-        let cont = &doc1707.html[band_pos..plain_pos];
+        // In-page band flow for Schedule 3 on Page 2 must label extra rows E, F, G
+        // (after official A-D), preserve decorative vertical group ticks + grey decimal
+        // box + decimal dot, spell <=24-char Particulars one character per comb slot,
+        // and keep Page 2 header TIN/Name filled.
+        let page2_pos = doc1707.html.find("<div class=\"page page-2\"").unwrap();
+        let page2 = &doc1707.html[page2_pos..plain_pos];
         assert!(
-            cont.contains("data-slot-index=\"0\"") && cont.contains("value=\"E\""),
+            page2.contains("bf_p2_p2g1_r0_") && page2.contains("value=\"E\""),
             "short Particulars (<=24 chars) must spell into individual comb slots"
         );
         assert!(
-            cont.contains(">E</div>"),
-            "1707 Schedule 3 first continuation row must be E"
+            page2.contains(">E</div>"),
+            "1707 Schedule 3 first extra row must be E"
         );
-        assert!(cont.contains(">F</div>"));
-        assert!(cont.contains(">G</div>"));
+        assert!(page2.contains(">F</div>"));
+        assert!(page2.contains(">G</div>"));
         assert!(
-            !cont.contains(">D</div>"),
-            "1707 Schedule 3 continuation must not repeat row D"
-        );
-        assert!(
-            cont.contains("fill=\"#808080\""),
+            page2.contains("fill=\"#808080\""),
             "cloned amount comb must carry grey decimal column"
         );
         assert!(
-            cont.contains("height=\"6.96\""),
+            page2.contains("height=\"6.96\""),
             "cloned amount comb must carry thick vertical group ticks"
         );
         assert!(
-            cont.contains("●"),
+            page2.contains("●"),
             "cloned amount comb must carry decimal dot"
         );
         assert!(
-            cont.contains("data-writer-value=\"00012345300000\""),
-            "cloned header TIN must be filled"
+            page2.contains("data-writer-value=\"00012345300000\""),
+            "Page 2 header TIN must be filled"
         );
         assert!(
-            cont.contains("data-writer-value=\"SANTOS, JUANA\""),
-            "cloned header Taxpayer Name must be filled"
+            page2.contains("data-writer-value=\"SANTOS, JUANA\""),
+            "Page 2 header Taxpayer Name must be filled"
         );
 
         // 1701A: Part IV-A official rows are 41-42 -> first continuation row must be 43;
@@ -2496,25 +2494,22 @@ mod tests {
         );
 
         let doc = frozen_html::filled_document_with_report("1707-2021", &f1707, None).unwrap();
-        let cont_pos = doc
-            .html
-            .find("<div class=\"page page-continuation-band\"")
-            .unwrap();
-        let cont = &doc.html[cont_pos..];
+        let page2_pos = doc.html.find("<div class=\"page page-2\"").unwrap();
+        let page2 = &doc.html[page2_pos..];
         assert!(
-            cont.contains("data-overflow-of=\"cont_"),
-            "cloned comb/text cell on continuation page must get data-overflow-of white band"
+            page2.contains("data-overflow-of=\"bf_p2_"),
+            "cloned comb/text cell on flowed Page 2 must get data-overflow-of white band"
         );
         assert!(
-            cont.contains("data-overflow-warning=\"amount-comb\""),
+            page2.contains("data-overflow-warning=\"amount-comb\""),
             "over-wide cloned money comb should carry amount-comb overflow warning"
         );
         let cell_warnings = doc.cell_overflow_warnings();
         assert!(
             cell_warnings
                 .iter()
-                .any(|w| w.cell.starts_with("cont_") && w.kind == "amount-comb"),
-            "overflow_warnings() must report the cloned continuation cell: {cell_warnings:?}"
+                .any(|w| w.cell.starts_with("bf_p2_") && w.kind == "amount-comb"),
+            "overflow_warnings() must report the cloned band-flow cell: {cell_warnings:?}"
         );
         let summary = doc
             .warning_summary()

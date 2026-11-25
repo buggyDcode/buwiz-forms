@@ -1953,6 +1953,11 @@ fn apply_replacements(html: &str, mut replacements: Vec<(usize, usize, String)>)
     out
 }
 
+#[cfg(test)]
+pub(crate) fn raw_bundle_html(slug: &str) -> Option<&'static str> {
+    bundle(slug).map(|b| b.html)
+}
+
 pub(crate) fn writer_cells_json(slug: &str) -> Option<&'static str> {
     match slug {
         "0605-1999" => Some(include_str!(
@@ -3717,7 +3722,14 @@ pub(crate) fn fill_continuation_fragment(
         SheetType::of_sheet(slug, loaded.css)
     });
     let plan = line_group_plan(&filled, fields, &cells, &sheet);
-    let filled = fill_by_name_set(&filled, fields, &cells.joins, &plan, &sheet);
+    let filled = fill_by_name_set(
+        &filled,
+        fields,
+        &cells.joins,
+        &cells.captions,
+        &plan,
+        &sheet,
+    );
     let filled = fill_money_joins_with_sheet(&filled, fields, &cells.money_joins, &sheet);
     let filled = fill_peso_joins_with_sheet(&filled, fields, &cells.peso_joins, &sheet);
     let filled = fill_date_joins(&filled, fields, &cells.date_joins);
@@ -3995,20 +4007,39 @@ pub fn filled_document_with_report(
     };
     let overflow = crate::continuation::detect_overflow(slug, fields)?;
     let (width, height) = page_size_from_css(loaded.css);
+    let mut official_filled = fill_bundle(loaded.html, fields, slug)?;
+
+    // First try in-page band flow (Rules 5 & 6) for any overflowing schedule
+    // whose page has layout / band data. Remaining schedules without band
+    // coverage fall back to the existing continuation-sheet engine.
     let cont = if !overflow.is_empty() {
-        Some(crate::band_continuation::build_continuation_pages(
+        let flowed = crate::band_flow::apply_band_flow(
             slug,
             loaded.html,
+            &official_filled,
             fields,
             &overflow,
-            &width,
-            &height,
-        )?)
+        )?;
+        official_filled = flowed.document_html;
+        if !flowed.unhandled_schedules.is_empty() {
+            let fallback_report = crate::continuation::OverflowReport {
+                schedules: flowed.unhandled_schedules,
+            };
+            Some(crate::band_continuation::build_continuation_pages(
+                slug,
+                loaded.html,
+                fields,
+                &fallback_report,
+                &width,
+                &height,
+            )?)
+        } else {
+            None
+        }
     } else {
         None
     };
 
-    let mut official_filled = fill_bundle(loaded.html, fields, slug)?;
     if let Some(c) = &cont {
         if !c.official_page_1_overlay.is_empty() {
             official_filled = inject_into_page_one(&official_filled, &c.official_page_1_overlay);

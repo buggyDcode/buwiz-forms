@@ -7,6 +7,7 @@
 //! [`html_output`].
 
 pub mod band_continuation;
+pub mod band_flow;
 pub mod certification_observation;
 pub mod continuation;
 pub mod frozen_html;
