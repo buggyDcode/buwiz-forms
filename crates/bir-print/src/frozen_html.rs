@@ -6253,13 +6253,26 @@ fn overflow_input_with_fit(
             ),
         ));
     }
-    let (display, size, two_lines, truncated) = if proposed_size < PLAIN_TEXT_MIN_PT {
+    let (display, size, two_lines, truncated, tight_inset) = if proposed_size < PLAIN_TEXT_MIN_PT {
         let letter = sheet.letter_for("fi");
         // `[data-overflow-of]` has `inset: 0.75pt 1pt 0.75pt 1pt` plus
         // `padding-left: 1pt`, leaving `width - 3pt` horizontal room and
         // `height - 1.5pt` vertical room; keep 1pt extra horizontal spare.
+        // Rows just under `17.05pt` (such as 1702Q Sched 4 item 6a at
+        // `17.04pt`) still fit two 7.5pt lines (`15.60pt`) cleanly when
+        // vertical inset tightens to `0.40pt` (`height - 0.80pt`).
         let room = (width - 4.0).max(4.0);
-        let inner_height = (height - 1.5).max(0.0);
+        let default_inner_height = (height - 1.5).max(0.0);
+        let (inner_height, use_tight_inset) = if default_inner_height >= PLAIN_WRAP_MIN_HEIGHT_PT {
+            (default_inner_height, false)
+        } else {
+            let tight_inner = (height - 0.80).max(0.0);
+            if tight_inner >= PLAIN_TWO_LINE_HEIGHT_FACTOR * PLAIN_TEXT_MIN_PT {
+                (tight_inner, true)
+            } else {
+                (default_inner_height, false)
+            }
+        };
         if inner_height >= PLAIN_WRAP_MIN_HEIGHT_PT {
             let max_two_line =
                 floor_size((inner_height / PLAIN_TWO_LINE_HEIGHT_FACTOR).min(PLAIN_MAX_PT));
@@ -6267,28 +6280,39 @@ fn overflow_input_with_fit(
                 if let Some((l1, l2, sz)) =
                     fit_two_lines(sheet, letter, room, text, max_two_line, PLAIN_TEXT_MIN_PT)
                 {
-                    (format!("{l1}\n{l2}"), sz, true, false)
+                    (format!("{l1}\n{l2}"), sz, true, false, use_tight_inset)
                 } else if let Some((l1, l2)) =
                     wrap_and_truncate_two_lines(sheet, letter, room, text, PLAIN_TEXT_MIN_PT)
                 {
-                    (format!("{l1}\n{l2}"), PLAIN_TEXT_MIN_PT, true, true)
+                    (
+                        format!("{l1}\n{l2}"),
+                        PLAIN_TEXT_MIN_PT,
+                        true,
+                        true,
+                        use_tight_inset,
+                    )
                 } else {
                     let cut = truncate_with_ellipsis(sheet, letter, room, text, PLAIN_TEXT_MIN_PT)
                         .unwrap_or_else(|| "...".to_string());
-                    (cut, PLAIN_TEXT_MIN_PT, false, true)
+                    (cut, PLAIN_TEXT_MIN_PT, false, true, false)
                 }
             } else {
                 let cut = truncate_with_ellipsis(sheet, letter, room, text, PLAIN_TEXT_MIN_PT)
                     .unwrap_or_else(|| "...".to_string());
-                (cut, PLAIN_TEXT_MIN_PT, false, true)
+                (cut, PLAIN_TEXT_MIN_PT, false, true, false)
             }
         } else {
             let cut = truncate_with_ellipsis(sheet, letter, room, text, PLAIN_TEXT_MIN_PT)
                 .unwrap_or_else(|| "...".to_string());
-            (cut, PLAIN_TEXT_MIN_PT, false, true)
+            (cut, PLAIN_TEXT_MIN_PT, false, true, false)
         }
     } else {
-        (text.to_string(), proposed_size, false, false)
+        (text.to_string(), proposed_size, false, false, false)
+    };
+    let inset_css = if tight_inset {
+        "inset:0.40pt 1pt;"
+    } else {
+        ""
     };
     let lh_css = if two_lines {
         format!("line-height:{PLAIN_TWO_LINE_CSS_HEIGHT};")
@@ -6306,7 +6330,7 @@ fn overflow_input_with_fit(
     Some((
         close + 1,
         format!(
-            "<input type=\"text\" class=\"fi\" readonly value=\"{}\" style=\"font-size:{size:.2}pt;{lh_css}text-align:left;padding-left:1pt;z-index:1\"{warn_attr} data-overflow-of=\"{cell}\" data-rect-box=\"{l:.2},{t:.2},{r:.2},{b:.2}\">",
+            "<input type=\"text\" class=\"fi\" readonly value=\"{}\" style=\"{inset_css}font-size:{size:.2}pt;{lh_css}text-align:left;padding-left:1pt;z-index:1\"{warn_attr} data-overflow-of=\"{cell}\" data-rect-box=\"{l:.2},{t:.2},{r:.2},{b:.2}\">",
             html_escape(&display)
         ),
     ))
@@ -10955,7 +10979,7 @@ mod donor_estate_print_tests {
             ),
             (
                 "1800-2018",
-                "840392d03d89a3a3edb63e47fdc659d8d67512ded3d315421e4712918e9df952",
+                "ea482e7d127a1d07bb6aed8568a75acdb619fed15390bea0116f80dcd2d08db0",
             ),
         ] {
             let html = filled_document(slug, &every_join_filled(slug)).unwrap();
@@ -12136,5 +12160,36 @@ mod donor_estate_print_tests {
         let tags_mixed = super::input_tags(&html_mixed);
         assert_eq!(val_of(&tags_mixed, "p1c23"), Some("X"));
         assert_eq!(val_of(&tags_mixed, "p1c27"), Some("X"));
+    }
+
+    #[test]
+    fn form_1702q_schedule_4_item_6a_fits_two_lines_without_truncation() {
+        let specify = "SPECIMEN LONG SPECIFY TEXT FOR OTHER MANNER OF PAYMENT WITH MANY WORDS TO EXERCISE WRAPPING";
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "frm1702q:Sched4:txtOthrTxCrdts0".to_string(),
+            specify.to_string(),
+        );
+        let html = filled_document("1702q-2018", &fields).unwrap();
+        let cells = super::printed_cells(&html);
+        let (val, sz) = cells.get("p2c110").expect("1702Q p2c110");
+        let lines: Vec<&str> = val.lines().collect();
+        assert_eq!(
+            lines.len(),
+            2,
+            "1702Q Sched 4 item 6a must wrap to 2 lines, got: {val:?}"
+        );
+        assert!(
+            !val.contains("..."),
+            "1702Q Sched 4 item 6a must not ellipsize when 2 lines fit, got: {val:?}"
+        );
+        assert!(
+            sz.expect("p2c110 font size") >= super::PLAIN_TEXT_MIN_PT,
+            "1702Q Sched 4 item 6a font size below floor: {sz:?}"
+        );
+        assert!(
+            !html.contains("data-overflow-warning=\"text-truncated\""),
+            "1702Q Sched 4 item 6a must not be marked text-truncated"
+        );
     }
 }
