@@ -1037,6 +1037,7 @@ const DERIVED_BAND_FLOW_SLUGS: &[&str] = &["1707-2021"];
 ///   onto `page-<p>-cont-<k>` pages under the page's own header.
 /// - Any remaining schedules without layout coverage are returned in
 ///   `unhandled_schedules` for the existing continuation/fallback path.
+///
 /// Explicit allowlist of named fields with the RULES 6 override switched ON
 /// ("Other Tax Credits/Payments (specify)" and fields of the exact same shape:
 /// a small inline specify box in the label column sharing its row with an amount).
@@ -1516,10 +1517,78 @@ fn render_extra_rows_for_band(
     // followed directly by Item 43 Total, and Part IV.B rows 49..51 followed by Item 52).
     // When `first_extra_num` already appears as an item number in a following band,
     // label extra rows as `42a`, `42b`, `42c`, ... instead of colliding with `43`/`52`.
-    let sub_item_base: Option<usize> = if !sched.row_label_lettered {
+    // Item E: Determine extra-row numbering from the actual last printed row's
+    // enumerated label (`last_printed_num`) so we never duplicate printed rows
+    // (e.g. 1800: 6-8 after 10; 1601EQ: 7-9 after 18) and never collide with
+    // the following total/item row (e.g. 1601EQ 19, 1602Q 4, 1702RT 5 Total,
+    // 1701A 43/52, 1601C 4).
+    enum RowNumMode {
+        /// Official item number collides with the next band -> `"{base}a"`, `"{base}b"`, ...
+        Suffix(usize),
+        /// Sequential numbering starting from `start` (e.g. `11, 12, 13` after `10`).
+        Sequential(usize),
+        /// Fallback to `ov_row.row_number` (e.g. lettered rows `A..D -> E, F, G`).
+        FromOverflow,
+    }
+    let last_printed_num: Option<usize> = if !sched.row_label_lettered {
+        let tpl_enum = trow.texts.iter().find_map(|bt| {
+            if bt.role.as_deref() != Some("enumerated") {
+                return None;
+            }
+            let tid = bt.id.as_deref()?;
+            let orig_t = raw_texts_by_id.get(tid)?;
+            let val = orig_t.plain_text.trim().parse::<usize>().ok()?;
+            Some((orig_t.left, val))
+        });
+        tpl_enum.map(|(enum_left, tpl_val)| {
+            // Also check all texts in this `RowTemplate` band on the same label column
+            // so absorbed trailing rows (e.g. row 5 on 2000OT/2552, row 10 on 1800)
+            // advance `last_printed_num` past the absorbed row.
+            let max_in_band = layout
+                .bands
+                .iter()
+                .find(|b| b.growable_id.as_deref() == Some(band.id.as_str()))
+                .and_then(|b| {
+                    b.text_ids
+                        .iter()
+                        .filter_map(|tid| raw_texts_by_id.get(tid.as_str()))
+                        .filter(|t| (t.left - enum_left).abs() <= 4.0)
+                        .filter_map(|t| t.plain_text.trim().parse::<usize>().ok())
+                        .max()
+                });
+            max_in_band.unwrap_or(tpl_val).max(tpl_val)
+        })
+    } else {
+        None
+    };
+    let row_num_mode = if let Some(last_num) = last_printed_num {
+        let next_num = last_num + 1;
+        let next_str = next_num.to_string();
+        let next_prefix = format!("{next_str} ");
+        let this_band_idx = layout
+            .bands
+            .iter()
+            .position(|b| b.growable_id.as_deref() == Some(band.id.as_str()));
+        let collides = this_band_idx.is_some_and(|bi| {
+            layout.bands.iter().skip(bi + 1).take(3).any(|next_b| {
+                next_b.text_ids.iter().any(|tid| {
+                    raw_texts_by_id.get(tid.as_str()).is_some_and(|t| {
+                        let p = t.plain_text.trim();
+                        p == next_str || p.starts_with(&next_prefix)
+                    })
+                })
+            })
+        });
+        if collides {
+            RowNumMode::Suffix(last_num)
+        } else {
+            RowNumMode::Sequential(next_num)
+        }
+    } else if !sched.row_label_lettered {
         let first_extra = sched.rows.first().map(|r| r.row_number).unwrap_or(0);
         if first_extra > 1 {
             let needle = first_extra.to_string();
+            let needle_prefix = format!("{needle} ");
             let this_band_idx = layout
                 .bands
                 .iter()
@@ -1527,22 +1596,23 @@ fn render_extra_rows_for_band(
             let collides = this_band_idx.is_some_and(|bi| {
                 layout.bands.iter().skip(bi + 1).take(3).any(|next_b| {
                     next_b.text_ids.iter().any(|tid| {
-                        raw_texts_by_id
-                            .get(tid.as_str())
-                            .is_some_and(|t| t.plain_text.trim() == needle)
+                        raw_texts_by_id.get(tid.as_str()).is_some_and(|t| {
+                            let p = t.plain_text.trim();
+                            p == needle || p.starts_with(&needle_prefix)
+                        })
                     })
                 })
             });
             if collides {
-                Some(first_extra - 1)
+                RowNumMode::Suffix(first_extra - 1)
             } else {
-                None
+                RowNumMode::FromOverflow
             }
         } else {
-            None
+            RowNumMode::FromOverflow
         }
     } else {
-        None
+        RowNumMode::FromOverflow
     };
 
     let mut out_rows: Vec<RenderedExtraRow> = Vec::with_capacity(sched.rows.len());
@@ -1554,8 +1624,8 @@ fn render_extra_rows_for_band(
         svg_structural.extend(tpl_structural_extra.iter().cloned());
         let svg_decorative = tpl_decorative_extra.clone();
 
-        // Clone row texts (enumerated row label `E, F, G` or `5, 6, 7`, or `42a, 42b`
-        // when `43` is already an official item number below, plus dots `●`).
+        // Clone row texts (enumerated row label `E, F, G`, `11, 12, 13`, or `42a, 42b`
+        // when the next number is already an official item number below, plus dots `●`).
         let mut texts = Vec::new();
         for bt in &trow.texts {
             let Some(tid) = bt.id.as_deref() else {
@@ -1568,13 +1638,28 @@ fn render_extra_rows_for_band(
             // Strip source `id="..."` on cloned rows so IDs stay unique for conservation.
             elem = strip_id_attr(&elem);
             if bt.role.as_deref() == Some("enumerated") {
-                let label = if let Some(base) = sub_item_base {
-                    let suffix = format_row_label(r_idx + 1, true).to_ascii_lowercase();
-                    format!("{base}{suffix}")
-                } else {
-                    format_row_label(ov_row.row_number, sched.row_label_lettered)
+                let label = match row_num_mode {
+                    RowNumMode::Suffix(base) => {
+                        let suffix = format_row_label(r_idx + 1, true).to_ascii_lowercase();
+                        format!("{base}{suffix}")
+                    }
+                    RowNumMode::Sequential(start) => (start + r_idx).to_string(),
+                    RowNumMode::FromOverflow => {
+                        format_row_label(ov_row.row_number, sched.row_label_lettered)
+                    }
                 };
                 elem = replace_inner_text(&elem, &label);
+                // Item G: keep longer suffix labels (e.g. `42a`, `3aa`, `18a`) clear
+                // of the right vertical divider by nudging left and trimming font size.
+                let orig_len = orig_t.plain_text.trim().len();
+                if label.len() > orig_len {
+                    let extra_chars = (label.len() - orig_len) as f64;
+                    let nudged_left = (orig_t.left - 1.8 * extra_chars).max(layout.table_x0 + 1.5);
+                    elem = set_left_in_style(&elem, nudged_left);
+                    if label.len() >= 3 {
+                        elem = set_font_size_in_style(&elem, 6.2);
+                    }
+                }
             }
             texts.push(elem);
         }
@@ -1782,9 +1867,9 @@ enum FlowItem {
     /// `extra_rows` that can break between rows across pages.
     GrowableTable {
         band_idx: usize,
-        /// Optional `table_head` band index directly preceding this table
-        /// (repeated on continuation pages with `"(continued)"`).
-        head_band_idx: Option<usize>,
+        /// Preceding `section_title` and/or `table_head` bands to repeat on
+        /// continuation pages when this table breaks mid-table (top-to-bottom).
+        repeat_prefix_bands: Vec<usize>,
         /// Optional `total_row` band index directly following this table
         /// (stays attached to the final row; omitted on breaking pages).
         total_band_idx: Option<usize>,
@@ -1805,6 +1890,7 @@ enum PlacedSlice {
         dest_y: f64,
         shrunk_pt: f64,
         is_repeated_header: bool,
+        is_repeated_section_title: bool,
         is_repeated_table_head: bool,
     },
     /// Original printed rows of a `RowTemplate` band + a subset `[0..end_extra)`
@@ -1828,6 +1914,11 @@ enum PlacedSlice {
     Rule6Line {
         dest_y: f64,
         ins: Rule6Insertion,
+    },
+    /// Crisp closing bottom horizontal border when a static table or page frame
+    /// breaks onto a continuation page (Items F & H).
+    ClosingRule {
+        dest_y: f64,
     },
 }
 
@@ -1866,6 +1957,78 @@ fn flow_single_page(
             b.kind != BandKind::TrailingSpace && t.top >= b.y0 - 1.0 && t.top < b.y1 + 1.0
         }) {
             band.text_ids.push(tid.to_string());
+        }
+    }
+
+    // Item C: Absorb any trailing single-row `PlainBlock` that belongs to the
+    // end of a `RowTemplate` table (e.g. row 5 on 2000OT 1.A and 2552 Schedules
+    // 1-3 & Part VI, row 10 on 1800 Schedule B) so extra rows always append AFTER
+    // the original last row (`1, 2, 3, 4, 5, 6, 7, 8`) rather than stranding it below.
+    let growth_row_meta: BTreeMap<&str, (usize, usize)> = growths
+        .iter()
+        .map(|(mb, _)| {
+            let n_rows = mb.band.rows.len().max(1);
+            let cells_per_row = mb.band.rows.last().map(|r| r.cells.len()).unwrap_or(0);
+            (mb.band.id.as_str(), (n_rows, cells_per_row))
+        })
+        .collect();
+    let dom_texts_by_id: BTreeMap<&str, &FlowTextNode> = dom
+        .texts
+        .iter()
+        .filter_map(|t| t.id.as_deref().map(|id| (id, t)))
+        .collect();
+    let mut bi = 0usize;
+    while bi + 1 < effective_layout.bands.len() {
+        let should_absorb = if effective_layout.bands[bi].kind == BandKind::RowTemplate
+            && effective_layout.bands[bi + 1].kind == BandKind::PlainBlock
+        {
+            let b = &effective_layout.bands[bi];
+            let nxt = &effective_layout.bands[bi + 1];
+            let (n_rows, cells_per_row) = b
+                .growable_id
+                .as_deref()
+                .and_then(|gid| growth_row_meta.get(gid).copied())
+                .unwrap_or((0, 0));
+            let row_pitch = if n_rows > 0 {
+                (b.y1 - b.y0) / n_rows as f64
+            } else {
+                0.0
+            };
+            let nxt_h = nxt.y1 - nxt.y0;
+            let has_total_text = nxt.text_ids.iter().any(|tid| {
+                dom_texts_by_id
+                    .get(tid.as_str())
+                    .is_some_and(|t| t.plain_text.to_ascii_lowercase().contains("total"))
+            });
+            n_rows > 0
+                && cells_per_row > 0
+                && nxt.cell_ids.len() == cells_per_row
+                && nxt_h >= (row_pitch - 3.5).max(5.0)
+                && nxt_h <= row_pitch + 4.5
+                && !has_total_text
+        } else {
+            false
+        };
+        if should_absorb {
+            let nxt = effective_layout.bands.remove(bi + 1);
+            let b = &mut effective_layout.bands[bi];
+            b.y1 = nxt.y1;
+            b.svg_ids.extend(nxt.svg_ids);
+            b.svg_indices.extend(nxt.svg_indices);
+            b.text_ids.extend(nxt.text_ids);
+            b.cell_ids.extend(nxt.cell_ids);
+            for sid in nxt.spanning_svg_ids {
+                if !b.spanning_svg_ids.contains(&sid) {
+                    b.spanning_svg_ids.push(sid);
+                }
+            }
+            for sidx in nxt.spanning_svg_indices {
+                if !b.spanning_svg_indices.contains(&sidx) {
+                    b.spanning_svg_indices.push(sidx);
+                }
+            }
+        } else {
+            bi += 1;
         }
     }
 
@@ -1979,16 +2142,45 @@ fn pack_page(
                 .as_ref()
                 .and_then(|gid| extra_by_growable.remove(gid))
                 .unwrap_or_default();
-            // Look back for preceding `TableHead` in same `table_group`, walking past up
-            // to 4 leading fixed `PlainBlock` rows (e.g. 1800 Schedule B, 1600PT/1600VT).
+            // Item A: Collect all preceding section_title + table_head bands that must
+            // repeat on a mid-table break (top-to-bottom order).
+            // 1. Look back up to 6 bands across intervening `PlainBlock` rows for a
+            //    `TableHead` (same `table_group` or untagged), and include an immediately
+            //    preceding `SectionTitle` if present.
+            // 2. If no `TableHead` band exists (e.g. 1800 Schedule B Continuation where
+            //    the column headers are a 0-cell `PlainBlock` right under a `SectionTitle`),
+            //    walk back across `PlainBlock`s to the nearest `SectionTitle` and include
+            //    both that `SectionTitle` and its immediately following 0-cell header `PlainBlock`.
+            let mut repeat_prefix_bands: Vec<usize> = Vec::new();
             let head_band_idx = (0..i)
                 .rev()
                 .take(6)
                 .find(|&j| {
                     let cand = &layout.bands[j];
-                    cand.kind == BandKind::TableHead && cand.table_group == b.table_group
+                    cand.kind == BandKind::TableHead
+                        && (cand.table_group == b.table_group || cand.table_group.is_none())
                 })
                 .filter(|&j| (j + 1..i).all(|k| layout.bands[k].kind == BandKind::PlainBlock));
+            if let Some(hi) = head_band_idx {
+                if hi > 0 && layout.bands[hi - 1].kind == BandKind::SectionTitle {
+                    repeat_prefix_bands.push(hi - 1);
+                }
+                repeat_prefix_bands.push(hi);
+            } else if let Some(si) = (0..i)
+                .rev()
+                .take(6)
+                .find(|&j| layout.bands[j].kind == BandKind::SectionTitle)
+                .filter(|&j| (j + 1..i).all(|k| layout.bands[k].kind == BandKind::PlainBlock))
+            {
+                repeat_prefix_bands.push(si);
+                if si + 1 < i
+                    && layout.bands[si + 1].kind == BandKind::PlainBlock
+                    && layout.bands[si + 1].cell_ids.is_empty()
+                    && !layout.bands[si + 1].text_ids.is_empty()
+                {
+                    repeat_prefix_bands.push(si + 1);
+                }
+            }
             // Look ahead for immediately following `TotalRow` in same `table_group`.
             let total_band_idx = if i + 1 < layout.bands.len()
                 && layout.bands[i + 1].kind == BandKind::TotalRow
@@ -2001,7 +2193,7 @@ fn pack_page(
             };
             items.push(FlowItem::GrowableTable {
                 band_idx: i,
-                head_band_idx,
+                repeat_prefix_bands,
                 total_band_idx,
                 orig_height_pt: b.y1 - b.y0,
                 extra_rows: extra,
@@ -2021,29 +2213,52 @@ fn pack_page(
         }
     }
 
-    // First, try elastic compression if all items would fit on page 0 once
-    // elastic boxes shrink down to `min_height_pt`.
+    // Item H (RULES 5): Shrink elastic boxes ONLY when shrinking down to their
+    // stated `min_height_pt` frees enough space to keep the entire page whole.
+    // If the page breaks anyway, leave elastic boxes at full official height so
+    // they print unshrunk on the continuation page.
     let total_needed_y = header_height + total_items_height(&items, layout);
     if total_needed_y > layout.content_bottom_y {
-        let mut deficit = total_needed_y - layout.content_bottom_y;
-        for item in &mut items {
-            if deficit <= 0.0 {
-                break;
-            }
-            if let FlowItem::StaticBand {
-                band_idx,
-                height_pt,
-                shrunk_pt,
-            } = item
-            {
-                let b = &layout.bands[*band_idx];
-                if b.kind == BandKind::ElasticBox {
-                    if let Some(min_h) = b.min_height_pt {
-                        let avail = (*height_pt - min_h).max(0.0);
-                        let take = avail.min(deficit);
-                        *height_pt -= take;
-                        *shrunk_pt += take;
-                        deficit -= take;
+        let deficit = total_needed_y - layout.content_bottom_y;
+        let total_slack: f64 = items
+            .iter()
+            .filter_map(|item| match item {
+                FlowItem::StaticBand {
+                    band_idx,
+                    height_pt,
+                    ..
+                } => {
+                    let b = &layout.bands[*band_idx];
+                    if b.kind == BandKind::ElasticBox {
+                        b.min_height_pt.map(|min_h| (*height_pt - min_h).max(0.0))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .sum();
+        if deficit <= total_slack + 0.01 {
+            let mut rem_deficit = deficit;
+            for item in &mut items {
+                if rem_deficit <= 0.0 {
+                    break;
+                }
+                if let FlowItem::StaticBand {
+                    band_idx,
+                    height_pt,
+                    shrunk_pt,
+                } = item
+                {
+                    let b = &layout.bands[*band_idx];
+                    if b.kind == BandKind::ElasticBox {
+                        if let Some(min_h) = b.min_height_pt {
+                            let avail = (*height_pt - min_h).max(0.0);
+                            let take = avail.min(rem_deficit);
+                            *height_pt -= take;
+                            *shrunk_pt += take;
+                            rem_deficit -= take;
+                        }
                     }
                 }
             }
@@ -2060,6 +2275,7 @@ fn pack_page(
             dest_y: layout.bands[hi].y0,
             shrunk_pt: 0.0,
             is_repeated_header: false,
+            is_repeated_section_title: false,
             is_repeated_table_head: false,
         });
         cur_y = layout.bands[hi].y1;
@@ -2078,6 +2294,7 @@ fn pack_page(
                     dest_y: layout.bands[hi].y0,
                     shrunk_pt: 0.0,
                     is_repeated_header: true,
+                    is_repeated_section_title: false,
                     is_repeated_table_head: false,
                 });
                 *cur_y = layout.bands[hi].y1;
@@ -2085,6 +2302,11 @@ fn pack_page(
                 *cur_y = 20.0;
             }
         };
+
+    // Track active static-table prefix (`[section_title, header_plain_block]`) so
+    // static multi-row tables pushed across a page break (e.g. 1602Q Schedule 4,
+    // 2000OT 1.B) repeat their title + column header on the continuation page.
+    let mut active_static_prefix: Vec<usize> = Vec::new();
 
     let mut idx = 0;
     while idx < items.len() {
@@ -2106,19 +2328,71 @@ fn pack_page(
                     *height_pt
                 };
                 if cur_y + min_group_h > layout.content_bottom_y && cur_slices.len() > 1 {
+                    let prev_was_cell_band = matches!(
+                        cur_slices.last(),
+                        Some(PlacedSlice::OriginalBand { band_idx: pb, .. })
+                            if !layout.bands[*pb].cell_ids.is_empty()
+                    );
+                    if prev_was_cell_band {
+                        cur_slices.push(PlacedSlice::ClosingRule { dest_y: cur_y });
+                    }
                     start_new_page(&mut pages, &mut cur_slices, &mut cur_y);
+                    if b.kind == BandKind::PlainBlock
+                        && !b.cell_ids.is_empty()
+                        && !active_static_prefix.is_empty()
+                    {
+                        for &pi in &active_static_prefix {
+                            let pb = &layout.bands[pi];
+                            cur_slices.push(PlacedSlice::OriginalBand {
+                                band_idx: pi,
+                                dest_y: cur_y,
+                                shrunk_pt: 0.0,
+                                is_repeated_header: false,
+                                is_repeated_section_title: pb.kind == BandKind::SectionTitle,
+                                is_repeated_table_head: pb.kind != BandKind::SectionTitle,
+                            });
+                            cur_y += pb.y1 - pb.y0;
+                        }
+                    }
                 }
                 cur_slices.push(PlacedSlice::OriginalBand {
                     band_idx: *band_idx,
                     dest_y: cur_y,
                     shrunk_pt: *shrunk_pt,
                     is_repeated_header: false,
+                    is_repeated_section_title: false,
                     is_repeated_table_head: false,
                 });
                 cur_y += *height_pt;
+                match b.kind {
+                    BandKind::SectionTitle => {
+                        active_static_prefix = vec![*band_idx];
+                    }
+                    BandKind::TableHead => {
+                        if active_static_prefix.len() == 1
+                            && layout.bands[active_static_prefix[0]].kind == BandKind::SectionTitle
+                        {
+                            active_static_prefix.push(*band_idx);
+                        } else {
+                            active_static_prefix = vec![*band_idx];
+                        }
+                    }
+                    BandKind::PlainBlock if b.cell_ids.is_empty() && !b.text_ids.is_empty() => {
+                        if active_static_prefix.len() == 1
+                            && layout.bands[active_static_prefix[0]].kind == BandKind::SectionTitle
+                        {
+                            active_static_prefix.push(*band_idx);
+                        }
+                    }
+                    BandKind::PlainBlock => {}
+                    _ => {
+                        active_static_prefix.clear();
+                    }
+                }
                 idx += 1;
             }
             FlowItem::Rule6Line(ins) => {
+                active_static_prefix.clear();
                 if cur_y + ins.height_pt > layout.content_bottom_y && cur_slices.len() > 1 {
                     start_new_page(&mut pages, &mut cur_slices, &mut cur_y);
                 }
@@ -2131,14 +2405,12 @@ fn pack_page(
             }
             FlowItem::GrowableTable {
                 band_idx,
-                head_band_idx,
+                repeat_prefix_bands,
                 total_band_idx,
                 orig_height_pt,
                 extra_rows,
             } => {
-                let head_h = head_band_idx
-                    .map(|hi| layout.bands[hi].y1 - layout.bands[hi].y0)
-                    .unwrap_or(0.0);
+                active_static_prefix.clear();
                 let total_h = total_band_idx
                     .map(|ti| layout.bands[ti].y1 - layout.bands[ti].y0)
                     .unwrap_or(0.0);
@@ -2160,6 +2432,7 @@ fn pack_page(
                             dest_y: cur_y,
                             shrunk_pt: 0.0,
                             is_repeated_header: false,
+                            is_repeated_section_title: false,
                             is_repeated_table_head: false,
                         });
                         cur_y += total_h;
@@ -2196,31 +2469,31 @@ fn pack_page(
                 if cur_y + *orig_height_pt + BREAK_CUE_HEIGHT_PT > layout.content_bottom_y
                     && cur_slices.len() > 1
                 {
-                    // Pull preceding `TableHead` onto the new page too if it was
-                    // just placed right above us.
-                    let pulled_head = if let Some(hi) = head_band_idx {
+                    let mut pulled: Vec<usize> = Vec::new();
+                    for &pi in repeat_prefix_bands.iter().rev() {
                         if matches!(
                             cur_slices.last(),
-                            Some(PlacedSlice::OriginalBand { band_idx: last_b, .. }) if *last_b == *hi
+                            Some(PlacedSlice::OriginalBand { band_idx: last_b, .. }) if *last_b == pi
                         ) {
                             cur_slices.pop();
-                            Some(*hi)
+                            pulled.push(pi);
                         } else {
-                            None
+                            break;
                         }
-                    } else {
-                        None
-                    };
+                    }
+                    pulled.reverse();
                     start_new_page(&mut pages, &mut cur_slices, &mut cur_y);
-                    if let Some(hi) = pulled_head {
+                    for pi in pulled {
+                        let pb = &layout.bands[pi];
                         cur_slices.push(PlacedSlice::OriginalBand {
-                            band_idx: hi,
+                            band_idx: pi,
                             dest_y: cur_y,
                             shrunk_pt: 0.0,
                             is_repeated_header: false,
+                            is_repeated_section_title: false,
                             is_repeated_table_head: false,
                         });
-                        cur_y += head_h;
+                        cur_y += pb.y1 - pb.y0;
                     }
                     continue;
                 }
@@ -2238,15 +2511,17 @@ fn pack_page(
                 while cursor < extra_rows.len() {
                     start_new_page(&mut pages, &mut cur_slices, &mut cur_y);
 
-                    if let Some(hi) = head_band_idx {
+                    for &pi in repeat_prefix_bands {
+                        let pb = &layout.bands[pi];
                         cur_slices.push(PlacedSlice::OriginalBand {
-                            band_idx: *hi,
+                            band_idx: pi,
                             dest_y: cur_y,
                             shrunk_pt: 0.0,
                             is_repeated_header: false,
-                            is_repeated_table_head: true,
+                            is_repeated_section_title: pb.kind == BandKind::SectionTitle,
+                            is_repeated_table_head: pb.kind != BandKind::SectionTitle,
                         });
-                        cur_y += head_h;
+                        cur_y += pb.y1 - pb.y0;
                     }
 
                     let rem_h: f64 = extra_rows[cursor..].iter().map(|r| r.height_pt).sum();
@@ -2265,6 +2540,7 @@ fn pack_page(
                                 dest_y: cur_y,
                                 shrunk_pt: 0.0,
                                 is_repeated_header: false,
+                                is_repeated_section_title: false,
                                 is_repeated_table_head: false,
                             });
                             cur_y += total_h;
@@ -2431,6 +2707,7 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
                 dest_y,
                 shrunk_pt,
                 is_repeated_header,
+                is_repeated_section_title,
                 is_repeated_table_head,
             } => {
                 let band = &layout.bands[*band_idx];
@@ -2440,6 +2717,7 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
                     dy,
                     *shrunk_pt,
                     *is_repeated_header,
+                    *is_repeated_section_title,
                     *is_repeated_table_head,
                     dom,
                     &svg_by_id,
@@ -2600,6 +2878,15 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
             PlacedSlice::Rule6Line { dest_y, ins } => {
                 emit_rule6_line(*dest_y, ins, &mut svg_rule6_out, &mut text_out);
             }
+            PlacedSlice::ClosingRule { dest_y } => {
+                let w = (layout.table_x1 - layout.table_x0).max(10.0);
+                svg_rules_out.push_str(&format!(
+                    "<g class=\"layer-structural\"><rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"0.72\" fill=\"#000000\"/></g>",
+                    fmt_pt(layout.table_x0),
+                    fmt_pt(*dest_y - 0.36),
+                    fmt_pt(w),
+                ));
+            }
         }
     }
 
@@ -2721,6 +3008,7 @@ fn emit_original_band(
     dy: f64,
     shrunk_pt: f64,
     is_repeated_header: bool,
+    is_repeated_section_title: bool,
     is_repeated_table_head: bool,
     dom: &FlowPageDom,
     svg_by_id: &BTreeMap<&str, &FlowSvgNode>,
@@ -2754,11 +3042,29 @@ fn emit_original_band(
         }
     }
 
-    // Emit texts.
-    // On a repeated table head, if a sibling "(attach additional sheet/s, if necessary)"
-    // note sits on the title line, replace THAT note with "(continued)" so the wording
-    // appears once cleanly without colliding with the sibling span.
-    let attach_note_tid: Option<&str> = if is_repeated_table_head {
+    // Item B: Auto-detect the "Page N" text span when `page_label_text_id` is
+    // absent in metadata (e.g. 2550M Page 2 -> "Page 2 (continued)").
+    let detected_page_label_tid: Option<&str> = if is_repeated_header {
+        band.page_label_text_id.as_deref().or_else(|| {
+            let expected = format!("page {}", dom.page_num);
+            band.text_ids.iter().map(|s| s.as_str()).find(|tid| {
+                text_by_id.get(tid).is_some_and(|t| {
+                    let l = t.plain_text.trim().to_ascii_lowercase();
+                    l == expected
+                        || l.starts_with(&format!("{expected} "))
+                        || l.ends_with(&format!(" {expected}"))
+                })
+            })
+        })
+    } else {
+        None
+    };
+
+    // Item B: Never draw "(continued)" over a narrow column header label or divider.
+    // Put "(continued)" on the repeated `section_title` line (or replace an explicit
+    // "(attach additional sheet/s...)" note on that line); never append it to a
+    // narrow `table_head` column caption.
+    let attach_note_tid: Option<&str> = if is_repeated_section_title || is_repeated_table_head {
         band.text_ids.iter().map(|s| s.as_str()).find(|tid| {
             text_by_id
                 .get(tid)
@@ -2778,35 +3084,36 @@ fn emit_original_band(
             continue;
         };
         let mut elem = shift_top_in_tag(&t.raw_html, dy);
-        if is_repeated_header && band.page_label_text_id.as_deref() == Some(tid.as_str()) {
-            let new_label = format!("Page {} (continued)", dom.page_num);
+        if is_repeated_header && detected_page_label_tid == Some(tid.as_str()) {
+            let trimmed_orig = t.plain_text.trim();
+            let suffix = format!(" page {}", dom.page_num);
+            let is_prefixed_banner = trimmed_orig.to_ascii_lowercase().ends_with(&suffix);
+            let new_label = if is_prefixed_banner {
+                format!("{trimmed_orig} (continued)")
+            } else {
+                format!("Page {} (continued)", dom.page_num)
+            };
             elem = replace_inner_text(&elem, &new_label);
-            // Keep "Page N (continued)" inside its header box: pull left if near
-            // the right edge or centered inside a narrow top-left form-number box.
-            if t.left > dom.width_pt - 115.0 {
+            // Keep "Page N (continued)" inside the page right margin and header box:
+            // pull prefixed banners left so "(continued)" never clips at the paper edge,
+            // and pull standalone labels left if near the right edge or narrow top-left box.
+            if is_prefixed_banner {
+                elem = set_left_in_style(&elem, (t.left - 36.0).max(18.0));
+            } else if t.left > dom.width_pt - 115.0 {
                 elem = set_left_in_style(&elem, (dom.width_pt - 115.0).max(18.0));
             } else if t.left < 120.0 {
                 elem = set_left_in_style(&elem, (t.left - 24.0).max(20.0));
             }
-        } else if is_repeated_table_head && attach_note_tid == Some(tid.as_str()) {
+        } else if (is_repeated_section_title || is_repeated_table_head)
+            && attach_note_tid == Some(tid.as_str())
+        {
             elem = replace_inner_text(&elem, "(continued)");
             added_continued_heading = true;
-        } else if is_repeated_table_head && attach_note_tid.is_none() && !added_continued_heading {
+        } else if is_repeated_section_title && attach_note_tid.is_none() && !added_continued_heading
+        {
             let trimmed = t.plain_text.trim();
             let lower = trimmed.to_ascii_lowercase();
-            let is_heading = trimmed.len() >= 8
-                && (lower.contains("schedule")
-                    || lower.contains("part ")
-                    || lower.contains("details"));
-            let has_explicit_heading = band.text_ids.iter().any(|id| {
-                text_by_id.get(id.as_str()).is_some_and(|tn| {
-                    let s = tn.plain_text.trim();
-                    let l = s.to_ascii_lowercase();
-                    s.len() >= 8
-                        && (l.contains("schedule") || l.contains("part ") || l.contains("details"))
-                })
-            });
-            if is_heading || (!has_explicit_heading && !trimmed.is_empty()) {
+            if !trimmed.is_empty() {
                 if !lower.contains("continued") && !lower.contains("continuation") {
                     elem = replace_inner_text(&elem, &format!("{trimmed} (continued)"));
                 }
@@ -3020,6 +3327,25 @@ fn set_left_in_style(elem: &str, new_left: f64) -> String {
                     "{}left:{}pt{}{}",
                     &open[..pos],
                     fmt_pt(new_left),
+                    &after[pt_pos + 2..],
+                    &elem[gt..]
+                );
+            }
+        }
+    }
+    elem.to_string()
+}
+
+fn set_font_size_in_style(elem: &str, new_size: f64) -> String {
+    if let Some(gt) = elem.find('>') {
+        let open = &elem[..gt];
+        if let Some(pos) = open.find("font-size:") {
+            let after = &open[pos + 10..];
+            if let Some(pt_pos) = after.find("pt") {
+                return format!(
+                    "{}font-size:{}pt{}{}",
+                    &open[..pos],
+                    fmt_pt(new_size),
                     &after[pt_pos + 2..],
                     &elem[gt..]
                 );
@@ -3895,6 +4221,428 @@ mod tests {
                 .iter()
                 .any(|tid| cont_html.contains(&format!("id=\"{tid}\""))),
             "1800 Page 2 (continued) did not repeat p2b15 table_head text spans"
+        );
+    }
+
+    fn run_flow_for_form(
+        slug: &str,
+        page_num: usize,
+        fields: &BTreeMap<String, String>,
+    ) -> (String, PageLayout) {
+        let raw = frozen_html::raw_bundle_html(slug).expect("raw sheet");
+        let explicit = parse_page_layout(raw).expect("explicit layout");
+        let page_layout = explicit
+            .pages
+            .into_iter()
+            .find(|p| p.page == page_num)
+            .expect("page layout");
+        let filled = frozen_html::filled_document(slug, fields).expect("filled html");
+        let report = detect_overflow(slug, fields).expect("overflow report");
+        let flowed = apply_band_flow(slug, raw, &filled, fields, &report)
+            .expect("apply_band_flow succeeded");
+        (flowed.document_html, page_layout)
+    }
+
+    /// Item A: Repeated `section_title` (2550M Schedule 3A) and
+    /// static-table prefix repetition (1602Q Schedule 4) on continuation pages.
+    #[test]
+    fn sweep2_a_repeated_section_title_and_gapped_table_head_on_breaks() {
+        // 1. 2550M Schedule 3A: repeat_on_break section_title repeats on Page 2 (continued).
+        let mut f2550m = BTreeMap::new();
+        for i in 0..80 {
+            f2550m.insert(format!("txtDatePurchased3A{i}"), "01/15/2026".into());
+            f2550m.insert(format!("txtAmt3A{i}"), "12,345.67".into());
+        }
+        let (doc2550m, lay2550m) = run_flow_for_form("2550m-2007", 2, &f2550m);
+        let cont = doc2550m
+            .find("class=\"page page-2-cont-1\"")
+            .map(|p| &doc2550m[p..])
+            .expect("2550M should break to page-2-cont-1");
+        let sec = lay2550m
+            .bands
+            .iter()
+            .find(|b| b.id == "p2b9")
+            .expect("2550M Schedule 3A section_title p2b9");
+        assert!(
+            sec.text_ids
+                .iter()
+                .any(|tid| cont.contains(&format!("id=\"{tid}\""))),
+            "2550M Page 2 (continued) must repeat section_title"
+        );
+
+        // 2. 1602Q Schedule 4 pushed across break repeats its section_title + header.
+        let raw1602 = frozen_html::raw_bundle_html("1602q-2019").unwrap();
+        let lay1602 = parse_page_layout(raw1602)
+            .unwrap()
+            .pages
+            .into_iter()
+            .find(|p| p.page == 2)
+            .unwrap();
+        let fb1602 = parse_formgen_bands(raw1602);
+        let p2g0 = fb1602
+            .into_iter()
+            .find(|b| b.id == "p2g0")
+            .expect("1602Q p2g0");
+        let empty1602 = BTreeMap::new();
+        let filled1602 = frozen_html::filled_document("1602q-2019", &empty1602).unwrap();
+        let mut s2_rows = Vec::new();
+        for r in 4..=20 {
+            s2_rows.push(crate::continuation::OverflowRow {
+                row_number: r,
+                values: vec!["JP".into(), "WI010".into(), "10".into()],
+            });
+        }
+        let sched1602 = crate::continuation::OverflowSchedule {
+            heading: "Schedule 2".into(),
+            printed_capacity: 3,
+            columns: vec![
+                crate::continuation::OverflowColumn {
+                    heading: "Treaty Code".into(),
+                    is_amount: false,
+                    subtotal: None,
+                },
+                crate::continuation::OverflowColumn {
+                    heading: "ATC".into(),
+                    is_amount: false,
+                    subtotal: None,
+                },
+                crate::continuation::OverflowColumn {
+                    heading: "Tax Rate".into(),
+                    is_amount: false,
+                    subtotal: None,
+                },
+            ],
+            rows: s2_rows,
+            has_total: true,
+            row_label_lettered: false,
+            official_total_label: None,
+            official_total_values: Vec::new(),
+        };
+        let dom1602 = parse_flow_page_dom(&filled1602, 2).expect("1602Q p2 dom");
+        let mb1602 = MatchedBand {
+            band: p2g0,
+            cell_map: BTreeMap::new(),
+            first_printed_row_cell_ids: Vec::new(),
+        };
+        let flowed_html = flow_single_page(
+            "1602q-2019",
+            raw1602,
+            &dom1602,
+            &lay1602,
+            &[(mb1602, sched1602)],
+            &empty1602,
+            &[],
+        )
+        .expect("1602Q flow_single_page");
+        let cont1602 = flowed_html
+            .find("class=\"page page-2-cont-1\"")
+            .map(|p| &flowed_html[p..])
+            .expect("1602Q should break to page-2-cont-1");
+        let s4_sec = lay1602.bands.iter().find(|b| b.id == "p2b33").unwrap();
+        let s4_hdr = lay1602.bands.iter().find(|b| b.id == "p2b34").unwrap();
+        assert!(
+            s4_sec
+                .text_ids
+                .iter()
+                .any(|tid| cont1602.contains(&format!("id=\"{tid}\""))),
+            "1602Q Page 2 (continued) must repeat Schedule 4 section_title p2b33"
+        );
+        assert!(
+            s4_hdr
+                .text_ids
+                .iter()
+                .any(|tid| cont1602.contains(&format!("id=\"{tid}\""))),
+            "1602Q Page 2 (continued) must repeat Schedule 4 column header p2b34"
+        );
+    }
+
+    /// Item B: "(continued)" never overwrites a column header label (e.g. 2550M
+    /// "Name of Miller") and 2550M Page 2 continuation label reads "Page 2 (continued)".
+    #[test]
+    fn sweep2_b_continued_never_collides_with_column_headers_and_2550m_page2_label() {
+        let mut fields = BTreeMap::new();
+        for i in 0..30 {
+            fields.insert(format!("txtDatePurchased3A{i}"), "01/15/2026".into());
+            fields.insert(format!("txtAmt3A{i}"), "12,345.67".into());
+        }
+        let (doc, _lay) = run_flow_for_form("2550m-2007", 2, &fields);
+        let cont = doc
+            .find("class=\"page page-2-cont-1\"")
+            .map(|p| &doc[p..])
+            .expect("2550M should break to page-2-cont-1");
+        assert!(
+            cont.contains("Page 2 (continued)"),
+            "2550M Page 2 continuation header must read 'Page 2 (continued)'"
+        );
+        assert!(
+            !cont.contains("Name of Miller (continued)"),
+            "2550M must NOT draw '(continued)' on top of 'Name of Miller' column header"
+        );
+    }
+
+    /// Item C: Original last row (row 5) prints in natural order BEFORE extra rows
+    /// (6, 7, 8) on 2000OT Schedule 1.A.
+    #[test]
+    fn sweep2_c_rows_preserve_natural_order_on_2000ot_and_2552() {
+        let mut f2000 = BTreeMap::new();
+        for i in 0..8 {
+            let n = i + 1;
+            f2000.insert(format!("frm2000OT:sched1A:txtOCTNo{i}"), format!("OCT-{n}"));
+            f2000.insert(
+                format!("frm2000OT:sched1A:txtTaxDecNo{i}"),
+                format!("TD-{n}"),
+            );
+            f2000.insert(format!("frm2000OT:sched1A:txtLoc{i}"), format!("LOC-{n}"));
+            f2000.insert(format!("frm2000OT:sched1A:txtArea{i}"), "100".into());
+            f2000.insert(
+                format!("frm2000OT:sched1A:txtClassification{i}"),
+                "R".into(),
+            );
+            f2000.insert(
+                format!("frm2000OT:sched1A:txtFMVCol1{i}"),
+                "1,000,000.00".into(),
+            );
+        }
+        let (doc, _lay) = run_flow_for_form("2000-ot-2018", 2, &f2000);
+        let p2_pos = doc.find("class=\"page page-2\"").unwrap();
+        let p2_html = &doc[p2_pos..];
+        let row5_pos = p2_html.find("OCT-5").expect("OCT-5 present");
+        let row6_pos = p2_html.find("OCT-6").expect("OCT-6 present");
+        assert!(
+            row5_pos < row6_pos,
+            "2000OT 1.A row 5 must appear before extra row 6 in page DOM"
+        );
+        let top_of = |needle: &str| -> f64 {
+            let at = p2_html.find(needle).unwrap();
+            let prefix = &p2_html[..at];
+            let div_start = prefix.rfind("<div ").unwrap();
+            let tag = &p2_html[div_start..at];
+            let tp = tag.rfind("top:").unwrap() + 4;
+            tag[tp..]
+                .split("pt")
+                .next()
+                .unwrap()
+                .parse::<f64>()
+                .unwrap()
+        };
+        assert!(
+            top_of("OCT-5") < top_of("OCT-6"),
+            "2000OT 1.A row 5 top ({}) must be strictly above extra row 6 top ({})",
+            top_of("OCT-5"),
+            top_of("OCT-6"),
+        );
+    }
+
+    /// Item D: Extra-row amounts right-align on 1801 (Exclusive / Conjugal) and
+    /// 1601FQ (Amount of Tax Withheld (G)).
+    #[test]
+    fn sweep2_d_amounts_right_aligned_on_1801_and_1601fq() {
+        let mut f1801 = BTreeMap::new();
+        for i in 1..=5 {
+            f1801.insert(format!("frm1801v2018:sched1Oct_{i}"), format!("OCT-{i}"));
+            f1801.insert(
+                format!("frm1801v2018:sched1Exc_{i}"),
+                "123,456,789.12".into(),
+            );
+            f1801.insert(
+                format!("frm1801v2018:sched1Conj_{i}"),
+                "234,567,890.34".into(),
+            );
+        }
+        let (doc1801, _) = run_flow_for_form("1801-2018", 2, &f1801);
+        let at_exc = doc1801
+            .rfind("123,456,789.12")
+            .expect("1801 extra row Exc amount present");
+        let exc_ctx = &doc1801[at_exc.saturating_sub(260)..(at_exc + 200).min(doc1801.len())];
+        assert!(
+            exc_ctx.contains("text-align:right"),
+            "1801 extra-row Exclusive amount must be right-aligned"
+        );
+
+        let mut f1601fq = BTreeMap::new();
+        for i in 0..8 {
+            f1601fq.insert(format!("txtNatIncPayment{i}"), format!("ROYALTY {i}"));
+            f1601fq.insert(format!("txtAmtIncomePay{i}"), "100,000,000.00".into());
+            f1601fq.insert(format!("txtRate{i}"), "20".into());
+            f1601fq.insert(format!("txtReqWithheld{i}"), "20,000,000.00".into());
+        }
+        let (doc_fq, _) = run_flow_for_form("1601-fq-2020", 2, &f1601fq);
+        let at_wh = doc_fq
+            .rfind("20,000,000.00")
+            .expect("1601FQ extra row Withheld amount present");
+        let wh_ctx = &doc_fq[at_wh.saturating_sub(260)..(at_wh + 200).min(doc_fq.len())];
+        assert!(
+            wh_ctx.contains("text-align:right"),
+            "1601FQ extra-row Amount of Tax Withheld (G) must be right-aligned"
+        );
+    }
+
+    /// Item E: Extra-row numbering uses suffix scheme when colliding with the next
+    /// item/total (1601EQ `18a..`, 1702RT `4a..`) and continues the table's own
+    /// sequence when not colliding.
+    #[test]
+    fn sweep2_e_extra_row_numbering_on_1601eq_1602q_1702rt_and_1800() {
+        // 1601EQ: 9 rows -> extra rows 18a, 18b, 18c (NOT 7, 8, 9).
+        let mut f_eq = BTreeMap::new();
+        for i in 1..=9 {
+            f_eq.insert(format!("frm1601EQ:txtAtcCd{i}"), "WC010".into());
+            f_eq.insert(format!("frm1601EQ:txtTaxRate{i}"), "5".into());
+        }
+        let (doc_eq, _) = run_flow_for_form("1601eq-2019", 1, &f_eq);
+        assert!(doc_eq.contains(">18a<"), "1601EQ extra row 1 must be 18a");
+        assert!(doc_eq.contains(">18b<"), "1601EQ extra row 2 must be 18b");
+        assert!(doc_eq.contains(">18c<"), "1601EQ extra row 3 must be 18c");
+
+        // 1702RT Schedule II: popup rows -> extra rows 4a, 4b, 4c before "5 Total".
+        let mut f_rt = BTreeMap::new();
+        for i in 1..=7 {
+            f_rt.insert(format!("frm1702RT:txtPg3Sc2I4.{i}C1"), format!("DED {i}"));
+            f_rt.insert(format!("frm1702RT:txtPg3Sc2I4.{i}C2"), "10,000.00".into());
+        }
+        let (doc_rt, _) = run_flow_for_form("1702rt-2018c", 3, &f_rt);
+        assert!(doc_rt.contains(">4a<"), "1702RT extra row 1 must be 4a");
+        assert!(doc_rt.contains(">4b<"), "1702RT extra row 2 must be 4b");
+        assert!(doc_rt.contains(">4c<"), "1702RT extra row 3 must be 4c");
+    }
+
+    /// Item F: 2000OT at +40 emits a closing bottom rule when a static table
+    /// breaks onto the next page (1.B row 1).
+    #[test]
+    fn sweep2_f_2000ot_plus40_break_page_preserves_bottom_border() {
+        let mut fields = BTreeMap::new();
+        for i in 0..45 {
+            let n = i + 1;
+            fields.insert(format!("frm2000OT:sched1A:txtOCTNo{i}"), format!("OCT-{n}"));
+            fields.insert(
+                format!("frm2000OT:sched1A:txtTaxDecNo{i}"),
+                format!("TD-{n}"),
+            );
+            fields.insert(format!("frm2000OT:sched1A:txtLoc{i}"), "MANILA".into());
+            fields.insert(format!("frm2000OT:sched1A:txtArea{i}"), "100".into());
+            fields.insert(
+                format!("frm2000OT:sched1A:txtClassification{i}"),
+                "R".into(),
+            );
+            fields.insert(
+                format!("frm2000OT:sched1A:txtFMVCol1{i}"),
+                "100,000.00".into(),
+            );
+        }
+        let (doc, _) = run_flow_for_form("2000-ot-2018", 2, &fields);
+        assert!(
+            doc.contains("class=\"page page-2-cont-1\""),
+            "2000OT +40 should produce continuation pages"
+        );
+        assert!(
+            doc.contains("height=\"0.72\" fill=\"#000000\""),
+            "2000OT +40 breaking static row must emit closing bottom horizontal border"
+        );
+    }
+
+    /// Item G: 1701A suffix labels are nudged left away from the divider and
+    /// trimmed to 6.2pt when 3+ chars long.
+    #[test]
+    fn sweep2_g_suffix_labels_nudged_clear_of_divider_on_1701a_and_1601c() {
+        let mut fields = BTreeMap::new();
+        for i in 1..=6 {
+            fields.insert(
+                format!("frm1701A:txtmodalPartIVADesc_{i}C1"),
+                format!("ITEM {i}"),
+            );
+            fields.insert(
+                format!("frm1701A:txtmodalPartIVA_{i}C2"),
+                "10,000.00".into(),
+            );
+        }
+        let (doc, _) = run_flow_for_form("1701a-2018", 2, &fields);
+        let pos = doc.find(">42a<").expect("1701A extra row 42a present");
+        let open = &doc[doc[..pos].rfind("<div ").unwrap()..pos];
+        assert!(
+            open.contains("font-size:6.2pt"),
+            "1701A suffix label 42a should use trimmed 6.2pt font size to clear divider: {open}"
+        );
+    }
+
+    /// Item H: 1601EQ at +3 rows breaks to `Page 1 (continued)` with a closing
+    /// border on page 1 and keeps the Machine Validation elastic box at its full
+    /// official height (`54.48pt`) on the continuation page (not shrunk).
+    #[test]
+    fn sweep2_h_1601eq_plus3_keeps_elastic_box_unshrunk_on_cont_page_and_closes_page1() {
+        let mut fields = BTreeMap::new();
+        for i in 1..=9 {
+            fields.insert(format!("frm1601EQ:txtAtcCd{i}"), "WC010".into());
+            fields.insert(
+                format!("frm1601EQ:txtTaxBase{i}"),
+                format!("{},111,111.23", 100 + i),
+            );
+            fields.insert(format!("frm1601EQ:txtTaxRate{i}"), "5%".into());
+            fields.insert(
+                format!("frm1601EQ:txtTaxbeWithHeld{i}"),
+                format!("{},055,555.56", 5 + i),
+            );
+        }
+        let (doc, _) = run_flow_for_form("1601eq-2019", 1, &fields);
+        let cont_pos = doc
+            .find("class=\"page page-1-cont-1\"")
+            .expect("1601EQ +3 rows must break to page-1-cont-1");
+        let page1_html = &doc[..cont_pos];
+        let cont_html = &doc[cont_pos..];
+        // Item J: every column (ATC, Tax Base, Tax Rate, Tax Withheld) must print
+        // in grown rows 18a..18c, not only ATC.
+        assert!(
+            page1_html.contains("data-writer-value=\"107,111,111.23\"")
+                || page1_html.contains("107,111,111.23"),
+            "1601EQ extra row 18a must populate Tax Base"
+        );
+        assert!(
+            page1_html.contains("data-writer-value=\"12,055,555.56\"")
+                || page1_html.contains("12,055,555.56"),
+            "1601EQ extra row 18a must populate Tax Withheld"
+        );
+        assert!(
+            page1_html.contains("height=\"0.72\" fill=\"#000000\""),
+            "1601EQ page 1 cut at item 35 must keep its closing bottom border"
+        );
+        assert!(
+            cont_html.contains("Page 1 (continued)"),
+            "1601EQ continuation page must read 'Page 1 (continued)'"
+        );
+        // Machine Validation box (p1b39) full height is 54.48pt (shrunk would be 31.8pt).
+        assert!(
+            !cont_html.contains("height=\"31.8\""),
+            "1601EQ Machine Validation box moved to continuation page must NOT be shrunk"
+        );
+    }
+
+    /// Item I: Plain grown-row amounts without commas (e.g. `"12071.00"`,
+    /// `"123456789.50"`) format with thousands commas (`"12,071.00"`,
+    /// `"123,456,789.50"`) and right-align.
+    #[test]
+    fn sweep2_i_grown_row_amounts_format_with_thousands_commas() {
+        let mut fields = BTreeMap::new();
+        for i in 0..6 {
+            let n = i + 1;
+            fields.insert(format!("txtDatePurchase1{i}"), format!("01/1{n}/2026"));
+            fields.insert(format!("txtSourceCode1{i}"), "D".into());
+            fields.insert(format!("txtDescription1{i}"), format!("EQUIP {n}"));
+            fields.insert(
+                format!("txtAmountPurchase1{i}"),
+                if i == 5 { "123456789.50" } else { "12071.00" }.into(),
+            );
+            fields.insert(format!("txtInputTax1{i}"), "1448.52".into());
+            fields.insert(format!("txtEstimatedLife1{i}"), "60".into());
+            fields.insert(format!("txtRecognizedLife1{i}"), "48".into());
+            fields.insert(format!("txtAllowedInputTax1{i}"), "9000.00".into());
+            fields.insert(format!("txtBalanceInputTax1{i}"), "171000.00".into());
+        }
+        let (doc, _) = run_flow_for_form("2550q-2024", 2, &fields);
+        assert!(
+            doc.contains("123,456,789.50"),
+            "2550Q grown-row amount must format with thousands commas (123,456,789.50)"
+        );
+        assert!(
+            doc.contains("1,448.52"),
+            "2550Q grown-row tax must format with thousands commas (1,448.52)"
         );
     }
 }

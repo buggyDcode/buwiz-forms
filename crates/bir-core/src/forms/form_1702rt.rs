@@ -667,6 +667,17 @@ impl Form1702RTDraft {
                 fields.insert(format!("derived:year_end_{name}{}", at + 1), digit.clone());
             }
         }
+        // Include populated "(Add more...)" modal rows in the print map so
+        // band-flow / continuation prints them (without touching the upload map
+        // or emitting blank placeholder keys when no modal rows exist).
+        for modal in FORM_1702RT_MODALS {
+            for (key, value) in self.modal_controls(modal) {
+                let trimmed = value.trim();
+                if !trimmed.is_empty() && trimmed != "0" && trimmed != "0.00" {
+                    fields.insert(key, value);
+                }
+            }
+        }
         fields
     }
 

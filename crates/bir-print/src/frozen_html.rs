@@ -1107,7 +1107,13 @@ fn is_amount_typed_key(key: &str) -> bool {
         "taxpayer",
         "taxagent",
         "taxableyear",
-        "tin",
+        "txttin",
+        "_tin",
+        "tin_",
+        "tin1",
+        "tin2",
+        "tin3",
+        "tin4",
         "zip",
         "rdo",
         "date",
@@ -1151,6 +1157,9 @@ fn is_amount_typed_key(key: &str) -> bool {
     for money_token in [
         "_base",
         "_withheld",
+        "withheld",
+        "exc_",
+        "conj_",
         "amount",
         "amt",
         "fairmarketvalue",
@@ -1214,7 +1223,41 @@ fn is_amount_typed_key(key: &str) -> bool {
             return true;
         }
     }
-    false
+    tail.ends_with("exc") || tail.ends_with("conj")
+}
+
+/// Insert thousands commas into a raw two-decimal currency string like
+/// `"12071.00"` -> `"12,071.00"` (or `"-123456789.50"` -> `"-123,456,789.50"`).
+/// Returns `None` when the string already has commas or has fewer than 4
+/// integer digits so already-formatted values remain untouched.
+fn format_money_with_commas(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.contains(',') {
+        return None;
+    }
+    let (sign, rest) = match trimmed.strip_prefix('-') {
+        Some(r) => ("-", r),
+        None => ("", trimmed),
+    };
+    let (whole, cents) = rest.split_once('.')?;
+    if whole.len() < 4 || !whole.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let mut grouped = String::with_capacity(whole.len() + whole.len() / 3 + 5);
+    grouped.push_str(sign);
+    let rem = whole.len() % 3;
+    if rem > 0 {
+        grouped.push_str(&whole[..rem]);
+    }
+    for (idx, chunk) in whole.as_bytes()[rem..].chunks(3).enumerate() {
+        if rem > 0 || idx > 0 {
+            grouped.push(',');
+        }
+        grouped.push_str(std::str::from_utf8(chunk).ok()?);
+    }
+    grouped.push('.');
+    grouped.push_str(cents);
+    Some(grouped)
 }
 
 /// Whether `value` is a formatted numeric quantity (integer or decimal with
@@ -1257,7 +1300,13 @@ fn is_quantity_typed_key(key: &str) -> bool {
         "taxpayer",
         "taxagent",
         "taxableyear",
-        "tin",
+        "txttin",
+        "_tin",
+        "tin_",
+        "tin1",
+        "tin2",
+        "tin3",
+        "tin4",
         "zip",
         "rdo",
         "date",
@@ -1832,12 +1881,24 @@ fn fill_text_input(
         let formatted_rate = is_rate_cell
             .then(|| format_percentage_rate(print, has_preprinted_percent_beside(html, input_name)))
             .flatten();
-        let display = formatted_rate.as_deref().unwrap_or(print);
-        let right_align_numeric = !is_rate_cell
+        let is_money_amount = !is_rate_cell
             && via_cell
             && !split
-            && ((is_amount_typed_key(name) && is_formatted_money_amount(print))
-                || (is_quantity_typed_key(name) && is_formatted_numeric_quantity(print)));
+            && is_amount_typed_key(name)
+            && is_formatted_money_amount(print);
+        let formatted_money = is_money_amount
+            .then(|| format_money_with_commas(print))
+            .flatten();
+        let display = formatted_rate
+            .as_deref()
+            .or(formatted_money.as_deref())
+            .unwrap_or(print);
+        let right_align_numeric = is_money_amount
+            || (!is_rate_cell
+                && via_cell
+                && !split
+                && is_quantity_typed_key(name)
+                && is_formatted_numeric_quantity(print));
         for &index in indices {
             let writer = via_cell.then_some(print);
             let tag = set_value(tags[index].tag, display, writer);
@@ -4013,8 +4074,7 @@ pub fn filled_document_with_report(
     // whose page has layout / band data, or any enabled Rule 6 specify field
     // whose text overflows its inline box. Remaining schedules without band
     // coverage fall back to the existing continuation-sheet engine.
-    let rule6_active =
-        crate::band_flow::has_rule6_overflow(slug, loaded.html, &official_filled);
+    let rule6_active = crate::band_flow::has_rule6_overflow(slug, loaded.html, &official_filled);
     let cont = if !overflow.is_empty() || rule6_active {
         let flowed = crate::band_flow::apply_band_flow(
             slug,

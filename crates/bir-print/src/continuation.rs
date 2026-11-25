@@ -923,12 +923,25 @@ fn parse_schedule_row_and_column(printed: &str) -> Option<(String, usize, String
         }
     }
 
-    // Shape 2: "Schedule <X> [continuation] row <N> <column>"
-    if let Some((sched, row_num, after_row)) = extract_schedule_row_and_after(trimmed) {
+    // Shape 2 & 3:
+    // - Shape 2: "Schedule <X> [continuation] row <N> <column>"
+    // - Shape 3: "<column>, Schedule/Part <X> [continuation] row <N> [(item M)]"
+    //   e.g. "ATC, Part II row 1 (item 13)", "Tax Base, Part II row 1" (1601-EQ).
+    if let Some((raw_sched, row_num, after_row)) = extract_schedule_row_and_after(trimmed) {
+        if let Some(comma) = raw_sched.rfind(',') {
+            let lhs = raw_sched[..comma].trim();
+            let rhs = raw_sched[comma + 1..].trim();
+            let rhs_lower = rhs.to_ascii_lowercase();
+            if !lhs.is_empty()
+                && (rhs_lower.starts_with("schedule ") || rhs_lower.starts_with("part "))
+            {
+                return Some((rhs.to_string(), row_num, lhs.to_string()));
+            }
+        }
         let col = after_row
             .trim_start_matches(|c: char| c == ':' || c == '-' || c == ',' || c.is_whitespace())
             .to_string();
-        return Some((sched, row_num, col));
+        return Some((raw_sched, row_num, col));
     }
 
     None
@@ -1643,6 +1656,18 @@ fn match_template_index(key: &str, template: &str) -> Option<usize> {
         return None;
     }
     rest.parse::<usize>().ok()
+}
+
+/// Returns true when `key` is a registered "(Add more...)" popup/modal overflow
+/// key printed by band-flow or continuation sheets for `slug`.
+pub fn is_popup_overflow_key(slug: &str, key: &str) -> bool {
+    POPUP_SCHEDULES.iter().any(|def| {
+        def.slug == slug
+            && def
+                .columns
+                .iter()
+                .any(|col| match_template_index(key, col.key_template).is_some())
+    })
 }
 
 fn detect_popup_overflow(

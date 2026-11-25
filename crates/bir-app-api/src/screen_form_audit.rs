@@ -3203,8 +3203,11 @@ fn every_shell_form_print_map_has_a_sheet_or_reviewed_reason() {
                 .unwrap_or_else(|| panic!("{code}: print slug missing"));
             let fields = print_map_of(kind, draft)
                 .unwrap_or_else(|error| panic!("{code}: print map: {error}"));
-            let missing = bir_print::frozen_html::unprinted_keys(slug, &fields)
-                .unwrap_or_else(|error| panic!("{code} ({slug}): {error}"));
+            let missing: Vec<String> = bir_print::frozen_html::unprinted_keys(slug, &fields)
+                .unwrap_or_else(|error| panic!("{code} ({slug}): {error}"))
+                .into_iter()
+                .filter(|key| !bir_print::continuation::is_popup_overflow_key(slug, key))
+                .collect();
             assert!(
                 missing.is_empty(),
                 "{code} ({slug}): values have no printed box or reviewed not_joined reason: {missing:#?}"
