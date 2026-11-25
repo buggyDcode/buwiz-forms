@@ -11,6 +11,9 @@ use bir_core::forms::form_1801::{
     Form1801Draft, Form1801Particular, Form1801RealProperty, Form1801Split,
 };
 use bir_core::forms::form_2200a::Form2200ADraft;
+use bir_core::forms::form_2200s::{
+    Form2200SBeverageRow, Form2200SDraft, Form2200SManner, Form2200SOtherRow,
+};
 use bir_core::forms::queueable::QueueableForm;
 use bir_core::TaxpayerProfile;
 use bir_print::frozen_html::{filled_document, printed_cell};
@@ -262,4 +265,55 @@ fn form_2200a_prints_part_iv_payment_details() {
         printed_cell(&doc, "p1c114").0,
         "MBTC 40050403182025  45678901278"
     );
+}
+
+#[test]
+fn form_2200s_prints_schedule1_rows_and_part_iii_items() {
+    let profile = demo_profile();
+    let mut d = Form2200SDraft::new_from_profile(&profile, 2025, 3);
+    d.manner = Form2200SManner::ActualRemoval;
+    d.beverages.resize(10, Form2200SBeverageRow::default());
+    d.balance_carried_over = 1_238.24;
+    d.creditable_excise_tax = 1_255.25;
+    d.tax_payment = 1_340.30;
+    d.beverages[0].sales_value = 123_456_789.12;
+    d.beverages[0].volume = 10_000.50;
+    d.beverages[8].sales_value = 234_567_890.34;
+    d.beverages[8].volume = 5_000.25;
+    d.others = vec![Form2200SOtherRow {
+        atc: "XB010".into(),
+        description: "CUSTOM SYRUP MIX".into(),
+        tax_bracket: "PER LITER".into(),
+        rate: 6.0,
+        sales_value: 9_876_543.21,
+        volume: 1_500.00,
+        basic_tax_due: 0.0,
+    }];
+    d.recompute();
+
+    let map = d.to_print_field_map();
+    let doc = filled_document("2200s-2018", &map).expect("2200s-2018 render");
+
+    // Page 1 Items 19A, 19B, 25A (already joined via decimal_html_id)
+    assert_eq!(printed_cell(&doc, "p1c62").0, "123824");
+    assert_eq!(printed_cell(&doc, "p1c64").0, "125525");
+    assert_eq!(printed_cell(&doc, "p1c84").0, "134030");
+
+    // Page 2 Schedule 1 fixed rows (XB010 = row 0, XB090 = row 8)
+    assert_eq!(printed_cell(&doc, "p2c27").0, "123,456,789.12");
+    assert_eq!(printed_cell(&doc, "p2c28").0, "10,000.50");
+    assert_eq!(printed_cell(&doc, "p2c29").0, "60,003.00");
+    assert_eq!(printed_cell(&doc, "p2c83").0, "234,567,890.34");
+    assert_eq!(printed_cell(&doc, "p2c84").0, "5,000.25");
+    assert_eq!(printed_cell(&doc, "p2c85").0, "60,003.00");
+
+    // Page 2 Schedule 1 Others row 1
+    assert_eq!(printed_cell(&doc, "p2c100").0, "XB010");
+    assert_eq!(printed_cell(&doc, "p2c102").0, "PER LITER");
+    assert_eq!(printed_cell(&doc, "p2c103").0, "6.00");
+    assert_eq!(printed_cell(&doc, "p2c104").0, "9,876,543.21");
+    assert_eq!(printed_cell(&doc, "p2c105").0, "1,500.00");
+    assert_eq!(printed_cell(&doc, "p2c106").0, "9,000.00");
+    // Grand total still prints
+    assert_eq!(printed_cell(&doc, "p2c115").0, "129,006.00");
 }
