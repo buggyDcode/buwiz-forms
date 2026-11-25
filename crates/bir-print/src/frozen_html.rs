@@ -1327,15 +1327,16 @@ fn is_whole_peso_writer_key(key: &str) -> bool {
     .any(|prefix| lower.starts_with(prefix))
 }
 
-/// Format an unformatted plain-cell whole-peso integer (`"250000"`, `"-50000"`,
-/// `"(1250000)"`) with thousands commas (`"250,000"`, `"-50,000"`, `"(1,250,000)"`).
-/// Returns `None` when the text already has commas or has 3 or fewer digits.
+/// Format a plain-cell amount on a whole-peso ("DO NOT enter Centavos") form:
+/// - strips `.00` (rounding half-up to whole pesos when centavos are present)
+/// - groups thousands with commas (`"300,000.00"` -> `"300,000"`,
+///   `"150000"` -> `"150,000"`, `"-50000"` -> `"-50,000"`, `"0.00"` -> `"0"`).
+///
+/// Returns `None` when the text is already a comma-grouped whole peso (or 3 or
+/// fewer digits with no decimal point).
 fn format_plain_whole_peso_with_commas(text: &str) -> Option<String> {
     let trimmed = text.trim();
-    if trimmed.contains(',') {
-        return None;
-    }
-    let (prefix, digits, suffix) =
+    let (prefix, inner, suffix) =
         if let Some(inner) = trimmed.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
             ("(", inner.trim(), ")")
         } else if let Some(rest) = trimmed.strip_prefix('-') {
@@ -1343,10 +1344,33 @@ fn format_plain_whole_peso_with_commas(text: &str) -> Option<String> {
         } else {
             ("", trimmed, "")
         };
-    if digits.len() <= 3 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+    if let Some((whole_part, cents_part)) = inner.split_once('.') {
+        if cents_part.len() != 2 || !cents_part.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let clean_whole: String = whole_part
+            .bytes()
+            .filter(|b| *b != b',')
+            .map(char::from)
+            .collect();
+        if clean_whole.is_empty() || !clean_whole.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let mut peso: u128 = clean_whole.parse().ok()?;
+        let cents: u8 = cents_part.parse().ok()?;
+        if cents >= 50 {
+            peso = peso.saturating_add(1);
+        }
+        let grouped = group_thousands(&peso.to_string());
+        return Some(format!("{prefix}{grouped}{suffix}"));
+    }
+    if trimmed.contains(',') {
         return None;
     }
-    Some(format!("{prefix}{}{suffix}", group_thousands(digits)))
+    if inner.len() <= 3 || !inner.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(format!("{prefix}{}{suffix}", group_thousands(inner)))
 }
 
 /// Whether a cell (by writer key or printed caption) represents a currency/money amount.
@@ -1572,6 +1596,8 @@ fn is_amount_typed_key(key: &str) -> bool {
         "withholding",
         "withheld",
         "base",
+        "shed7_",
+        "shed8_",
         "due",
         "paid",
         "overpay",
@@ -2774,7 +2800,7 @@ fn fill_text_input(
             && !split
             && is_whole_peso_writer_key(name)
             && is_amount_typed_cell(name, caption)
-            && is_formatted_whole_peso_amount(print))
+            && (is_formatted_whole_peso_amount(print) || is_formatted_money_amount(print)))
         .then(|| format_plain_whole_peso_with_commas(print))
         .flatten();
         let display = formatted_rate
@@ -11082,5 +11108,120 @@ mod donor_estate_print_tests {
             cont_p2c65_digits.trim().is_empty(),
             "unused spouse column on 1701A Part IV-B additional sheet must stay blank, got: {cont_p2c65_digits:?}"
         );
+    }
+
+    #[test]
+    fn form_1702mx_schedules_7_and_8_whole_peso_right_align_and_row7_default() {
+        // Part 1j: 1702MX page 4 Schedules 7.1 & 8.1 ("DO NOT enter Centavos").
+        // Typed columns A-D carry ".00" in the official XML (once #326 merges),
+        // column E carries whole pesos, and untouched row 7 carries the BIR
+        // program's official default "0" (runtime-control-inventory-v796.json).
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "frm1702MX:txtPg3IShed7_4Year".to_string(),
+            "2022".to_string(),
+        );
+        fields.insert(
+            "frm1702MX:txtPg3IShed7_4A".to_string(),
+            "300,000.00".to_string(),
+        );
+        fields.insert(
+            "frm1702MX:txtPg3IShed7_4B".to_string(),
+            "100,000.00".to_string(),
+        );
+        fields.insert("frm1702MX:txtPg3IShed7_4C".to_string(), "0.00".to_string());
+        fields.insert(
+            "frm1702MX:txtPg3IShed7_4D".to_string(),
+            "50,000.00".to_string(),
+        );
+        fields.insert(
+            "frm1702MX:txtPg3IShed7_4E".to_string(),
+            "150,000".to_string(),
+        );
+        fields.insert("frm1702MX:txtPg3IShed7_7A".to_string(), "0".to_string());
+        fields.insert("frm1702MX:txtPg3IShed7_7E".to_string(), "0".to_string());
+        fields.insert("frm1702MX:txtPg3IShed78D".to_string(), "50,000".to_string());
+        fields.insert(
+            "frm1702MX:txtPg3IShed8_4Year".to_string(),
+            "2023".to_string(),
+        );
+        fields.insert(
+            "frm1702MX:txtPg4IShed8_4A".to_string(),
+            "450,000.00".to_string(),
+        );
+        fields.insert(
+            "frm1702MX:txtPg4IShed8_4B".to_string(),
+            "125,000.00".to_string(),
+        );
+        fields.insert(
+            "frm1702MX:txtPg4IShed8_4C".to_string(),
+            "25,000.00".to_string(),
+        );
+        fields.insert(
+            "frm1702MX:txtPg4IShed8_4D".to_string(),
+            "75,000.00".to_string(),
+        );
+        fields.insert(
+            "frm1702MX:txtPg4IShed8_4E".to_string(),
+            "225000".to_string(),
+        );
+        fields.insert("frm1702MX:txtPg4IShed8_7A".to_string(), "0".to_string());
+        fields.insert("frm1702MX:txtPg4IShed8_7E".to_string(), "0".to_string());
+        fields.insert("frm1702MX:txtPg3IShed88D".to_string(), "75000".to_string());
+
+        let html = filled_document("1702mx-2018c", &fields).unwrap();
+        let tags = super::input_tags(&html);
+        let tag_for = |cell_id: &str| {
+            tags.iter()
+                .find(|t| t.name == cell_id)
+                .unwrap_or_else(|| panic!("missing cell {cell_id}"))
+                .tag
+        };
+
+        // Schedule 7.1 row 4 A-E + row 7 A/E: whole pesos, no ".00", right-aligned.
+        for (cell_id, expected) in [
+            ("p4c17", "300,000"),
+            ("p4c18", "100,000"),
+            ("p4c19", "0"),
+            ("p4c20", "50,000"),
+            ("p4c21", "150,000"),
+            ("p4c38", "0"),
+            ("p4c42", "0"),
+        ] {
+            let tag = tag_for(cell_id);
+            assert_eq!(super::attr(tag, "value"), Some(expected), "{cell_id} value");
+            assert!(
+                tag.contains("text-align:right"),
+                "{cell_id} must right-align under RULES 4, got: {tag}"
+            );
+        }
+
+        // Schedule 8.1 row 4 A-E + row 7 A/E: whole pesos, no ".00", right-aligned.
+        for (cell_id, expected) in [
+            ("p4c64", "450,000"),
+            ("p4c65", "125,000"),
+            ("p4c66", "25,000"),
+            ("p4c67", "75,000"),
+            ("p4c68", "225,000"),
+            ("p4c85", "0"),
+            ("p4c89", "0"),
+        ] {
+            let tag = tag_for(cell_id);
+            assert_eq!(super::attr(tag, "value"), Some(expected), "{cell_id} value");
+            assert!(
+                tag.contains("text-align:right"),
+                "{cell_id} must right-align under RULES 4, got: {tag}"
+            );
+        }
+
+        // Year columns stay plain 4-digit years (no commas, not right-aligned).
+        for (cell_id, expected) in [("p4c16", "2022"), ("p4c63", "2023")] {
+            let tag = tag_for(cell_id);
+            assert_eq!(super::attr(tag, "value"), Some(expected), "{cell_id} year");
+            assert!(
+                !tag.contains("text-align:right"),
+                "{cell_id} year must not right-align as money, got: {tag}"
+            );
+        }
     }
 }
