@@ -2596,6 +2596,27 @@ fn fill_text_input(
             return;
         }
         let chars: Vec<char> = print.chars().collect();
+        // A 14-slot TIN header comb whose last 5 slots are preprinted `00000`
+        // (9 `<input>` slots + 5 empty `<div class="s">` slots, e.g. 1701Q p2c5,
+        // 1701 p2c5/p3c5/p4c5): put the 9 TIN digits into slots 0..8 without
+        // overflowing into a crushed rectangle, and paint any non-zero branch
+        // code into slots 9..13 over the preprinted `00000`.
+        if ordered.len() == 9
+            && chars.len() > 9
+            && chars.len() <= 14
+            && chars.iter().all(char::is_ascii_digit)
+            && fill_nine_plus_five_tin_comb(
+                html,
+                tags,
+                &ordered,
+                input_name,
+                print,
+                via_cell,
+                replacements,
+            )
+        {
+            return;
+        }
         // Text longer than its comb (a long name, an email, a
         // `derived:line:` print value) prints whole as plain type across
         // the comb, shrunk to fit, instead of losing the characters past
@@ -4623,6 +4644,7 @@ pub(crate) fn fill_continuation_fragment(
     let filled = fill_date_joins(&filled, fields, &cells.date_joins);
     let filled =
         split_single_character_cells(slug, &fill_xbox_joins(&filled, fields, &cells.xbox_joins));
+    let filled = fill_preprinted_branch_combs(&filled, fields, &cells.joins);
     Ok(strip_converted_rect_separators(&filled))
 }
 
@@ -4652,6 +4674,7 @@ fn fill_bundle(
     let filled = fill_date_joins(&filled, fields, &cells.date_joins);
     let filled =
         split_single_character_cells(slug, &fill_xbox_joins(&filled, fields, &cells.xbox_joins));
+    let filled = fill_preprinted_branch_combs(&filled, fields, &cells.joins);
     Ok(strip_converted_rect_separators(&filled))
 }
 
@@ -5193,6 +5216,197 @@ fn is_amount_comb_key(key: &str) -> bool {
         || key.starts_with("derived:sp_p")
         || key.starts_with("derived:p2_")
         || key.starts_with("derived:p3_")
+        || key.starts_with("derived:Sched")
+}
+
+/// Normalize a branch code's digits into 5 characters; returns `None` when
+/// empty or all zeros (so preprinted `00000` stays untouched).
+fn non_zero_branch_five(raw: &str) -> Option<String> {
+    let digits: String = raw.chars().filter(char::is_ascii_digit).collect();
+    if digits.is_empty() || digits.bytes().all(|b| b == b'0') {
+        return None;
+    }
+    let five = if digits.len() >= 5 {
+        digits[digits.len() - 5..].to_string()
+    } else {
+        format!("{digits:0>5}")
+    };
+    Some(five)
+}
+
+/// Fill a 14-slot TIN comb that has 9 `<input>` slots and 5 empty preprinted
+/// `00000` `<div class="s" data-slot="9..13"></div>` slots.
+fn fill_nine_plus_five_tin_comb(
+    html: &str,
+    tags: &[InputTag<'_>],
+    ordered: &[usize],
+    cell_id: &str,
+    print: &str,
+    via_cell: bool,
+    replacements: &mut Vec<(usize, usize, String)>,
+) -> bool {
+    let marker = format!("id=\"{cell_id}\"");
+    let Some(cell_start) = html.find(&marker) else {
+        return false;
+    };
+    let Some(open_end) = html[cell_start..].find('>').map(|n| cell_start + n + 1) else {
+        return false;
+    };
+    let cell_head = &html[cell_start..open_end];
+    if !cell_head.contains("data-comb-slots=\"14\"") {
+        return false;
+    }
+    let cell_end = html[open_end..]
+        .find("<div id=\"p")
+        .map_or(html.len(), |n| open_end + n);
+    let cell_body = &html[open_end..cell_end];
+    let mut empty_slots = Vec::with_capacity(5);
+    for slot in 9..14 {
+        let needle = format!("data-slot=\"{slot}\"");
+        let Some(rel) = cell_body.find(&needle) else {
+            return false;
+        };
+        let slot_abs = open_end + rel;
+        let Some(gt) = html[slot_abs..cell_end].find('>').map(|n| slot_abs + n + 1) else {
+            return false;
+        };
+        if !html[gt..cell_end].starts_with("</div>") {
+            return false;
+        }
+        empty_slots.push((slot, gt));
+    }
+    let chars: Vec<char> = print.chars().collect();
+    for (offset, &index) in ordered.iter().enumerate() {
+        let ch = chars
+            .get(offset)
+            .copied()
+            .map(|c| c.to_string())
+            .unwrap_or_default();
+        let writer = (via_cell && offset == 0).then_some(print);
+        replacements.push((
+            tags[index].start,
+            tags[index].end,
+            set_value(tags[index].tag, &ch, writer),
+        ));
+    }
+    if let Some(branch) = non_zero_branch_five(&print[9..]) {
+        let base_class = attr(tags[ordered[0]].tag, "class").unwrap_or("fi fh20 fc");
+        for ((slot, insert_at), digit) in empty_slots.into_iter().zip(branch.chars()) {
+            let input = format!(
+                "<input type=\"text\" class=\"{base_class}\" id=\"{cell_id}-s{slot}\" name=\"{cell_id}\" data-slot-index=\"{slot}\" maxlength=\"1\" style=\"background:#fff\" value=\"{digit}\">"
+            );
+            replacements.push((insert_at, insert_at, input));
+        }
+    }
+    true
+}
+
+/// Fill 5-slot empty preprinted `00000` branch-code combs (such as 1701 Part IV
+/// Item 1 spouse branch `p2c15`, 1700 `p1c67`, 1701A `p2c124`, 1701Q `p1c72`,
+/// and primary TIN branch combs) whenever the draft carries a non-zero
+/// `*BranchCode` value and the frozen sheet has no `<input>` in that comb.
+fn fill_preprinted_branch_combs(
+    html: &str,
+    fields: &BTreeMap<String, String>,
+    joins: &BTreeMap<String, Vec<String>>,
+) -> String {
+    let mut replacements: Vec<(usize, usize, String)> = Vec::new();
+    for (key, value) in fields {
+        if !key.ends_with("BranchCode") {
+            continue;
+        }
+        let Some(branch) = non_zero_branch_five(value) else {
+            continue;
+        };
+        if joins.contains_key(key) {
+            continue;
+        }
+        let key_attr = format!("name=\"{key}\"");
+        if html.contains(&key_attr) {
+            continue;
+        }
+        let tin3_key = format!("{}TIN3", &key[..key.len() - "BranchCode".len()]);
+        let tin3_cell_pos = if let Some(cell) = joins.get(&tin3_key).and_then(|v| v.first()) {
+            html.find(&format!("id=\"{cell}\""))
+        } else {
+            html.find(&format!("name=\"{tin3_key}\""))
+                .and_then(|pos| html[..pos].rfind("<div id=\"p"))
+        };
+        let Some(tin3_pos) = tin3_cell_pos else {
+            continue;
+        };
+        let Some(tin3_open_end) = html[tin3_pos..].find('>').map(|n| tin3_pos + n + 1) else {
+            continue;
+        };
+        let tin3_row = attr(&html[tin3_pos..tin3_open_end], "data-row");
+        let tin3_next = html[tin3_open_end..]
+            .find("<div id=\"p")
+            .map_or(html.len(), |n| tin3_open_end + n);
+        let base_class = html[tin3_open_end..tin3_next]
+            .find("<input ")
+            .and_then(|rel| {
+                let s = tin3_open_end + rel;
+                let e = html[s..tin3_next].find('>').map(|n| s + n + 1)?;
+                attr(&html[s..e], "class")
+            })
+            .unwrap_or("fi fh20 fc");
+        // Scan the next few sibling cells on the same row for an empty 5-slot comb.
+        let mut cursor = tin3_next;
+        for _ in 0..4 {
+            let Some(rel) = html[cursor..].find("<div id=\"p") else {
+                break;
+            };
+            let cell_start = cursor + rel;
+            let Some(open_end) = html[cell_start..].find('>').map(|n| cell_start + n + 1) else {
+                break;
+            };
+            let next_cell = html[open_end..]
+                .find("<div id=\"p")
+                .map_or(html.len(), |n| open_end + n);
+            let head = &html[cell_start..open_end];
+            if attr(head, "data-row") != tin3_row {
+                break;
+            }
+            if head.contains("data-comb-slots=\"5\"")
+                && !html[open_end..next_cell].contains("<input ")
+            {
+                let cell_id = attr(head, "id").unwrap_or("branch");
+                let mut slots = Vec::with_capacity(5);
+                let mut ok = true;
+                for slot in 0..5 {
+                    let needle = format!("data-slot=\"{slot}\"");
+                    let Some(srel) = html[open_end..next_cell].find(&needle) else {
+                        ok = false;
+                        break;
+                    };
+                    let sabs = open_end + srel;
+                    let Some(gt) = html[sabs..next_cell].find('>').map(|n| sabs + n + 1) else {
+                        ok = false;
+                        break;
+                    };
+                    if !html[gt..next_cell].starts_with("</div>") {
+                        ok = false;
+                        break;
+                    }
+                    slots.push((slot, gt));
+                }
+                if ok {
+                    for ((slot, insert_at), digit) in slots.into_iter().zip(branch.chars()) {
+                        let input = format!(
+                            "<input type=\"text\" class=\"{base_class}\" id=\"{cell_id}-s{slot}\" name=\"{key}\" data-slot-index=\"{slot}\" maxlength=\"1\" style=\"background:#fff\" value=\"{digit}\">"
+                        );
+                        replacements.push((insert_at, insert_at, input));
+                    }
+                    break;
+                }
+            }
+            cursor = next_cell;
+        }
+    }
+    if replacements.is_empty() {
+        return html.to_string();
+    }
+    apply_replacements(html, replacements)
 }
 
 /// True when `text` is a formatted numeric amount (optional leading `-` or
@@ -7908,20 +8122,17 @@ mod tests {
         assert_eq!(comb_text(&html, "p1c41"), "UEZON CITY");
         assert_eq!(comb_text(&html, "p1c47"), "sample@example.com");
         assert_eq!(comb_text(&html, "p2c5"), "123456788");
-        assert_eq!(comb_text(&html, "p2c55"), "5,000,001.00");
-        assert_eq!(comb_text(&html, "p2c57"), "1,200,000.00");
-        assert_eq!(comb_text(&html, "p2c13"), "  800,001.00");
+        assert_eq!(comb_text(&html, "p2c55"), "     5000001");
+        assert_eq!(comb_text(&html, "p2c57"), "     1200000");
+        assert_eq!(comb_text(&html, "p2c13"), "      800001");
         assert_eq!(comb_text(&html, "p2c42"), "10");
         assert_eq!(comb_text(&html, "p2c44"), "0");
         assert_eq!(comb_text(&html, "p2c73"), "25");
         assert_eq!(comb_text(&html, "p2c110"), "SAMPLE CREDIT");
-        assert_eq!(comb_text(&html, "p2c112"), "    1,234.00");
+        assert_eq!(comb_text(&html, "p2c112"), "        1234");
         assert_eq!(
             comb_text(&html, "p1c57"),
-            format!(
-                "{:>12}",
-                bir_core::official_xml::official_amount(draft.income_tax_due)
-            )
+            format!("{:>12}", (draft.income_tax_due.abs() + 0.5).floor() as u64)
         );
         assert!(!html.contains("name=\"frm1702q:"));
     }
@@ -10550,6 +10761,127 @@ mod donor_estate_print_tests {
                     .contains("text-align:right;justify-content:flex-end"),
                 "1702MX {id} whole-peso cell must be right-aligned: {}",
                 tag.tag
+            );
+        }
+    }
+
+    #[test]
+    fn continuation_page_headers_keep_gap_between_tin_and_name() {
+        let long_header = bir_core::forms::print_map::tin_name_header(
+            "000-123-453-00000",
+            "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA",
+        );
+        for slug in ["2200p-2020", "2000-dst-2018", "2200a-2020", "2200c-2018"] {
+            let mut fields = BTreeMap::new();
+            fields.insert("derived:page_header".to_string(), long_header.clone());
+            let html = filled_document(slug, &fields).unwrap_or_else(|e| panic!("{slug}: {e}"));
+            assert!(
+                html.contains("00012345300000  SANTOS, JUANA MARIE"),
+                "{slug} overflowing page_header must separate TIN and name with a gap"
+            );
+        }
+    }
+
+    #[test]
+    fn form_1701q_page2_header_tin_does_not_crush_next_to_preprinted_branch() {
+        for (tin, expect_branch) in [
+            ("000123453", None),
+            ("00012345300000", None),
+            ("00012345300001", Some("00001")),
+        ] {
+            let mut fields = BTreeMap::new();
+            fields.insert("derived:tin_digits".to_string(), tin.to_string());
+            let html = filled_document("1701q-2018", &fields).expect("fill 1701Q");
+            let tags: Vec<_> = super::input_tags(&html)
+                .into_iter()
+                .filter(|t| t.name == "p2c5" || t.name == "p2c5-line")
+                .collect();
+            assert!(
+                !tags.iter().any(|t| t.name == "p2c5-line"),
+                "1701Q p2c5 ({tin}) must not overflow into a crushed plain line"
+            );
+            let digits: String = tags
+                .iter()
+                .filter_map(|t| super::attr(t.tag, "value"))
+                .collect();
+            match expect_branch {
+                None => assert_eq!(digits, "000123453", "1701Q p2c5 ({tin})"),
+                Some(br) => assert_eq!(digits, format!("000123453{br}"), "1701Q p2c5 ({tin})"),
+            }
+        }
+    }
+
+    #[test]
+    fn form_1702q_part2_prints_whole_pesos_without_centavos_or_doubled_commas() {
+        let mut fields = BTreeMap::new();
+        fields.insert("derived:txtTax14".to_string(), "      875000".to_string());
+        fields.insert("derived:txtTax25".to_string(), "      739265".to_string());
+        fields.insert("derived:txtTax15".to_string(), "1234567890123".to_string());
+        let html = filled_document("1702q-2018", &fields).expect("fill 1702Q");
+        let values_of = |cell: &str| -> String {
+            super::input_tags(&html)
+                .into_iter()
+                .filter(|t| t.name == cell)
+                .filter_map(|t| super::attr(t.tag, "value"))
+                .collect()
+        };
+        assert_eq!(values_of("p1c57"), "      875000");
+        assert_eq!(values_of("p1c79"), "      739265");
+        assert!(
+            html.contains("data-overflow-of=\"p1c59\"")
+                && html.contains("value=\"1,234,567,890,123\"")
+                && html.contains("text-align:right;justify-content:flex-end"),
+            "13-digit 1702Q Part II amount must print as right-aligned comma-formatted whole-peso plain rectangle"
+        );
+    }
+
+    #[test]
+    fn second_person_tins_print_all_fourteen_digits_including_branch_code() {
+        let cases = [
+            (
+                "1701-2018",
+                "frm1701:txtPg2I1TIN1",
+                "frm1701:txtPg2I1TIN2",
+                "frm1701:txtPg2I1TIN3",
+                "frm1701:txtPg2I1BranchCode",
+            ),
+            (
+                "1700-2018",
+                "frm1700:txtPg1I18STIN1",
+                "frm1700:txtPg1I18STIN2",
+                "frm1700:txtPg1I18STIN3",
+                "frm1700:txtPg1I18SBranchCode",
+            ),
+            (
+                "1701a-2018",
+                "frm1701A:txtSpouseTIN1",
+                "frm1701A:txtSpouseTIN2",
+                "frm1701A:txtSpouseTIN3",
+                "frm1701A:txtSpouseBranchCode",
+            ),
+            (
+                "1701q-2018",
+                "frm1701q:txtSpouseTIN1",
+                "frm1701q:txtSpouseTIN2",
+                "frm1701q:txtSpouseTIN3",
+                "frm1701q:txtSpouseBranchCode",
+            ),
+        ];
+        for (slug, k1, k2, k3, kb) in cases {
+            let mut fields = BTreeMap::new();
+            fields.insert(k1.to_string(), "111".to_string());
+            fields.insert(k2.to_string(), "222".to_string());
+            fields.insert(k3.to_string(), "333".to_string());
+            fields.insert(kb.to_string(), "00001".to_string());
+            let html = filled_document(slug, &fields).unwrap_or_else(|e| panic!("{slug}: {e}"));
+            let branch_digits: String = super::input_tags(&html)
+                .into_iter()
+                .filter(|t| t.name == kb)
+                .filter_map(|t| super::attr(t.tag, "value"))
+                .collect();
+            assert_eq!(
+                branch_digits, "00001",
+                "{slug} second-person branch code {kb} must print over preprinted 00000"
             );
         }
     }

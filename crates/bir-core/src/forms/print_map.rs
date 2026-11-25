@@ -105,10 +105,16 @@ fn group_thousands_int(digits: &str) -> String {
 }
 
 /// A later page's header when the sheet draws its TIN and Taxpayer's Name
-/// boxes as one 40-slot comb: the 14 TIN digits, then the name from slot 14
-/// (under the Taxpayer's Name caption).
+/// boxes as one 40-slot comb: the 14 TIN digits, one blank slot, then the
+/// name from slot 15 (under the Taxpayer's Name caption).
 pub fn tin_name_header(tin: &str, name: &str) -> String {
-    format!("{}{}", tin_digits(tin), name.trim().to_uppercase())
+    let digits = tin_digits(tin);
+    let name = name.trim().to_uppercase();
+    if name.is_empty() {
+        digits
+    } else {
+        format!("{digits}  {name}")
+    }
 }
 
 /// The printed names of an excise place's region, province and city codes
@@ -169,7 +175,7 @@ mod tests {
         assert_eq!(tin_digits("123-456-788-000"), "12345678800000");
         assert_eq!(
             tin_name_header("123456788", " Sample Co "),
-            "12345678800000SAMPLE CO"
+            "12345678800000  SAMPLE CO"
         );
     }
 
