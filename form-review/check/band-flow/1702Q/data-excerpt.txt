@@ -1,0 +1,5 @@
+# 1702Q Independent Band-Flow Check — Data Excerpt
+
+## Case overflow
+  - Other Credits (10): 10 rows, exp_total=77,500.00, markers=['Q1702-CRED-01', 'Q1702-CRED-02', 'Q1702-CRED-03', 'Q1702-CRED-04']..Q1702-CRED-10
+
