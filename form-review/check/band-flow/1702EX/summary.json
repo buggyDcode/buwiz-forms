@@ -1,0 +1,200 @@
+{
+  "before": {
+    "pages": 3,
+    "blank_pages": [],
+    "old_fallback_pages": [
+      3
+    ],
+    "tables": {
+      "Sched 1 Item 17 (Other Ded)": {
+        "held": 8,
+        "printed_once": 0,
+        "missing": [
+          "EX-S1I17-01",
+          "EX-S1I17-02",
+          "EX-S1I17-03",
+          "EX-S1I17-04",
+          "EX-S1I17-05",
+          "EX-S1I17-06",
+          "EX-S1I17-07",
+          "EX-S1I17-08"
+        ],
+        "duped": [],
+        "in_order": false,
+        "exp_total": "11,996.00",
+        "tot_in_pdf": "False"
+      },
+      "Sched 2 Item 4 (Special)": {
+        "held": 8,
+        "printed_once": 0,
+        "missing": [
+          "EX-S2I4-01",
+          "EX-S2I4-02",
+          "EX-S2I4-03",
+          "EX-S2I4-04",
+          "EX-S2I4-05",
+          "EX-S2I4-06",
+          "EX-S2I4-07",
+          "EX-S2I4-08"
+        ],
+        "duped": [],
+        "in_order": false,
+        "exp_total": "19,996.00",
+        "tot_in_pdf": "False"
+      },
+      "Sched 3 Item 3 (Non-Ded)": {
+        "held": 8,
+        "printed_once": 0,
+        "missing": [
+          "EX-S3I3-01",
+          "EX-S3I3-02",
+          "EX-S3I3-03",
+          "EX-S3I3-04",
+          "EX-S3I3-05",
+          "EX-S3I3-06",
+          "EX-S3I3-07",
+          "EX-S3I3-08"
+        ],
+        "duped": [],
+        "in_order": false,
+        "exp_total": "27,996.00",
+        "tot_in_pdf": "False"
+      },
+      "Sched 3 Item 6 (Non-Tax Inc)": {
+        "held": 8,
+        "printed_once": 0,
+        "missing": [
+          "EX-S3I6-01",
+          "EX-S3I6-02",
+          "EX-S3I6-03",
+          "EX-S3I6-04",
+          "EX-S3I6-05",
+          "EX-S3I6-06",
+          "EX-S3I6-07",
+          "EX-S3I6-08"
+        ],
+        "duped": [],
+        "in_order": false,
+        "exp_total": "35,996.00",
+        "tot_in_pdf": "False"
+      },
+      "Sched 3 Item 8 (Special Ded)": {
+        "held": 8,
+        "printed_once": 0,
+        "missing": [
+          "EX-S3I8-01",
+          "EX-S3I8-02",
+          "EX-S3I8-03",
+          "EX-S3I8-04",
+          "EX-S3I8-05",
+          "EX-S3I8-06",
+          "EX-S3I8-07",
+          "EX-S3I8-08"
+        ],
+        "duped": [],
+        "in_order": false,
+        "exp_total": "43,996.00",
+        "tot_in_pdf": "False"
+      }
+    }
+  },
+  "after": {
+    "pages": 3,
+    "blank_pages": [],
+    "old_fallback_pages": [
+      3
+    ],
+    "tables": {
+      "Sched 1 Item 17 (Other Ded)": {
+        "held": 8,
+        "printed_once": 0,
+        "missing": [
+          "EX-S1I17-01",
+          "EX-S1I17-02",
+          "EX-S1I17-03",
+          "EX-S1I17-04",
+          "EX-S1I17-05",
+          "EX-S1I17-06",
+          "EX-S1I17-07",
+          "EX-S1I17-08"
+        ],
+        "duped": [],
+        "in_order": false,
+        "exp_total": "11,996.00",
+        "tot_in_pdf": "False"
+      },
+      "Sched 2 Item 4 (Special)": {
+        "held": 8,
+        "printed_once": 0,
+        "missing": [
+          "EX-S2I4-01",
+          "EX-S2I4-02",
+          "EX-S2I4-03",
+          "EX-S2I4-04",
+          "EX-S2I4-05",
+          "EX-S2I4-06",
+          "EX-S2I4-07",
+          "EX-S2I4-08"
+        ],
+        "duped": [],
+        "in_order": false,
+        "exp_total": "19,996.00",
+        "tot_in_pdf": "False"
+      },
+      "Sched 3 Item 3 (Non-Ded)": {
+        "held": 8,
+        "printed_once": 0,
+        "missing": [
+          "EX-S3I3-01",
+          "EX-S3I3-02",
+          "EX-S3I3-03",
+          "EX-S3I3-04",
+          "EX-S3I3-05",
+          "EX-S3I3-06",
+          "EX-S3I3-07",
+          "EX-S3I3-08"
+        ],
+        "duped": [],
+        "in_order": false,
+        "exp_total": "27,996.00",
+        "tot_in_pdf": "False"
+      },
+      "Sched 3 Item 6 (Non-Tax Inc)": {
+        "held": 8,
+        "printed_once": 0,
+        "missing": [
+          "EX-S3I6-01",
+          "EX-S3I6-02",
+          "EX-S3I6-03",
+          "EX-S3I6-04",
+          "EX-S3I6-05",
+          "EX-S3I6-06",
+          "EX-S3I6-07",
+          "EX-S3I6-08"
+        ],
+        "duped": [],
+        "in_order": false,
+        "exp_total": "35,996.00",
+        "tot_in_pdf": "False"
+      },
+      "Sched 3 Item 8 (Special Ded)": {
+        "held": 8,
+        "printed_once": 0,
+        "missing": [
+          "EX-S3I8-01",
+          "EX-S3I8-02",
+          "EX-S3I8-03",
+          "EX-S3I8-04",
+          "EX-S3I8-05",
+          "EX-S3I8-06",
+          "EX-S3I8-07",
+          "EX-S3I8-08"
+        ],
+        "duped": [],
+        "in_order": false,
+        "exp_total": "43,996.00",
+        "tot_in_pdf": "False"
+      }
+    }
+  }
+}

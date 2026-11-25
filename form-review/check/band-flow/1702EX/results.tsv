@@ -1,0 +1,11 @@
+form	commit	side	table	held_rows	printed_once	missing_count	duped_count	in_order	exp_total	tot_in_pdf	pages	blank_pages	old_fallback_pages
+1702EX	b9552e27	before	Sched 1 Item 17 (Other Ded)	8	0	8	0	False	11,996.00	False	3	none	3
+1702EX	b9552e27	before	Sched 2 Item 4 (Special)	8	0	8	0	False	19,996.00	False	3	none	3
+1702EX	b9552e27	before	Sched 3 Item 3 (Non-Ded)	8	0	8	0	False	27,996.00	False	3	none	3
+1702EX	b9552e27	before	Sched 3 Item 6 (Non-Tax Inc)	8	0	8	0	False	35,996.00	False	3	none	3
+1702EX	b9552e27	before	Sched 3 Item 8 (Special Ded)	8	0	8	0	False	43,996.00	False	3	none	3
+1702EX	4321b79b	after	Sched 1 Item 17 (Other Ded)	8	0	8	0	False	11,996.00	False	3	none	3
+1702EX	4321b79b	after	Sched 2 Item 4 (Special)	8	0	8	0	False	19,996.00	False	3	none	3
+1702EX	4321b79b	after	Sched 3 Item 3 (Non-Ded)	8	0	8	0	False	27,996.00	False	3	none	3
+1702EX	4321b79b	after	Sched 3 Item 6 (Non-Tax Inc)	8	0	8	0	False	35,996.00	False	3	none	3
+1702EX	4321b79b	after	Sched 3 Item 8 (Special Ded)	8	0	8	0	False	43,996.00	False	3	none	3
