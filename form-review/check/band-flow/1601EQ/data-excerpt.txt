@@ -1,0 +1,5 @@
+# 1601EQ Independent Band-Flow Check — Data Excerpt
+
+## Case overflow
+  - Schedule 1 (12 ATC rows): 12 rows, exp_total=9,900.00, markers=['WI010', 'WI011', 'WI020', 'WI021']..WI090
+
