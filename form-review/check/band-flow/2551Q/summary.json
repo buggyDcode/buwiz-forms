@@ -1,0 +1,92 @@
+{
+  "rows6_specify": {
+    "before": {
+      "pages": 2,
+      "blank_pages": [],
+      "old_fallback_pages": [
+        2
+      ],
+      "tables": {
+        "Schedule 1 (6 rows)": {
+          "held": 6,
+          "printed_once": 6,
+          "missing": [],
+          "duped": [],
+          "in_order": true,
+          "exp_total": "2,430.00",
+          "tot_in_pdf": "True",
+          "sum_occ": 0
+        }
+      }
+    },
+    "after": {
+      "pages": 2,
+      "blank_pages": [],
+      "old_fallback_pages": [
+        2
+      ],
+      "tables": {
+        "Schedule 1 (6 rows)": {
+          "held": 6,
+          "printed_once": 6,
+          "missing": [],
+          "duped": [],
+          "in_order": true,
+          "exp_total": "2,430.00",
+          "tot_in_pdf": "True",
+          "sum_occ": 0
+        }
+      }
+    }
+  },
+  "rows10_specify": {
+    "before": {
+      "pages": 2,
+      "blank_pages": [],
+      "old_fallback_pages": [
+        2
+      ],
+      "tables": {
+        "Schedule 1 (10 rows)": {
+          "held": 10,
+          "printed_once": 6,
+          "missing": [
+            "PT17",
+            "PT18",
+            "PT19",
+            "PT20"
+          ],
+          "duped": [],
+          "in_order": false,
+          "exp_total": "4,650.00",
+          "tot_in_pdf": "True",
+          "sum_occ": 0
+        }
+      }
+    },
+    "after": {
+      "pages": 2,
+      "blank_pages": [],
+      "old_fallback_pages": [
+        2
+      ],
+      "tables": {
+        "Schedule 1 (10 rows)": {
+          "held": 10,
+          "printed_once": 6,
+          "missing": [
+            "PT17",
+            "PT18",
+            "PT19",
+            "PT20"
+          ],
+          "duped": [],
+          "in_order": false,
+          "exp_total": "4,650.00",
+          "tot_in_pdf": "True",
+          "sum_occ": 0
+        }
+      }
+    }
+  }
+}
