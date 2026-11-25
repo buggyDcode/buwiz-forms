@@ -315,9 +315,28 @@ pub fn detect_overflow(
         // column whose values duplicate an earlier column's in every row.
         let mut kept: Vec<usize> = Vec::new();
         for ci in 0..spec.columns.len() {
-            let duplicates_earlier = kept
+            // Only a column that carries real content can be a mirror: two
+            // columns empty in every row are both legitimate empty cells.
+            // Require at least two distinct values across the rows, so two
+            // unrelated columns that merely happen to hold the same constant
+            // in this filing are never merged — a mirror copies every row.
+            let distinct: BTreeSet<&str> = rows
                 .iter()
-                .any(|&ki| rows.iter().all(|r| r.values[ki] == r.values[ci]));
+                .map(|r| r.values[ci].as_str())
+                .filter(|v| !v.is_empty())
+                .collect();
+            // A mirror copies its source cell key-for-key, so the stems nest
+            // (`txtSched1_description` / `txtSched1_descriptionCont`) — two
+            // unrelated columns that merely hold equal values in this filing
+            // (2000-OT's FMV column and its subtotal) never merge.
+            let stem = &spec.columns[ci].stem;
+            let carries_content = distinct.len() >= 2;
+            let duplicates_earlier = carries_content
+                && kept.iter().any(|&ki| {
+                    stem.starts_with(&spec.columns[ki].stem)
+                        && stem.len() > spec.columns[ki].stem.len()
+                        && rows.iter().all(|r| r.values[ki] == r.values[ci])
+                });
             if !duplicates_earlier {
                 kept.push(ci);
             }
