@@ -1,0 +1,11 @@
+check	scope	observed	notes	status
+step1-official-rule	20 boxes x (single/joint states + 3 mixed-joint)	130 standard + 3 mixed-joint rows rebuilt from v796 inventories	0 disagreements with author gates-main.tsv	PASS
+step2-live-page-main	main a8aeaca8, 20 boxes x 5 states x {single,joint}	124/200 officially-shut box-states left open on live desktop page	confirms pre-fix defect on Schedules 3.A, 4, 6	BASELINE
+step2-live-page-head	head 30cfaee6, 20 boxes x 5 states x {single,joint}	200/200 match official rule (0 Rank 1 shut-when-open, 0 Rank 2 open-when-shut)	all 20 boxes including Sch 6 drawers verified	PASS
+step3-either-column	joint: taxpayer 8% (II015) + spouse grad itemized (II012)	19Desc, 20Desc, 17dDesc open; 19A/17dA shut; 19B/17dB open; values persist in data_json & upload XML	matches official single-DOM-input behavior (not a workaround)	PASS
+step4-samples-suite	1701-122025 & 1701-122025-joint via page path + sample suite	bir-core sample_payloads_test 146/146 pass; bir-app-api page-path test pass; live replay of 1701-122025-joint 0 mismatches (18B=71001.00, Sch6=15000.00)	zero upload differences	PASS
+step5-saved-main-return	1701 saved at main (8% single) opened at head 30cfaee6	no notice shown; gated boxes hidden; saved description strings kept silently in data_json (empty in XML); any non-zero amounts/NOLCO in data_json zeroed silently on open+save	no filer notice on hidden/zeroed saved values	FINDING_RANK3
+step6-tests-bir-core-lib	cargo test --locked -p bir-core --lib at 30cfaee6	1663 passed; 0 failed; 12 ignored	clean	PASS
+step6-tests-sample-payloads	cargo test --locked -p bir-core --test sample_payloads_test at 30cfaee6	146 passed; 0 failed; 1 ignored	clean	PASS
+step6-tests-bir-app-api-lib	cargo test --locked -p bir-app-api --features agent --lib at 30cfaee6	846 passed; 0 failed; 7 ignored (includes all gate & 1701 sample page-path tests)	clean	PASS
+step6-tests-nsh-form	nsh test screens/form/*.test.{ts,tsx} at 30cfaee6	46/47 files passed; 1 failed: atc2551q.test.tsx (known unrelated main failure, not counted)	clean	PASS
