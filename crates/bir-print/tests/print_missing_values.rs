@@ -178,7 +178,9 @@ fn form_1604c_prints_two_digit_year_after_preprinted_20() {
     let profile = demo_profile();
     let d = Form1604cDraft::new_from_profile(&profile, 2025);
     assert_eq!(
-        d.to_bir_field_map().get("frm1604c:txtYear").map(String::as_str),
+        d.to_bir_field_map()
+            .get("frm1604c:txtYear")
+            .map(String::as_str),
         Some("2025")
     );
     let map = d.to_print_field_map();
@@ -192,7 +194,9 @@ fn form_1604e_prints_two_digit_year_after_preprinted_20() {
     let profile = demo_profile();
     let d = Form1604eDraft::new_from_profile(&profile, 2025);
     assert_eq!(
-        d.to_bir_field_map().get("frm1604e:txtYear").map(String::as_str),
+        d.to_bir_field_map()
+            .get("frm1604e:txtYear")
+            .map(String::as_str),
         Some("2025")
     );
     let map = d.to_print_field_map();
