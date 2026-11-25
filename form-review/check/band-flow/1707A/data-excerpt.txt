@@ -1,0 +1,32 @@
+# 1707A Independent Check — Data Excerpt (from 1707A-12312023.plain.xml)
+
+## Schedule 1 (Gains): 14 rows
+  row 01: date=02/15/2023 corp='SAMPLE CORP' sp=500,000.00 cost=120,000.00 gl=380,000.00
+  row 02: date=06/30/2023 corp='EXAMPLE MINING' sp=1,234,567.89 cost=1,000,000.10 gl=234,567.79
+  row 03: date=01/10/2023 corp='GAIN CO 3' sp=6,001.52 cost=3,000.00 gl=3,001.52
+  row 04: date=02/10/2023 corp='GAIN CO 4' sp=8,002.03 cost=4,000.00 gl=4,002.03
+  row 05: date=03/10/2023 corp='GAIN CO 5' sp=10,002.54 cost=5,000.00 gl=5,002.54
+  row 06: date=04/10/2023 corp='GAIN CO 6' sp=12,003.05 cost=6,000.00 gl=6,003.05
+  row 07: date=05/10/2023 corp='GAIN CO 7' sp=14,003.56 cost=7,000.00 gl=7,003.56
+  row 08: date=06/10/2023 corp='GAIN CO 8' sp=16,004.07 cost=8,000.00 gl=8,004.07
+  row 09: date=07/10/2023 corp='GAIN CO 9' sp=18,004.58 cost=9,000.00 gl=9,004.58
+  row 10: date=08/10/2023 corp='GAIN CO 10' sp=20,005.09 cost=10,000.00 gl=10,005.09
+  row 11: date=09/10/2023 corp='GAIN CO 11' sp=22,005.59 cost=11,000.00 gl=11,005.59
+  row 12: date=10/10/2023 corp='GAIN CO 12' sp=24,006.10 cost=12,000.00 gl=12,006.10
+  row 13: date=11/10/2023 corp='GAIN CO 13' sp=26,006.61 cost=13,000.00 gl=13,006.61
+  row 14: date=12/10/2023 corp='GAIN CO 14' sp=28,007.12 cost=14,000.00 gl=14,007.12
+
+## Schedule 2 (Losses): 12 rows
+  row 01: date=09/01/2023 corp='LOSS CO' sp=50,000.00 cost=80,000.55 gl=30,000.55
+  row 02: date=01/20/2023 corp='LOSS CO 2' sp=1,000.00 cost=1,500.50 gl=500.50
+  row 03: date=02/20/2023 corp='LOSS CO 3' sp=1,500.00 cost=2,250.75 gl=750.75
+  row 04: date=03/20/2023 corp='LOSS CO 4' sp=2,000.00 cost=3,001.00 gl=1,001.00
+  row 05: date=04/20/2023 corp='LOSS CO 5' sp=2,500.00 cost=3,751.25 gl=1,251.25
+  row 06: date=05/20/2023 corp='LOSS CO 6' sp=3,000.00 cost=4,501.50 gl=1,501.50
+  row 07: date=06/20/2023 corp='LOSS CO 7' sp=3,500.00 cost=5,251.75 gl=1,751.75
+  row 08: date=07/20/2023 corp='LOSS CO 8' sp=4,000.00 cost=6,002.00 gl=2,002.00
+  row 09: date=08/20/2023 corp='LOSS CO 9' sp=4,500.00 cost=6,752.25 gl=2,252.25
+  row 10: date=09/20/2023 corp='LOSS CO 10' sp=5,000.00 cost=7,502.50 gl=2,502.50
+  row 11: date=10/20/2023 corp='LOSS CO 11' sp=5,500.00 cost=8,252.75 gl=2,752.75
+  row 12: date=11/20/2023 corp='LOSS CO 12' sp=6,000.00 cost=9,003.00 gl=3,003.00
+

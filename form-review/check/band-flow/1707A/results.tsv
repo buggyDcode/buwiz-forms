@@ -1,0 +1,5 @@
+form	commit	side	case	table	held_rows	printed_once	missing_count	duped_count	in_order	exp_total	tot_in_pdf	pages	cont_pages_ok	blank_pages
+1707A	b9552e27	before	12312023	Schedule 1 (Gains)	14	14	0	0	True	716,619.65	True	6	False	4,6
+1707A	b9552e27	before	12312023	Schedule 2 (Losses)	12	12	0	0	True	49,269.80	True	6	False	4,6
+1707A	4321b79b	after	12312023	Schedule 1 (Gains)	14	14	0	0	True	716,619.65	True	6	False	4,6
+1707A	4321b79b	after	12312023	Schedule 2 (Losses)	12	12	0	0	True	49,269.80	True	6	False	4,6

@@ -1,0 +1,128 @@
+{
+  "before": {
+    "pages": 6,
+    "blank_pages": [
+      4,
+      6
+    ],
+    "cont_checks": [
+      {
+        "page": 3,
+        "form": true,
+        "tin": true,
+        "page_label": true,
+        "table_head": true,
+        "old_fallback": false
+      },
+      {
+        "page": 4,
+        "form": false,
+        "tin": false,
+        "page_label": false,
+        "table_head": false,
+        "old_fallback": false
+      },
+      {
+        "page": 5,
+        "form": true,
+        "tin": true,
+        "page_label": true,
+        "table_head": true,
+        "old_fallback": false
+      },
+      {
+        "page": 6,
+        "form": false,
+        "tin": false,
+        "page_label": false,
+        "table_head": false,
+        "old_fallback": false
+      }
+    ],
+    "schedules": {
+      "Schedule 1 (Gains)": {
+        "held": 14,
+        "printed_once": 14,
+        "missing": [],
+        "duped": [],
+        "in_order": true,
+        "exp_gain_loss": "716,619.65",
+        "tot_in_pdf": true
+      },
+      "Schedule 2 (Losses)": {
+        "held": 12,
+        "printed_once": 11,
+        "missing": [],
+        "duped": [
+          "LOSS CO"
+        ],
+        "in_order": true,
+        "exp_gain_loss": "49,269.80",
+        "tot_in_pdf": true
+      }
+    }
+  },
+  "after": {
+    "pages": 6,
+    "blank_pages": [
+      4,
+      6
+    ],
+    "cont_checks": [
+      {
+        "page": 3,
+        "form": true,
+        "tin": true,
+        "page_label": true,
+        "table_head": true,
+        "old_fallback": false
+      },
+      {
+        "page": 4,
+        "form": false,
+        "tin": false,
+        "page_label": false,
+        "table_head": false,
+        "old_fallback": false
+      },
+      {
+        "page": 5,
+        "form": true,
+        "tin": true,
+        "page_label": true,
+        "table_head": true,
+        "old_fallback": false
+      },
+      {
+        "page": 6,
+        "form": false,
+        "tin": false,
+        "page_label": false,
+        "table_head": false,
+        "old_fallback": false
+      }
+    ],
+    "schedules": {
+      "Schedule 1 (Gains)": {
+        "held": 14,
+        "printed_once": 14,
+        "missing": [],
+        "duped": [],
+        "in_order": true,
+        "exp_gain_loss": "716,619.65",
+        "tot_in_pdf": true
+      },
+      "Schedule 2 (Losses)": {
+        "held": 12,
+        "printed_once": 11,
+        "missing": [],
+        "duped": [
+          "LOSS CO"
+        ],
+        "in_order": true,
+        "exp_gain_loss": "49,269.80",
+        "tot_in_pdf": true
+      }
+    }
+  }
+}
