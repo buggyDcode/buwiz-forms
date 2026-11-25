@@ -13,8 +13,7 @@
 /// plus the font; `fhN` gives size/line-height.
 pub const STATIC_CSS: &str = ".fi.fs{display:flex;align-items:center;justify-content:flex-start;\
 white-space:pre;overflow:hidden;box-sizing:border-box}.fi.fs.fc{justify-content:center}\
-.fi.fs[data-overflow-of]{inset:0.75pt 1pt 0.75pt 1pt}\
-.fi.fs[data-overflow-warning=\"text-truncated\"],.fi.fs[style*=\"line-height:\"]{white-space:pre-line}";
+.fi.fs[data-overflow-of]{inset:0.75pt 1pt 0.75pt 1pt}";
 
 pub fn staticize(html: &str) -> String {
     let html = strip_scripts(html);
@@ -211,6 +210,7 @@ mod tests {
         assert!(out.contains(r#"data-overflow-of="cont2-p1c10""#));
         assert!(out.contains(".fi.fs[data-overflow-of]{inset:0.75pt 1pt 0.75pt 1pt}"));
         assert!(!out.contains("background:#fff;"));
+        assert!(!out.contains("white-space:pre-line"));
     }
 
     #[test]

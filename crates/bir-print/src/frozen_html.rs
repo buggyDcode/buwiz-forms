@@ -37,6 +37,10 @@ const FONT_ARIMO_NORMAL: &[u8] =
     include_bytes!("../../../html-frozen/fonts/arimo-latin-wght-normal.woff2");
 const FONT_ARIMO_ITALIC: &[u8] =
     include_bytes!("../../../html-frozen/fonts/arimo-latin-wght-italic.woff2");
+const FONT_TINOS_NORMAL: &[u8] =
+    include_bytes!("../../../html-frozen/fonts/tinos-latin-400-normal.woff2");
+const FONT_TINOS_BOLD: &[u8] =
+    include_bytes!("../../../html-frozen/fonts/tinos-latin-700-normal.woff2");
 
 const STAMPED_TIN_NAMES: [&str; 4] = [
     "frm2551Qv2018:txtTIN1",
@@ -973,21 +977,23 @@ fn fit_line(sheet: &SheetType, width: f64, text: &str) -> f64 {
 /// fits on the page.
 const FIT_EPSILON_PT: f64 = 0.02;
 
-/// Minimum cell height (pt) for a plain text box to wrap onto two lines
-/// before shrinking (Rule 3: two lines at 7.5pt with 1.05 line-height need
-/// 16.125pt, allowing 16.56pt–16.68pt rows like 2200P Others to wrap).
-const PLAIN_WRAP_MIN_HEIGHT_PT: f64 = 16.2;
+/// Minimum inner box height (pt, after subtracting top/bottom `inset`) for a
+/// plain text box to wrap onto two lines before shrinking (Rule 3: two lines
+/// at 7.5pt with 1.04 line-height need 15.60pt, allowing 15.72pt inner-height
+/// rows like 2200P Others while keeping 7.71pt boxes like 1601C item 20 on
+/// one line).
+const PLAIN_WRAP_MIN_HEIGHT_PT: f64 = 15.55;
 
 /// Minimum readable type size (pt) for text in plain cells and converted
 /// rectangles (Rule 3). Below this floor, text is truncated with `"..."` and
 /// printed in full on the additional sheet.
 const PLAIN_TEXT_MIN_PT: f64 = 7.5;
 
-/// Vertical room factor for two wrapped lines (2 lines + small leading margin).
-const PLAIN_TWO_LINE_HEIGHT_FACTOR: f64 = 2.15;
+/// Vertical room factor for two wrapped lines (`2 * 1.04 = 2.08`).
+const PLAIN_TWO_LINE_HEIGHT_FACTOR: f64 = 2.08;
 
 /// Line-height applied to two-line wrapped plain text cells.
-const PLAIN_TWO_LINE_CSS_HEIGHT: &str = "1.05";
+const PLAIN_TWO_LINE_CSS_HEIGHT: &str = "1.04";
 
 /// The width and height (pt) of plain (`data-field-kind="text"`) box `cell` of `html`.
 fn plain_cell_dimensions(html: &str, cell: &str) -> Option<(f64, f64)> {
@@ -1153,12 +1159,13 @@ fn fit_plain_text(
         return None;
     }
     let shrunk = shrunk_room(room);
+    let inner_height = input_height(height, tag);
     let min_pt = PLAIN_TEXT_MIN_PT;
     let start_size = default_size.max(min_pt);
 
-    if allow_wrap && height >= PLAIN_WRAP_MIN_HEIGHT_PT {
+    if allow_wrap && inner_height >= PLAIN_WRAP_MIN_HEIGHT_PT {
         let top_two_line =
-            floor_size((height / PLAIN_TWO_LINE_HEIGHT_FACTOR).min(start_size)).max(min_pt);
+            floor_size((inner_height / PLAIN_TWO_LINE_HEIGHT_FACTOR).min(start_size)).max(min_pt);
         if let Some((l1, l2, sz)) = fit_two_lines(sheet, letter, shrunk, text, top_two_line, min_pt)
         {
             return Some(PlainTextFit {
@@ -1206,14 +1213,21 @@ fn fit_plain_text(
 /// The room (pt) input `tag` leaves for text in a cell `width` pt wide:
 /// the width less the input's left and right inset.
 fn input_room(width: f64, tag: &str) -> f64 {
-    let (left, right) = inset(attr(tag, "style").unwrap_or(""));
+    let (_, right, _, left) = inset_box(attr(tag, "style").unwrap_or(""));
     width - left - right
 }
 
-/// The left and right of an input's `inset:` (1 to 4 lengths, pt).
-fn inset(style: &str) -> (f64, f64) {
+/// The vertical room (pt) input `tag` leaves for text in a cell `height` pt
+/// tall: the height less the input's top and bottom inset.
+fn input_height(height: f64, tag: &str) -> f64 {
+    let (top, _, bottom, _) = inset_box(attr(tag, "style").unwrap_or(""));
+    (height - top - bottom).max(0.0)
+}
+
+/// The `(top, right, bottom, left)` of an input's `inset:` (1 to 4 lengths, pt).
+fn inset_box(style: &str) -> (f64, f64, f64, f64) {
     let Some(at) = style.find("inset:") else {
-        return (0.0, 0.0);
+        return (0.0, 0.0, 0.0, 0.0);
     };
     let values: Vec<f64> = style[at + "inset:".len()..]
         .split(';')
@@ -1223,10 +1237,11 @@ fn inset(style: &str) -> (f64, f64) {
         .filter_map(|v| v.strip_suffix("pt").and_then(|n| n.parse().ok()))
         .collect();
     match values.as_slice() {
-        [all] => (*all, *all),
-        [_, sides] | [_, sides, _] => (*sides, *sides),
-        [_, right, _, left] => (*left, *right),
-        _ => (0.0, 0.0),
+        [all] => (*all, *all, *all, *all),
+        [tb, lr] => (*tb, *lr, *tb, *lr),
+        [top, lr, bottom] => (*top, *lr, *bottom, *lr),
+        [top, right, bottom, left] => (*top, *right, *bottom, *left),
+        _ => (0.0, 0.0, 0.0, 0.0),
     }
 }
 
@@ -4796,7 +4811,531 @@ fn fill_bundle(
     let filled =
         split_single_character_cells(slug, &fill_xbox_joins(&filled, fields, &cells.xbox_joins));
     let filled = fill_preprinted_branch_combs(&filled, fields, &cells.joins);
-    Ok(strip_converted_rect_separators(&filled))
+    let filled = strip_converted_rect_separators(&filled);
+    Ok(apply_rule6_specify_bands(&filled, fields, &sheet))
+}
+
+#[derive(serde::Deserialize)]
+struct Rule6PageLayoutDoc {
+    pages: Vec<Rule6PageLayout>,
+}
+
+#[derive(serde::Deserialize)]
+struct Rule6PageLayout {
+    page: usize,
+    bands: Vec<Rule6Band>,
+    #[serde(default)]
+    rule6_fields: Vec<Rule6FieldSpec>,
+}
+
+#[derive(serde::Deserialize)]
+struct Rule6Band {
+    id: String,
+    kind: String,
+    y0: f64,
+    y1: f64,
+    min_height_pt: Option<f64>,
+}
+
+#[derive(serde::Deserialize)]
+struct Rule6FieldSpec {
+    writer_key: String,
+    cell_id: String,
+    band_id: String,
+    insert_after_y: f64,
+    x0: f64,
+    x1: f64,
+}
+
+struct Rule6Insertion {
+    cell_id: String,
+    cut_y: f64,
+    dh: f64,
+    x0: f64,
+    x1: f64,
+    display: String,
+    full_text: String,
+    font_size_pt: f64,
+    two_lines: bool,
+    truncated: bool,
+    input_classes: String,
+}
+
+/// RULES.md rule 6: when a named inline "(specify)" field in
+/// `<script id="formgen-page-layout">` overflows its small label-column box,
+/// move its text to a full-width rectangle on a newly inserted band directly
+/// under the item's row while keeping the amount box level with the item
+/// number and shifting everything below down (shrinking an `elastic_box` band
+/// if trailing space alone is not enough).
+fn apply_rule6_specify_bands(
+    html: &str,
+    fields: &BTreeMap<String, String>,
+    sheet: &SheetType,
+) -> String {
+    const START_TAG: &str = "<script type=\"application/json\" id=\"formgen-page-layout\">";
+    let Some(s_at) = html.find(START_TAG) else {
+        return html.to_string();
+    };
+    let json_start = s_at + START_TAG.len();
+    let Some(e_rel) = html[json_start..].find("</script>") else {
+        return html.to_string();
+    };
+    let Ok(layout) =
+        serde_json::from_str::<Rule6PageLayoutDoc>(&html[json_start..json_start + e_rel])
+    else {
+        return html.to_string();
+    };
+    if !layout.pages.iter().any(|p| !p.rule6_fields.is_empty()) {
+        return html.to_string();
+    }
+
+    let mut out = html.to_string();
+    for page in &layout.pages {
+        if page.rule6_fields.is_empty() {
+            continue;
+        }
+        let Some((pg_start, pg_end)) = find_page_div_span(&out, page.page) else {
+            continue;
+        };
+        let mut page_html = out[pg_start..pg_end].to_string();
+        let mut insertions: Vec<Rule6Insertion> = Vec::new();
+
+        for r6 in &page.rule6_fields {
+            let Some(full_val) = fields
+                .get(&r6.writer_key)
+                .map(|v| v.trim())
+                .filter(|v| !v.is_empty())
+            else {
+                continue;
+            };
+            let Some((inp_start, inp_end, inp_tag)) = find_cell_input_span(&page_html, &r6.cell_id)
+            else {
+                continue;
+            };
+            let style = attr(&inp_tag, "style").unwrap_or("");
+            let overflowed = inp_tag.contains("data-overflow-warning=\"text-truncated\"")
+                || style.contains("font-size:");
+            if !overflowed {
+                continue;
+            }
+            let input_classes = "fi".to_string();
+            let letter = sheet.letter;
+            let rect_w = (r6.x1 - r6.x0 - 4.0).max(20.0);
+            let room = shrunk_room((rect_w - 6.0).max(20.0));
+            let single_size = sheet.fit(letter, room, full_val, 8.5);
+            let (dh, display, font_size_pt, two_lines, truncated) =
+                if single_size >= PLAIN_TEXT_MIN_PT {
+                    (14.0, full_val.to_string(), single_size, false, false)
+                } else if let Some((l1, l2, sz)) =
+                    fit_two_lines(sheet, letter, room, full_val, 8.5, PLAIN_TEXT_MIN_PT)
+                {
+                    (20.0, format!("{l1}\n{l2}"), sz, true, false)
+                } else if let Some((l1, l2)) =
+                    wrap_and_truncate_two_lines(sheet, letter, room, full_val, PLAIN_TEXT_MIN_PT)
+                {
+                    (20.0, format!("{l1}\n{l2}"), PLAIN_TEXT_MIN_PT, true, true)
+                } else {
+                    (
+                        14.0,
+                        truncate_with_ellipsis(sheet, letter, room, full_val, PLAIN_TEXT_MIN_PT)
+                            .unwrap_or_else(|| full_val.to_string()),
+                        PLAIN_TEXT_MIN_PT,
+                        false,
+                        true,
+                    )
+                };
+
+            let cut_y = page
+                .bands
+                .iter()
+                .find(|b| b.id == r6.band_id)
+                .map(|b| {
+                    if b.y1 > r6.insert_after_y && (b.y1 - r6.insert_after_y) <= 6.0 {
+                        b.y1
+                    } else {
+                        r6.insert_after_y
+                    }
+                })
+                .unwrap_or(r6.insert_after_y);
+
+            let cleared = clear_rule6_inline_input(&inp_tag);
+            page_html.replace_range(inp_start..inp_end, &cleared);
+
+            insertions.push(Rule6Insertion {
+                cell_id: r6.cell_id.clone(),
+                cut_y,
+                dh,
+                x0: r6.x0,
+                x1: r6.x1,
+                display,
+                full_text: full_val.to_string(),
+                font_size_pt,
+                two_lines,
+                truncated,
+                input_classes,
+            });
+        }
+
+        if insertions.is_empty() {
+            continue;
+        }
+        insertions.sort_by(|a, b| a.cut_y.total_cmp(&b.cut_y));
+
+        let total_dh: f64 = insertions.iter().map(|i| i.dh).sum();
+        let trailing_room: f64 = (page
+            .bands
+            .iter()
+            .filter(|b| b.kind == "trailing_space")
+            .map(|b| (b.y1 - b.y0).max(0.0))
+            .sum::<f64>()
+            - 4.0)
+            .max(0.0);
+        let last_cut = insertions.last().map_or(0.0, |i| i.cut_y);
+        let (elastic_cut_y, elastic_shrink) = if total_dh > trailing_room {
+            let needed = total_dh - trailing_room;
+            page.bands
+                .iter()
+                .find(|b| b.kind == "elastic_box" && b.y0 >= last_cut - 0.5)
+                .and_then(|eb| {
+                    let min_h = eb.min_height_pt?;
+                    let avail = (eb.y1 - eb.y0 - min_h).max(0.0);
+                    let shrink = needed.min(avail);
+                    (shrink > 0.1).then_some((eb.y0 + min_h, shrink))
+                })
+                .unwrap_or((f64::INFINITY, 0.0))
+        } else {
+            (f64::INFINITY, 0.0)
+        };
+
+        let transformed =
+            shift_page_and_insert_rule6(&page_html, &insertions, elastic_cut_y, elastic_shrink);
+        out.replace_range(pg_start..pg_end, &transformed);
+    }
+    out
+}
+
+fn find_page_div_span(html: &str, page_num: usize) -> Option<(usize, usize)> {
+    let needle = format!("id=\"page-{page_num}\"");
+    let id_at = html.find(&needle)?;
+    let start = html[..id_at].rfind("<div ")?;
+    let mut depth: i32 = 0;
+    let mut i = start;
+    while i < html.len() {
+        let next_open = html[i..].find("<div").map(|o| i + o);
+        let next_close = html[i..].find("</div>").map(|o| i + o);
+        match (next_open, next_close) {
+            (Some(o), Some(c)) if o < c => {
+                depth += 1;
+                i = o + 4;
+            }
+            (_, Some(c)) => {
+                depth -= 1;
+                i = c + 6;
+                if depth == 0 {
+                    return Some((start, i));
+                }
+            }
+            _ => break,
+        }
+    }
+    None
+}
+
+fn find_cell_input_span(page_html: &str, cell_id: &str) -> Option<(usize, usize, String)> {
+    let div_needle = format!("id=\"{cell_id}\"");
+    let div_at = page_html.find(&div_needle)?;
+    let div_close = page_html[div_at..].find("</div>")? + div_at;
+    let slice = &page_html[div_at..div_close];
+    let inp_rel = slice.find("<input")?;
+    let inp_end_rel = slice[inp_rel..].find('>')? + inp_rel + 1;
+    let abs_start = div_at + inp_rel;
+    let abs_end = div_at + inp_end_rel;
+    Some((
+        abs_start,
+        abs_end,
+        page_html[abs_start..abs_end].to_string(),
+    ))
+}
+
+fn clear_rule6_inline_input(tag: &str) -> String {
+    let mut cleaned = set_value(tag, "", None);
+    for attr_name in [
+        "data-overflow-warning",
+        "data-writer-value",
+        "data-overflow-of",
+    ] {
+        cleaned = remove_html_attr(&cleaned, attr_name);
+    }
+    cleaned
+}
+
+fn remove_html_attr(tag: &str, name: &str) -> String {
+    let needle = format!(" {name}=\"");
+    let Some(start) = tag.find(&needle) else {
+        return tag.to_string();
+    };
+    let val_start = start + needle.len();
+    let Some(end_rel) = tag[val_start..].find('"') else {
+        return tag.to_string();
+    };
+    format!("{}{}", &tag[..start], &tag[val_start + end_rel + 1..])
+}
+
+fn rule6_delta_top(
+    y: f64,
+    insertions: &[Rule6Insertion],
+    elastic_cut_y: f64,
+    elastic_shrink: f64,
+) -> f64 {
+    let mut d = 0.0;
+    for ins in insertions {
+        if y >= ins.cut_y - 0.5 {
+            d += ins.dh;
+        }
+    }
+    if elastic_shrink > 0.0 && y >= elastic_cut_y - 0.5 {
+        d -= elastic_shrink;
+    }
+    d
+}
+
+fn rule6_delta_bot(
+    y_top: f64,
+    y_bot: f64,
+    insertions: &[Rule6Insertion],
+    elastic_cut_y: f64,
+    elastic_shrink: f64,
+) -> f64 {
+    let mut d = 0.0;
+    for ins in insertions {
+        if y_top >= ins.cut_y - 0.5 || y_bot > ins.cut_y + 1.5 {
+            d += ins.dh;
+        }
+    }
+    if elastic_shrink > 0.0 && (y_top >= elastic_cut_y - 0.5 || y_bot > elastic_cut_y + 1.5) {
+        d -= elastic_shrink;
+    }
+    d
+}
+
+fn shift_page_and_insert_rule6(
+    page_html: &str,
+    insertions: &[Rule6Insertion],
+    elastic_cut_y: f64,
+    elastic_shrink: f64,
+) -> String {
+    let svg_end = page_html.find("</svg>");
+    let mut out = String::with_capacity(page_html.len() + 2048);
+
+    let body_start = if let Some(se) = svg_end {
+        let svg_part = &page_html[..se];
+        let mut cursor = 0;
+        while let Some(rel) = svg_part[cursor..].find("<rect ") {
+            let start = cursor + rel;
+            out.push_str(&svg_part[cursor..start]);
+            let Some(end_rel) = svg_part[start..].find('>') else {
+                out.push_str(&svg_part[start..]);
+                cursor = svg_part.len();
+                break;
+            };
+            let end = start + end_rel + 1;
+            let tag = &svg_part[start..end];
+            if let (Some(y_val), Some(h_val)) = (
+                attr(tag, "y").and_then(|s| s.parse::<f64>().ok()),
+                attr(tag, "height").and_then(|s| s.parse::<f64>().ok()),
+            ) {
+                let d_top = rule6_delta_top(y_val, insertions, elastic_cut_y, elastic_shrink);
+                let d_bot = rule6_delta_bot(
+                    y_val,
+                    y_val + h_val,
+                    insertions,
+                    elastic_cut_y,
+                    elastic_shrink,
+                );
+                if d_top.abs() > 1e-4 || (d_bot - d_top).abs() > 1e-4 {
+                    let new_y = y_val + d_top;
+                    let new_h = (h_val + d_bot - d_top).max(0.1);
+                    let mut updated = replace_attr_value(tag, "y", &format!("{new_y:.2}"));
+                    updated = replace_attr_value(&updated, "height", &format!("{new_h:.2}"));
+                    out.push_str(&updated);
+                } else {
+                    out.push_str(tag);
+                }
+            } else {
+                out.push_str(tag);
+            }
+            cursor = end;
+        }
+        out.push_str(&svg_part[cursor..]);
+
+        let mut prior_dh = 0.0;
+        out.push_str("<g class=\"layer-rule6\">");
+        for ins in insertions {
+            let y = ins.cut_y + prior_dh;
+            let w = (ins.x1 - ins.x0).max(10.0);
+            let h = ins.dh;
+            out.push_str(&format!(
+                "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"{:.2}\" fill=\"#ffffff\"/>",
+                ins.x0 + 1.0,
+                y + 0.25,
+                (w - 2.0).max(1.0),
+                (h - 0.5).max(1.0)
+            ));
+            out.push_str(&format!(
+                "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"0.5\" fill=\"#000000\"/>",
+                ins.x0, y, w
+            ));
+            out.push_str(&format!(
+                "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"{:.2}\" height=\"0.5\" fill=\"#000000\"/>",
+                ins.x0,
+                y + h - 0.5,
+                w
+            ));
+            out.push_str(&format!(
+                "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"1.2\" height=\"{:.2}\" fill=\"#000000\"/>",
+                ins.x0, y, h
+            ));
+            out.push_str(&format!(
+                "<rect x=\"{:.2}\" y=\"{:.2}\" width=\"1.2\" height=\"{:.2}\" fill=\"#000000\"/>",
+                ins.x1 - 1.2,
+                y,
+                h
+            ));
+            prior_dh += ins.dh;
+        }
+        out.push_str("</g></svg>");
+        se + "</svg>".len()
+    } else {
+        0
+    };
+
+    let rest = &page_html[body_start..];
+    let last_close = rest.rfind("</div>").unwrap_or(rest.len());
+    let inner_divs = &rest[..last_close];
+    let mut cursor = 0;
+    while let Some(rel) = inner_divs[cursor..].find("<div ") {
+        let start = cursor + rel;
+        out.push_str(&inner_divs[cursor..start]);
+        let Some(end_rel) = inner_divs[start..].find('>') else {
+            out.push_str(&inner_divs[start..]);
+            cursor = inner_divs.len();
+            break;
+        };
+        let end = start + end_rel + 1;
+        let tag = &inner_divs[start..end];
+        if let Some(top_val) = style_pt_prop(tag, "top") {
+            let d_top = rule6_delta_top(top_val, insertions, elastic_cut_y, elastic_shrink);
+            let mut updated = if d_top.abs() > 1e-4 {
+                replace_style_pt_prop(tag, "top", top_val + d_top)
+            } else {
+                tag.to_string()
+            };
+            if let Some(h_val) = style_pt_prop(&updated, "height") {
+                let d_bot = rule6_delta_bot(
+                    top_val,
+                    top_val + h_val,
+                    insertions,
+                    elastic_cut_y,
+                    elastic_shrink,
+                );
+                if (d_bot - d_top).abs() > 1e-4 {
+                    updated =
+                        replace_style_pt_prop(&updated, "height", (h_val + d_bot - d_top).max(1.0));
+                }
+            }
+            out.push_str(&updated);
+        } else {
+            out.push_str(tag);
+        }
+        cursor = end;
+    }
+    out.push_str(&inner_divs[cursor..]);
+
+    let mut prior_dh = 0.0;
+    for ins in insertions {
+        let y = ins.cut_y + prior_dh;
+        let w = (ins.x1 - ins.x0 - 3.0).max(10.0);
+        let h = (ins.dh - 1.0).max(8.0);
+        let lh_css = if ins.two_lines {
+            format!("line-height:{PLAIN_TWO_LINE_CSS_HEIGHT};")
+        } else {
+            String::new()
+        };
+        let warn_attr = if ins.truncated {
+            format!(
+                " data-overflow-warning=\"text-truncated\" data-writer-value=\"{}\"",
+                html_escape(&ins.full_text)
+            )
+        } else {
+            String::new()
+        };
+        out.push_str(&format!(
+            "<div class=\"c f\" data-rule6-band=\"true\" data-rule6-of=\"{}\" style=\"left:{:.2}pt;top:{:.2}pt;width:{:.2}pt;height:{:.2}pt\"><input type=\"text\" class=\"{}\" name=\"{}\" readonly value=\"{}\" style=\"inset:1pt 3pt 1pt 3pt;font-size:{:.2}pt;{}text-align:left;background:#fff;z-index:2\" data-overflow-of=\"{}\"{}></div>",
+            ins.cell_id,
+            ins.x0 + 1.5,
+            y + 0.5,
+            w,
+            h,
+            ins.input_classes,
+            ins.cell_id,
+            html_escape(&ins.display),
+            ins.font_size_pt,
+            lh_css,
+            ins.cell_id,
+            warn_attr
+        ));
+        prior_dh += ins.dh;
+    }
+    out.push_str(&rest[last_close..]);
+    out
+}
+
+fn replace_attr_value(tag: &str, name: &str, new_val: &str) -> String {
+    let needle = format!(" {name}=\"");
+    let Some(start) = tag.find(&needle) else {
+        return tag.to_string();
+    };
+    let val_start = start + needle.len();
+    let Some(end_rel) = tag[val_start..].find('"') else {
+        return tag.to_string();
+    };
+    format!(
+        "{}{}{}",
+        &tag[..val_start],
+        new_val,
+        &tag[val_start + end_rel..]
+    )
+}
+
+fn style_pt_prop(tag: &str, prop: &str) -> Option<f64> {
+    let style = attr(tag, "style")?;
+    for decl in style.split(';') {
+        let trimmed = decl.trim();
+        if let Some(rest) = trimmed.strip_prefix(&format!("{prop}:")) {
+            let num = rest.trim().strip_suffix("pt")?;
+            return num.parse::<f64>().ok();
+        }
+    }
+    None
+}
+
+fn replace_style_pt_prop(tag: &str, prop: &str, new_val: f64) -> String {
+    let Some(style) = attr(tag, "style") else {
+        return tag.to_string();
+    };
+    let prefix = format!("{prop}:");
+    let new_style: Vec<String> = style
+        .split(';')
+        .map(|decl| {
+            let trimmed = decl.trim();
+            if trimmed.starts_with(&prefix) {
+                format!("{prop}:{new_val:.2}pt")
+            } else {
+                decl.to_string()
+            }
+        })
+        .collect();
+    replace_attr_value(tag, "style", &new_style.join(";"))
 }
 
 /// One Rust-side join: `(writer key, cell, printed caption)`.
@@ -5283,10 +5822,20 @@ fn inline_local_assets(html: &str, loaded: &FrozenBundle) -> String {
         "url(\"fonts/arimo-latin-wght-normal.woff2\")",
         &format!("url(\"{}\")", data_uri("font/woff2", FONT_ARIMO_NORMAL)),
     );
-    let form = loaded.css.replace(
-        "url(\"../fonts/arimo-latin-wght-italic.woff2\")",
-        &format!("url(\"{}\")", data_uri("font/woff2", FONT_ARIMO_ITALIC)),
-    );
+    let form = loaded
+        .css
+        .replace(
+            "url(\"../fonts/arimo-latin-wght-italic.woff2\")",
+            &format!("url(\"{}\")", data_uri("font/woff2", FONT_ARIMO_ITALIC)),
+        )
+        .replace(
+            "url(\"../fonts/tinos-latin-400-normal.woff2\")",
+            &format!("url(\"{}\")", data_uri("font/woff2", FONT_TINOS_NORMAL)),
+        )
+        .replace(
+            "url(\"../fonts/tinos-latin-700-normal.woff2\")",
+            &format!("url(\"{}\")", data_uri("font/woff2", FONT_TINOS_BOLD)),
+        );
     document = document.replace(
         "<link rel=\"stylesheet\" href=\"../base.css\">",
         &format!("<style>{base}</style>"),
@@ -5706,9 +6255,14 @@ fn overflow_input_with_fit(
     }
     let (display, size, two_lines, truncated) = if proposed_size < PLAIN_TEXT_MIN_PT {
         let letter = sheet.letter_for("fi");
-        let room = (width - 2.0).max(4.0);
-        if height >= PLAIN_WRAP_MIN_HEIGHT_PT {
-            let max_two_line = (height / PLAIN_TWO_LINE_HEIGHT_FACTOR).min(PLAIN_MAX_PT);
+        // `[data-overflow-of]` has `inset: 0.75pt 1pt 0.75pt 1pt` plus
+        // `padding-left: 1pt`, leaving `width - 3pt` horizontal room and
+        // `height - 1.5pt` vertical room; keep 1pt extra horizontal spare.
+        let room = (width - 4.0).max(4.0);
+        let inner_height = (height - 1.5).max(0.0);
+        if inner_height >= PLAIN_WRAP_MIN_HEIGHT_PT {
+            let max_two_line =
+                floor_size((inner_height / PLAIN_TWO_LINE_HEIGHT_FACTOR).min(PLAIN_MAX_PT));
             if max_two_line >= PLAIN_TEXT_MIN_PT {
                 if let Some((l1, l2, sz)) =
                     fit_two_lines(sheet, letter, room, text, max_two_line, PLAIN_TEXT_MIN_PT)
@@ -6499,7 +7053,7 @@ mod tests {
             "tall cell should wrap onto two lines: {doc}"
         );
         assert!(
-            doc.contains("line-height:1.05"),
+            doc.contains("line-height:1.04"),
             "two-line wrap sets line-height: {doc}"
         );
         assert!(
@@ -9068,9 +9622,16 @@ mod tests {
                     let Some(size) = size else {
                         continue;
                     };
-                    // Over a comb, or over a split cell's boxes.
-                    let width = comb_cell(&document, &cell)
-                        .map(|(_, width)| width)
+                    // Over a Rule 6 full-width band, a comb, or a split cell's boxes.
+                    let rule6_width = document
+                        .find(&format!("data-rule6-of=\"{cell}\""))
+                        .and_then(|at| {
+                            let start = document[..at].rfind("<div ")?;
+                            let end = at + document[at..].find('>')? + 1;
+                            super::style_pt_prop(&document[start..end], "width")
+                        });
+                    let width = rule6_width
+                        .or_else(|| comb_cell(&document, &cell).map(|(_, width)| width))
                         .or_else(|| plain_cell_width(&document, &cell))
                         .unwrap();
                     for subline in text.lines() {
@@ -10382,7 +10943,7 @@ mod donor_estate_print_tests {
         for (slug, golden) in [
             (
                 "1706-2018",
-                "daf09f917f5d661c79a031d7c816e88ef990984b9adb7d21a2269107182fd773",
+                "b1161301be938a1b947987814010acd9f096ad811c70e3f8d5ec2e4fe85be8b5",
             ),
             (
                 "2000-ot-2018",
@@ -10390,11 +10951,11 @@ mod donor_estate_print_tests {
             ),
             (
                 "1801-2018",
-                "063e2baca30e91a9305dd75c54ce43cabee6540e85d00a433691ca237c7835bc",
+                "ba0514d79d8c7b537eb0f294e7fc14c0362a1bc667a53460e7832eb508cab239",
             ),
             (
                 "1800-2018",
-                "b53e4c41299633372d5d6ea06af2f232142b3f542e16f60c8d349ce266a0b459",
+                "840392d03d89a3a3edb63e47fdc659d8d67512ded3d315421e4712918e9df952",
             ),
         ] {
             let html = filled_document(slug, &every_join_filled(slug)).unwrap();
@@ -11307,6 +11868,232 @@ mod donor_estate_print_tests {
             assert!(
                 tag.contains("text-align:right"),
                 "{cell_id} must right-align, got: {tag}"
+            );
+        }
+    }
+
+    #[test]
+    fn form_1601c_item20_fits_one_line_with_ellipsis_and_inlines_tinos() {
+        let long_specify = "SPECIMEN LONG SPECIFY TEXT FOR OTHER MANNER OF PAYMENT WITH MANY WORDS FOR OVERFLOW CHECK";
+        let mut fields = BTreeMap::new();
+        fields.insert("frm1601c:txt20Other".to_string(), long_specify.to_string());
+
+        let html = filled_document("1601c-2018", &fields).unwrap();
+        assert!(
+            !html.contains("url(\"../fonts/tinos-latin-400-normal.woff2\")"),
+            "1601c-2018 must inline tinos-latin-400-normal.woff2 as a data URI"
+        );
+        assert!(
+            html.contains("data-rule6-band=\"true\" data-rule6-of=\"p1c223\""),
+            "1601C item 20 must insert a Rule 6 full-width band"
+        );
+        let tags = super::input_tags(&html);
+        let inline_tag = tags
+            .iter()
+            .find(|t| t.name == "p1c223" && !t.tag.contains("data-overflow-of=\"p1c223\""))
+            .expect("1601c inline p1c223")
+            .tag;
+        assert_eq!(
+            super::attr(inline_tag, "value"),
+            Some(""),
+            "inline p1c223 must be cleared when Rule 6 band is inserted"
+        );
+        let band_tag = tags
+            .iter()
+            .find(|t| t.tag.contains("data-overflow-of=\"p1c223\""))
+            .expect("1601c Rule 6 band input")
+            .tag;
+        assert_eq!(
+            super::attr(band_tag, "value"),
+            Some(long_specify),
+            "1601C item 20 full-width band must hold the full 90-char text"
+        );
+    }
+
+    #[test]
+    fn rule6_named_specify_boxes_insert_full_width_band_and_preserve_truncation() {
+        let long_specify = "SPECIMEN LONG SPECIFY TEXT FOR OTHER MANNER OF PAYMENT WITH MANY WORDS TO EXERCISE WRAPPING";
+        let cases = [
+            ("2550q-2024", "frm2550qv2024:addSpecifyNo19", "p1c205"),
+            ("2551q-2018", "frm2551Qv2018:txt17Specify", "p1c187"),
+            ("1601c-2018", "frm1601c:txt20Other", "p1c223"),
+            ("1603q-2018", "frm1603Q:txt16Other", "p1c181"),
+            ("1700-2018", "frm1700:txtPg2I57Desc", "p2c157"),
+            ("1701a-2018", "frm1701A:txt63Desc", "p2c176"),
+            ("1701q-2018", "frm1701q:txt61Desc", "p2c152"),
+            (
+                "1701ms-2024",
+                "derived:foreign_tax_credits_description",
+                "p2c177",
+            ),
+            ("1701ms-2024", "derived:other_credits_description", "p2c179"),
+        ];
+        for (slug, key, cell_id) in cases {
+            let mut short_fields = BTreeMap::new();
+            short_fields.insert(key.to_string(), "SHORT".to_string());
+            let short_html = filled_document(slug, &short_fields).unwrap();
+            assert!(
+                !short_html.contains("data-rule6-band=\"true\""),
+                "{slug} {cell_id}: short value must not insert a Rule 6 band"
+            );
+
+            let mut long_fields = BTreeMap::new();
+            long_fields.insert(key.to_string(), long_specify.to_string());
+            let long_html = filled_document(slug, &long_fields).unwrap();
+            let marker = format!("data-rule6-band=\"true\" data-rule6-of=\"{cell_id}\"");
+            assert!(
+                long_html.contains(&marker),
+                "{slug} {cell_id}: overflowing specify must insert Rule 6 full-width band"
+            );
+            assert!(
+                long_html.contains(long_specify),
+                "{slug} {cell_id}: full 90-char specify text must appear in full-width band"
+            );
+
+            let extreme =
+                format!("{long_specify} {long_specify} {long_specify} {long_specify} EXTRA TAIL");
+            let mut ext_fields = BTreeMap::new();
+            ext_fields.insert(key.to_string(), extreme.clone());
+            let ext_html = filled_document(slug, &ext_fields).unwrap();
+            assert!(
+                ext_html.contains(&marker),
+                "{slug} {cell_id}: extreme specify must still use Rule 6 full-width band"
+            );
+            assert!(
+                ext_html.contains("Entries continued from the form"),
+                "{slug} {cell_id}: extreme truncated Rule 6 specify must emit Additional Sheet"
+            );
+            assert!(
+                ext_html.contains(&extreme),
+                "{slug} {cell_id}: Additional Sheet must hold full extreme text"
+            );
+        }
+    }
+
+    #[test]
+    fn form_0605_long_word_name_fits_two_lines_within_inner_height_and_never_three() {
+        let checker_name = "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA EXTRAORDINARILY LONG FAMILY NAME WITH MIDDLE NAMES AND SUFFIXES FOR PRINT OVERFLOW TESTING";
+        let loaded = super::bundle("0605-1999").unwrap();
+        let sheet = super::SheetType::of(loaded.css);
+        let (cell_w, cell_h) = super::plain_cell_dimensions(loaded.html, "p1c35").unwrap();
+
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "frm0605:txtTaxPayerName".to_string(),
+            checker_name.to_string(),
+        );
+        let html = filled_document("0605-1999", &fields).unwrap();
+        assert!(
+            !html.contains("url(\"../fonts/tinos-latin-400-normal.woff2\")"),
+            "0605-1999 must inline tinos-latin-400-normal.woff2 as a data URI"
+        );
+        let tags = super::input_tags(&html);
+        let tag = tags
+            .iter()
+            .find(|t| t.name == "p1c35")
+            .expect("0605 p1c35")
+            .tag;
+        let inner_w = super::input_room(cell_w, tag);
+        let inner_h = super::input_height(cell_h, tag);
+        let val = super::attr(tag, "value").unwrap().replace("&#10;", "\n");
+        let lines: Vec<&str> = val.lines().collect();
+        assert_eq!(
+            lines.len(),
+            2,
+            "0605 137-char long-word name must wrap to exactly 2 lines, got: {val:?}"
+        );
+        let size: f64 = tag
+            .split("font-size:")
+            .nth(1)
+            .unwrap()
+            .split("pt")
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(size >= 7.5, "font size below 7.5pt floor: {size}");
+        assert!(
+            2.0 * size * 1.04 <= inner_h + 1e-6,
+            "two lines at {size}pt (height {:.2}pt) exceed inner box height {inner_h:.2}pt",
+            2.0 * size * 1.04
+        );
+        let letter = sheet.letter_for(super::attr(tag, "class").unwrap());
+        for (idx, line) in lines.iter().enumerate() {
+            let w = sheet.width(letter, line, size);
+            assert!(
+                w <= inner_w,
+                "line {} width {w:.2}pt exceeds inner width {inner_w:.2}pt: {line:?}",
+                idx + 1
+            );
+        }
+
+        // Unbreakably long words past 2 lines at 7.5pt: stay on 2 lines with "..." + additional sheet.
+        let extreme_name = "SUPEREXTRAORDINARILYLONGHYPHENATEDFAMILYNAME-VILLANUEVACRUZDELASANTOS EXTRAORDINARILYLONGSECONDWORDWITHOUTBREAKSFORPRINTINGOVERFLOWTESTINGANDADDITIONALTEXT BEYOND TWO LINES";
+        let mut fields2 = BTreeMap::new();
+        fields2.insert(
+            "frm0605:txtTaxPayerName".to_string(),
+            extreme_name.to_string(),
+        );
+        let html2 = filled_document("0605-1999", &fields2).unwrap();
+        let tags2 = super::input_tags(&html2);
+        let tag2 = tags2
+            .iter()
+            .find(|t| t.name == "p1c35")
+            .expect("0605 p1c35")
+            .tag;
+        let val2 = super::attr(tag2, "value").unwrap().replace("&#10;", "\n");
+        let lines2: Vec<&str> = val2.lines().collect();
+        assert_eq!(
+            lines2.len(),
+            2,
+            "extreme long-word name must stay on 2 lines, got: {val2:?}"
+        );
+        assert!(
+            lines2[1].ends_with("..."),
+            "line 2 must ellipsize: {:?}",
+            lines2[1]
+        );
+        assert!(tag2.contains("font-size:7.50pt"), "got: {tag2}");
+        assert_eq!(
+            super::attr(tag2, "data-overflow-warning"),
+            Some("text-truncated")
+        );
+        assert_eq!(super::attr(tag2, "data-writer-value"), Some(extreme_name));
+    }
+
+    #[test]
+    fn form_2000ot_continuation_name_fits_two_lines_within_inner_box() {
+        let checker_name = "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA EXTRAORDINARILY LONG FAMILY NAME WITH MIDDLE NAMES AND SUFFIXES FOR PRINT OVERFLOW TESTING";
+        let mut fields = BTreeMap::new();
+        fields.insert(
+            "frm2000OT:txtPg2TaxpayerName".to_string(),
+            checker_name.to_string(),
+        );
+        let html = filled_document("2000-ot-2018", &fields).unwrap();
+        let cells = super::printed_cells(&html);
+        let (val, sz) = cells.get("p2c6").expect("2000OT p2c6");
+        let lines: Vec<&str> = val.lines().collect();
+        assert_eq!(
+            lines.len(),
+            2,
+            "2000OT p2c6 must wrap to 2 lines, got: {val:?}"
+        );
+        let size = sz.expect("p2c6 font size");
+        assert!(size >= 7.5, "font size below floor: {size}");
+        let loaded = super::bundle("2000-ot-2018").unwrap();
+        let sheet = super::SheetType::of(loaded.css);
+        let (_, _, w, h) = super::cell_box_pt(loaded.html, "p2c6").unwrap();
+        assert!(
+            2.0 * size * 1.04 <= (h - 1.5) + 1e-6,
+            "2000OT p2c6 two lines exceed inner height {:.2}pt",
+            h - 1.5
+        );
+        let letter = sheet.letter_for("fi");
+        for line in &lines {
+            assert!(
+                sheet.width(letter, line, size) <= w - 3.0,
+                "2000OT p2c6 line exceeds inner width {:.2}pt: {line:?}",
+                w - 3.0
             );
         }
     }

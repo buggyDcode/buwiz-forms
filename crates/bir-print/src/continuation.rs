@@ -2093,21 +2093,95 @@ fn slug_to_form_code(slug: &str) -> String {
 }
 
 fn extract_tin(fields: &BTreeMap<String, String>) -> String {
-    if let Some(d) = fields.get("derived:tin").filter(|v| !v.trim().is_empty()) {
-        return format_tin_digits(d);
+    let br = first_matching_field_ci(
+        fields,
+        &[
+            "txtBranchCode",
+            "branchCode",
+            "branchCode_1",
+            "txtTIN4",
+            "txtPg1TIN4",
+            "txtBranch",
+            "txtPg1I4BranchCode",
+            "txtPg1Pt1I6BranchCode",
+            "txtPg1Pt1I6TINC4",
+            "BranchMaskP1",
+            "txtI5BranchCode",
+            "txtBranchCode1",
+        ],
+    )
+    .unwrap_or_default();
+
+    let mut nine_digit_fallback: Option<String> = None;
+    for derived_key in [
+        "derived:tin",
+        "derived:tin_digits",
+        "derived:tp_tin",
+        "derived:seller_tin",
+        "derived:buyer_tin",
+    ] {
+        if let Some(d) = fields.get(derived_key).filter(|v| !v.trim().is_empty()) {
+            let digits: String = d.chars().filter(char::is_ascii_digit).collect();
+            if digits.len() >= 12 {
+                return format_tin_digits(&digits);
+            }
+            if digits.len() == 9 {
+                let base = format!("{}-{}-{}", &digits[0..3], &digits[3..6], &digits[6..9]);
+                if !br.is_empty() {
+                    return format!("{base}-{br}");
+                }
+                if nine_digit_fallback.is_none() {
+                    nine_digit_fallback = Some(base);
+                }
+            }
+        }
     }
-    let t1 = first_matching_field(fields, &["txtTIN1", "txtTin1"]).unwrap_or_default();
-    let t2 = first_matching_field(fields, &["txtTIN2", "txtTin2"]).unwrap_or_default();
-    let t3 = first_matching_field(fields, &["txtTIN3", "txtTin3"]).unwrap_or_default();
-    let br = first_matching_field(fields, &["txtBranchCode", "txtTIN4", "txtBranch"])
-        .unwrap_or_default();
+    let t1 = first_matching_field_ci(
+        fields,
+        &[
+            "txtTIN1",
+            "txtPg1TIN1",
+            "tinA",
+            "txtPg1I4TIN1",
+            "txtPg1Pt1I6TINC1",
+            "txtPg1I6SellerTIN0",
+            "txtI5TIN1",
+        ],
+    )
+    .unwrap_or_default();
+    let t2 = first_matching_field_ci(
+        fields,
+        &[
+            "txtTIN2",
+            "txtPg1TIN2",
+            "tinB",
+            "txtPg1I4TIN2",
+            "txtPg1Pt1I6TINC2",
+            "txtPg1I6SellerTIN1",
+            "txtI5TIN2",
+        ],
+    )
+    .unwrap_or_default();
+    let t3 = first_matching_field_ci(
+        fields,
+        &[
+            "txtTIN3",
+            "txtPg1TIN3",
+            "tinC",
+            "txtPg1I4TIN3",
+            "txtPg1Pt1I6TINC3",
+            "txtPg1I6SellerTIN2",
+            "txtI5TIN3",
+        ],
+    )
+    .unwrap_or_default();
     if !t1.is_empty() && !t2.is_empty() && !t3.is_empty() {
         if br.is_empty() {
             return format!("{t1}-{t2}-{t3}");
         }
         return format!("{t1}-{t2}-{t3}-{br}");
     }
-    "—".to_string()
+    nine_digit_fallback.unwrap_or_else(|| "—".to_string())
 }
 
 fn first_matching_field_ci(fields: &BTreeMap<String, String>, suffixes: &[&str]) -> Option<String> {
@@ -3535,5 +3609,249 @@ mod tests {
                 "{slug} continuation sheet must not force unscaled min-height that emits a blank trailing page"
             );
         }
+    }
+
+    #[test]
+    fn all_43_forms_additional_sheet_header_extracts_tin() {
+        use bir_core::forms::*;
+        use bir_core::profile::TaxpayerProfile;
+
+        let profile: TaxpayerProfile = serde_json::from_value(serde_json::json!({
+            "id": null,
+            "full_name": "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA",
+            "tin": bir_core::Tin::parse_digits("00012345300000").unwrap(),
+            "rdo_code": "039",
+            "line_of_business": "CONSULTING SERVICES",
+            "registered_address": "UNIT 27F CORPORATE TOWER MAKATI",
+            "zip_code": "1223",
+            "phone": "09171234567",
+            "email": "juana.santos.demo@example.com",
+            "default_form_type": "1701"
+        }))
+        .expect("demo profile");
+
+        let forms: Vec<(&str, BTreeMap<String, String>)> = vec![
+            (
+                "0605-1999",
+                form_0605::Form0605Draft::new_from_profile(&profile, 2025, 1).to_bir_field_map(),
+            ),
+            (
+                "0619e-2018",
+                form_0619e::Form0619EDraft::new_from_profile(&profile, 2025, 1).to_bir_field_map(),
+            ),
+            (
+                "0619f-2018",
+                form_0619f::Form0619FDraft::new_from_profile(&profile, 2025, 1).to_bir_field_map(),
+            ),
+            (
+                "1600-pt-2018",
+                form_1600pt::Form1600PtDraft::new_from_profile(&profile, 2025, 1)
+                    .to_print_field_map(),
+            ),
+            (
+                "1600-vt-2018",
+                form_1600vt::Form1600VtDraft::new_from_profile(&profile, 2025, 1)
+                    .to_print_field_map(),
+            ),
+            (
+                "1600wp-2010",
+                form_1600wp::Form1600WpDraft::new_from_profile(&profile, 2025, 1)
+                    .to_print_field_map(),
+            ),
+            (
+                "1601-fq-2020",
+                form_1601fq::Form1601FqDraft::new_from_profile(&profile, 2025, 1)
+                    .to_print_field_map(),
+            ),
+            (
+                "1601c-2018",
+                form_1601c::Form1601CDraft::new_from_profile(&profile, 2025, 1)
+                    .to_print_field_map(),
+            ),
+            (
+                "1601eq-2019",
+                form_1601eq::Form1601EqDraft::new_from_profile(&profile, 2025, 1)
+                    .to_print_field_map(),
+            ),
+            (
+                "1602q-2019",
+                form_1602q::Form1602QDraft::new_from_profile(&profile, 2025, 1)
+                    .to_print_field_map(),
+            ),
+            (
+                "1603q-2018",
+                form_1603q::Form1603QDraft::new_from_profile(&profile, 2025, 1)
+                    .to_print_field_map(),
+            ),
+            (
+                "1604c-2018",
+                form_1604c::Form1604cDraft::new_from_profile(&profile, 2025).to_print_field_map(),
+            ),
+            (
+                "1604e-2018",
+                form_1604e::Form1604eDraft::new_from_profile(&profile, 2025).to_print_field_map(),
+            ),
+            (
+                "1604f-2018",
+                form_1604f::Form1604fDraft::new_from_profile(&profile, 2025).to_print_field_map(),
+            ),
+            (
+                "1606-2018",
+                form_1606::Form1606Draft::new_from_profile(&profile, 2025, 1).to_print_field_map(),
+            ),
+            (
+                "1700-2018",
+                form_1700::Form1700Draft::new_from_profile(&profile, 2025).to_print_field_map(),
+            ),
+            (
+                "1701-2018",
+                form_1701::Form1701Draft::new_from_profile(&profile, 2025, 1).to_print_field_map(),
+            ),
+            (
+                "1701a-2018",
+                form_1701a::Form1701ADraft::new_from_profile(&profile, 2025).to_print_field_map(),
+            ),
+            (
+                "1701ms-2024",
+                form_1701ms::Form1701MsDraft::new_from_profile(&profile, 2025).to_print_field_map(),
+            ),
+            (
+                "1701q-2018",
+                form_1701q::Form1701QDraft::new_from_profile(&profile, 2025, 1)
+                    .to_print_field_map(),
+            ),
+            (
+                "1702ex-2018",
+                form_1702ex::Form1702ExDraft::new_from_profile(&profile, 2025).to_print_field_map(),
+            ),
+            (
+                "1702mx-2018c",
+                form_1702mx::Form1702MXDraft::new_from_profile(&profile, 2025).to_print_field_map(),
+            ),
+            (
+                "1702q-2018",
+                form_1702q::Form1702qDraft::new_from_profile(&profile, 2025, 1)
+                    .to_print_field_map(),
+            ),
+            (
+                "1702rt-2018c",
+                form_1702rt::Form1702RTDraft::new_from_profile(&profile, 2025, 1)
+                    .to_print_field_map(),
+            ),
+            (
+                "1706-2018",
+                form_1706::Form1706Draft::new_from_profile(&profile, 2025, 1).to_print_field_map(),
+            ),
+            (
+                "1707-2021",
+                form_1707::Form1707Draft::new_from_profile(&profile, 2025, 1).to_print_field_map(),
+            ),
+            (
+                "1707a-2021",
+                form_1707a::Form1707ADraft::new_from_profile(&profile, 2025, 1)
+                    .to_print_field_map(),
+            ),
+            (
+                "1800-2018",
+                form_1800::Form1800Draft::new_from_profile(&profile, 2025, 1).to_print_field_map(),
+            ),
+            (
+                "1801-2018",
+                form_1801::Form1801Draft::new_from_profile(&profile, 2025, 1).to_print_field_map(),
+            ),
+            (
+                "2000-dst-2018",
+                form_2000::Form2000Draft::new_from_profile(&profile, 2025, 1).to_print_field_map(),
+            ),
+            (
+                "2000-ot-2018",
+                form_2000ot::Form2000OTDraft::new_from_profile(&profile, 2025).to_print_field_map(),
+            ),
+            (
+                "2200a-2020",
+                form_2200a::Form2200ADraft::new_from_profile(&profile, 2025, 1)
+                    .to_print_field_map(),
+            ),
+            (
+                "2200an-2018",
+                form_2200an::Form2200ANDraft::new_from_profile(&profile, 2025, 1)
+                    .to_print_field_map(),
+            ),
+            (
+                "2200c-2018",
+                form_2200c::Form2200CDraft::new_from_profile(&profile, 2025).to_print_field_map(),
+            ),
+            (
+                "2200m-2018",
+                form_2200m::Form2200MDraft::new_from_profile(&profile, 2025, 1)
+                    .to_print_field_map(),
+            ),
+            (
+                "2200p-2020",
+                form_2200p::Form2200PDraft::new_from_profile(&profile, 2025, 1)
+                    .to_print_field_map(),
+            ),
+            (
+                "2200s-2018",
+                form_2200s::Form2200SDraft::new_from_profile(&profile, 2025, 1)
+                    .to_print_field_map(),
+            ),
+            (
+                "2200t-2022",
+                form_2200t::Form2200TDraft::new_from_profile(&profile, 2025, 1)
+                    .to_print_field_map(),
+            ),
+            (
+                "2550m-2007",
+                form_2550m::Form2550MDraft::new_from_profile(&profile, 2025, 1).to_bir_field_map(),
+            ),
+            (
+                "2550q-2024",
+                form_2550q::Form2550QDraft::new_from_profile(&profile, 2025, 1)
+                    .to_print_field_map(),
+            ),
+            (
+                "2551q-2018",
+                form_2551q::Form2551QDraft::new_from_profile(&profile, 2025, 1)
+                    .to_print_field_map(),
+            ),
+            (
+                "2552-2018",
+                form_2552::Form2552Draft::new_from_profile(&profile, 2025, 1, 15)
+                    .to_print_field_map(),
+            ),
+            (
+                "2553-1999",
+                form_2553::Form2553Draft::new_from_profile(&profile, 2025, 1).to_print_field_map(),
+            ),
+        ];
+        assert_eq!(forms.len(), 43);
+
+        let truncated = vec![TruncatedEntry {
+            page_number: 1,
+            label: "Address".into(),
+            full_text: "VERY LONG REGISTERED ADDRESS FOR TEST".into(),
+        }];
+        let mut missing = Vec::new();
+        for (slug, fields) in &forms {
+            let tin = extract_tin(fields);
+            let html = continuation_pages_html_with_truncated(
+                slug,
+                fields,
+                &OverflowReport::default(),
+                &truncated,
+                "612pt",
+                "936pt",
+            );
+            if tin != "000-123-453-00000" || !html.contains("TIN:</span> 000-123-453-00000") {
+                missing.push(format!("{slug} (got {tin})"));
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "forms with missing/wrong Additional Sheet TIN ({}/43): {}",
+            missing.len(),
+            missing.join(", ")
+        );
     }
 }
