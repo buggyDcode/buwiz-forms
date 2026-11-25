@@ -1,0 +1,100 @@
+Form 1801 — Saved Draft Data Excerpt (from SQLite form_drafts.data_json)
+Database: check-pm-p1.db (reused identically for 5cab6647 and 92b3e201)
+==============================================================================
+
+### Draft id=1 | form=1801 | tin=00012345300000 | year=2025 | period_key=O11 | status=Draft
+  administrator_branch_code: "00000"
+  administrator_name: "REYES, CARLOS MIGUEL SANTOS"
+  business_interest: {"exclusive": 0.0, "conjugal": 0.0, "total": 0.0}
+  contact_number: "09171234567"
+  created_at: "2026-11-25T13:48:20.412044962+00:00"
+  email: "juana.santos.demo@example.com"
+  estate_after_deductions: {"exclusive": 7950000.0, "conjugal": 4050000.0, "total": 12000000.0}
+  estate_name: "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA"
+  family_home: {"exclusive": 0.0, "conjugal": 0.0, "total": 0.0}
+  filing_year: 2025
+  gross_estate: {"exclusive": 8500000.0, "conjugal": 4200000.0, "total": 12700000.0}
+  id: 1
+  net_estate: 11900000.0
+  net_taxable_estate: 9875000.0
+  number_of_attached_sheets: 2
+  open_ended_key: 11
+  ordinary_deduction: {"exclusive": 550000.0, "conjugal": 150000.0, "total": 700000.0}
+  ordinary_deductions: {"claims_against_estate": {"exclusive": 300000.0, "conjugal": 0.0}, "claims_against_insolvent": {"exclusive": 0.0, "conjugal": 0.0}, "unpaid_mortgages_taxes_losses": {"exclusive": 0.0, "conjugal": 0.0...
+  other_special_deduction: 100000.0
+  other_special_deduction_description: "SPECIAL EXEMPT BEQUESTS"
+  payment: {"cash_bank": "", "cash_number": "", "cash_date": "", "cash_amount": "", "check_bank": "", "check_number": "", "check_date": "", "check_amount": "", "tax_number": "", "tax_date": "", "tax_amount": "",...
+  penalty_model_version: 2
+  personal_property: {"exclusive": 0.0, "conjugal": 0.0, "total": 0.0}
+  profile_baseline: {"/contact_number": "09171234567", "/email": "juana.santos.demo@example.com", "/estate_name": "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA", "/rdo_code": "", "/residence_address": "UNIT 2408 TOWER B RESI...
+  real_properties: [{"title_number": "TCT-2025-001122", "tax_declaration_number": "TD-2025-88441", "location": "MAKATI CITY METRO MANILA", "lot_or_improvement": "", "area": "250.00", "classification": "", "fmv_per_tax_d...
+  real_property: {"exclusive": 8500000.0, "conjugal": 4200000.0, "total": 12700000.0}
+  residence_address: "UNIT 2408 TOWER B RESIDENCIAS DE SAN LORENZO CONDOMINIUM 1258 PASEO DE ROXAS BRGY SAN LORENZO MAKATI CITY METRO MANILA"
+  schedule_totals: {"sched1": {"exclusive": 8500000.0, "conjugal": 4200000.0}, "sched1A": {"exclusive": 0.0, "conjugal": 0.0}, "sched2": {"exclusive": 0.0, "conjugal": 0.0}, "sched2A": {"exclusive": 0.0, "conjugal": 0.0...
+  spouse_share: 2025000.0
+  status: "Draft"
+  taxable_transfer: {"exclusive": 0.0, "conjugal": 0.0, "total": 0.0}
+  tin: "00012345300000"
+  total_special_deductions: 100000.0
+  updated_at: "2026-11-25T13:48:20.412044962+00:00"
+
+### Draft id=3 | form=1801 | tin=00012345300000 | year=2025 | period_key=O10 | status=Draft
+  administrator_name: "REYES, CARLOS MIGUEL SANTOS"
+  business_interest: {"exclusive": 0.0, "conjugal": 0.0, "total": 0.0}
+  contact_number: "09171234567"
+  created_at: "2026-11-25T13:51:16.056416980+00:00"
+  email: "juana.santos.demo@example.com"
+  estate_after_deductions: {"exclusive": 123455789012.34, "conjugal": 0.0, "total": 123455789012.34}
+  estate_name: "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA"
+  family_home: {"exclusive": 0.0, "conjugal": 0.0, "total": 0.0}
+  filing_year: 2025
+  gross_estate: {"exclusive": 123456789012.34, "conjugal": 0.0, "total": 123456789012.34}
+  id: 3
+  net_estate: 123455289012.34
+  net_taxable_estate: 123455289012.34
+  number_of_attached_sheets: 2
+  open_ended_key: 10
+  ordinary_deduction: {"exclusive": 1000000.0, "conjugal": 0.0, "total": 1000000.0}
+  ordinary_deductions: {"claims_against_estate": {"exclusive": 0.0, "conjugal": 0.0}, "claims_against_insolvent": {"exclusive": 0.0, "conjugal": 0.0}, "unpaid_mortgages_taxes_losses": {"exclusive": 0.0, "conjugal": 0.0}, "s...
+  other_special_deduction: 500000.0
+  other_special_deduction_description: "SPECIAL DEDUCTION FOR AGRICULTURAL LAND TRANSFER UNDER RA842"
+  payment: {"cash_bank": "", "cash_number": "", "cash_date": "", "cash_amount": "", "check_bank": "", "check_number": "", "check_date": "", "check_amount": "", "tax_number": "", "tax_date": "", "tax_amount": "",...
+  penalty_model_version: 2
+  personal_property: {"exclusive": 0.0, "conjugal": 0.0, "total": 0.0}
+  profile_baseline: {"/contact_number": "09171234567", "/email": "juana.santos.demo@example.com", "/estate_name": "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA", "/rdo_code": "", "/residence_address": "UNIT 2408 TOWER B RESI...
+  real_properties: [{"title_number": "TCT-2025-999999", "tax_declaration_number": "", "location": "TAGUIG CITY METRO MANILA", "lot_or_improvement": "", "area": "", "classification": "", "fmv_per_tax_declaration": "", "f...
+  real_property: {"exclusive": 123456789012.34, "conjugal": 0.0, "total": 123456789012.34}
+  residence_address: "UNIT 2408 TOWER B RESIDENCIAS DE SAN LORENZO CONDOMINIUM 1258 PASEO DE ROXAS BRGY SAN LORENZO MAKATI CITY METRO MANILA"
+  schedule_totals: {"sched1": {"exclusive": 123456789012.34, "conjugal": 0.0}, "sched1A": {"exclusive": 0.0, "conjugal": 0.0}, "sched2": {"exclusive": 0.0, "conjugal": 0.0}, "sched2A": {"exclusive": 0.0, "conjugal": 0.0...
+  status: "Draft"
+  taxable_transfer: {"exclusive": 0.0, "conjugal": 0.0, "total": 0.0}
+  tin: "00012345300000"
+  total_special_deductions: 500000.0
+  updated_at: "2026-11-25T13:51:16.056416980+00:00"
+
+### Draft id=4 | form=1801 | tin=00012345300000 | year=2025 | period_key=O9 | status=Draft
+  business_interest: {"exclusive": 0.0, "conjugal": 0.0, "total": 0.0}
+  contact_number: "09171234567"
+  created_at: "2026-11-25T13:51:22.443677967+00:00"
+  email: "juana.santos.demo@example.com"
+  estate_after_deductions: {"exclusive": 0.0, "conjugal": 0.0, "total": 0.0}
+  estate_name: "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA"
+  family_home: {"exclusive": 0.0, "conjugal": 0.0, "total": 0.0}
+  filing_year: 2025
+  gross_estate: {"exclusive": 0.0, "conjugal": 0.0, "total": 0.0}
+  id: 4
+  open_ended_key: 9
+  ordinary_deduction: {"exclusive": 0.0, "conjugal": 0.0, "total": 0.0}
+  ordinary_deductions: {"claims_against_estate": {"exclusive": 0.0, "conjugal": 0.0}, "claims_against_insolvent": {"exclusive": 0.0, "conjugal": 0.0}, "unpaid_mortgages_taxes_losses": {"exclusive": 0.0, "conjugal": 0.0}, "s...
+  payment: {"cash_bank": "", "cash_number": "", "cash_date": "", "cash_amount": "", "check_bank": "", "check_number": "", "check_date": "", "check_amount": "", "tax_number": "", "tax_date": "", "tax_amount": "",...
+  penalty_model_version: 2
+  personal_property: {"exclusive": 0.0, "conjugal": 0.0, "total": 0.0}
+  profile_baseline: {"/contact_number": "09171234567", "/email": "juana.santos.demo@example.com", "/estate_name": "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA", "/rdo_code": "", "/residence_address": "UNIT 2408 TOWER B RESI...
+  real_property: {"exclusive": 0.0, "conjugal": 0.0, "total": 0.0}
+  residence_address: "UNIT 2408 TOWER B RESIDENCIAS DE SAN LORENZO CONDOMINIUM 1258 PASEO DE ROXAS BRGY SAN LORENZO MAKATI CITY METRO MANILA"
+  schedule_totals: {"sched1": {"exclusive": 0.0, "conjugal": 0.0}, "sched1A": {"exclusive": 0.0, "conjugal": 0.0}, "sched2": {"exclusive": 0.0, "conjugal": 0.0}, "sched2A": {"exclusive": 0.0, "conjugal": 0.0}, "sched3":...
+  status: "Draft"
+  taxable_transfer: {"exclusive": 0.0, "conjugal": 0.0, "total": 0.0}
+  tin: "00012345300000"
+  updated_at: "2026-11-25T13:51:22.443677967+00:00"
+

@@ -1,0 +1,15 @@
+box	item	html_cells	case	draft_value	before_92b3e201	after_5cab6647	status	rank	notes
+item5_tin	5	p1c13,p1c14,p1c15,p1c17	normal	000-123-453-00000	blank	000-123-453 (branch preprinted 00000)	pass_with_caveat	1	p1c13..15 filled cleanly; branchCode_1/p1c17 still in not_joined so non-00000 branch codes do not print
+item16_taxable_estate	16	p1c56,p1c57	normal	9875000.00	blank	9875000 . 00	pass	-	right box, inside comb, readable
+item16_taxable_estate	16	p1c56,p1c57	hard-long	123455289012.34	blank	blank	FAIL	1	12-digit peso > 11 comb slots -> frozen_html.rs:2707 skips cell (value held, prints blank; breaks RULES 2)
+item16_taxable_estate	16	p1c56,p1c57	hard-empty	0.00	blank	0 . 00	caveat	4	prints 0.00 matching other Part II rows on main (form emits 0.00 in draft)
+item24_total_payable	24	p1c112,p1c114	normal	592500.00	blank	592500 . 00	pass	-	right box, inside comb, readable
+item24_total_payable	24	p1c112,p1c114	hard-long	7407317340.74	blank	7407317340 . 74	pass	-	10-digit peso fits 11-slot comb (12-digit payable would hit same frozen_html.rs:2707 blank)
+item24_total_payable	24	p1c112,p1c114	hard-empty	0.00	blank	0 . 00	caveat	4	prints 0.00 matching other Part II rows on main
+item37c_specify	37C	p2c259	normal	SPECIAL EXEMPT BEQUESTS	blank	SPECIAL EXEMPT BEQUESTS	pass	-	right box, 8.03pt (.fh16), readable
+item37c_specify	37C	p2c259	hard-long	SPECIAL DEDUCTION FOR AGRICULTURAL LAND TRANSFER UNDER RA842	blank	SPECIAL DEDUCTION FOR AGRICULTURAL LAND TRANSFER UNDER RA842	pass	-	60 chars fits on 1 line at 8.03pt inside box
+item37c_specify	37C	p2c259	hard-empty	""	blank	blank	pass	-	stays blank when empty
+sched5_specify	Sched 5	p2c261	normal	FUNERAL AND JUDICIAL ADMIN EXPENSES	blank	FUNERAL AND JUDICIAL ADMIN EXPENSES	FAIL	3	renders at 5.83pt (.fh4, cell height 6.67pt) below RULES 3 7.5pt floor; tops touch upper border
+sched5_specify	Sched 5	p2c261	hard-long	JUDICIAL ADMINISTRATION FEES AND CERTIFIED ESTATE LITIGATION	blank	JUDICIAL ADMINISTRATION FEES AND CERTIFIED ESTATE LITIGATION	FAIL	3	60 chars fits horizontally but at 5.83pt (<7.5pt floor) with tight upper border
+sched5_specify	Sched 5	p2c261	hard-empty	""	blank	blank	pass	-	stays blank when empty
+other_boxes	all	all_other	all	unchanged	identical	identical	pass	-	0 unintended boxes changed across p1 and p2; preview matches saved PDF

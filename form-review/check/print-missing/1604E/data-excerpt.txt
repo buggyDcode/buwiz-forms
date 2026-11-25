@@ -1,0 +1,52 @@
+# Saved-draft data excerpt for BIR Form 1604E
+# DB: check-pm-p2.db (fresh scratch DB, demo taxpayer 00012345300000, invented values)
+
+## Case: normal (tin=00012345300000, year=2025, period=12)
+  open/fill note: wave 0 refused={'frm1604e:txtYear': '`frm1604e:txtYear` picks which return this is; reopen the form for another TIN or period'}
+  SQLite form_drafts.id=9 form_code=1604E tin=00012345300000 taxable_year=2025 period_key=A
+  draft.tin = "00012345300000"
+  draft.taxable_year = 2025
+  draft.taxpayer_name = "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA"
+  draft.number_of_attached_sheets = 0
+  Reopened form.fields (claimed keys):
+    frm1604e:txtYear = '2025'
+
+## Case: year-2030 (tin=00012345300000, year=2030, period=12)
+  open/fill note: wave 0 refused={'frm1604e:txtYear': '`frm1604e:txtYear` picks which return this is; reopen the form for another TIN or period'}
+  SQLite form_drafts.id=10 form_code=1604E tin=00012345300000 taxable_year=2030 period_key=A
+  draft.tin = "00012345300000"
+  draft.taxable_year = 2030
+  draft.taxpayer_name = "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA"
+  draft.number_of_attached_sheets = 0
+  Reopened form.fields (claimed keys):
+    frm1604e:txtYear = '2030'
+
+## Case: year-2009 (tin=00012345300000, year=2009, period=12)
+  open/fill note: wave 0 refused={'frm1604e:txtYear': '`frm1604e:txtYear` picks which return this is; reopen the form for another TIN or period'}
+  SQLite form_drafts.id=11 form_code=1604E tin=00012345300000 taxable_year=2009 period_key=A
+  draft.tin = "00012345300000"
+  draft.taxable_year = 2009
+  draft.taxpayer_name = "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA"
+  draft.number_of_attached_sheets = 0
+  Reopened form.fields (claimed keys):
+    frm1604e:txtYear = '2009'
+
+## Case: year-1999 (tin=00012345300000, year=1999, period=12)
+  open/fill note: wave 0 refused={'frm1604e:txtYear': '`frm1604e:txtYear` picks which return this is; reopen the form for another TIN or period'}
+  SQLite form_drafts.id=12 form_code=1604E tin=00012345300000 taxable_year=1999 period_key=A
+  draft.tin = "00012345300000"
+  draft.taxable_year = 1999
+  draft.taxpayer_name = "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA"
+  draft.number_of_attached_sheets = 0
+  Reopened form.fields (claimed keys):
+    frm1604e:txtYear = '1999'
+
+## Case: hard-empty (tin=00012345300000, year=2022, period=12)
+  open/fill note: wave 0 refused={'frm1604e:txtYear': '`frm1604e:txtYear` picks which return this is; reopen the form for another TIN or period'}
+  SQLite form_drafts.id=13 form_code=1604E tin=00012345300000 taxable_year=2022 period_key=A
+  draft.tin = "00012345300000"
+  draft.taxable_year = 2022
+  draft.taxpayer_name = "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA"
+  draft.number_of_attached_sheets = 0
+  Reopened form.fields (claimed keys):
+    frm1604e:txtYear = '2022'

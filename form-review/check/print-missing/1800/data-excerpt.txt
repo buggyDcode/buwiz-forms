@@ -1,0 +1,86 @@
+Form 1800 — Saved Draft Data Excerpt (from SQLite form_drafts.data_json)
+Database: check-pm-p1.db (reused identically for 5cab6647 and 92b3e201)
+==============================================================================
+
+### Draft id=2 | form=1800 | tin=00012345300000 | year=2025 | period_key=O11 | status=Draft
+  contact_number: "09171234567"
+  created_at: "2026-11-25T13:49:27.390178126+00:00"
+  donees: [{"name": "DELA CRUZ, MARCO ANTONIO SANTOS", "tin": "12345678900000"}, {"name": "VILLANUEVA, ELENA MARIE REYES", "tin": "98765432100000"}]
+  donor_name: "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA"
+  email: "juana.santos.demo@example.com"
+  filing_year: 2025
+  id: 2
+  net_gifts_subject_to_tax: 3600000.5
+  net_gifts_this_return: 3850000.5
+  number_of_attached_sheets: 1
+  open_ended_key: 11
+  penalty_model_version: 2
+  personal_properties: [{"particulars": "CASH GIFT BANK TRANSFER", "fair_market_value": 1500000.0}]
+  profile_baseline: {"/contact_number": "09171234567", "/donor_name": "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA", "/email": "juana.santos.demo@example.com", "/line_of_business": "", "/rdo_code": "", "/registered_address"...
+  real_properties: [{"title_number": "TCT-2025-445566", "tax_declaration_number": "TD-2025-77889", "location": "MAKATI CITY METRO MANILA", "lot_or_improvement": "", "classification": "RESIDENTIAL", "area": "180.00", "fm...
+  registered_address: "UNIT 2408 TOWER B RESIDENCIAS DE SAN LORENZO CONDOMINIUM 1258 PASEO DE ROXAS BRGY SAN LORENZO MAKATI CITY METRO MANILA"
+  residence_address: "UNIT 2408 TOWER B RESIDENCIAS DE SAN LORENZO CONDOMINIUM 1258 PASEO DE ROXAS BRGY SAN LORENZO MAKATI CITY METRO MANILA"
+  residence_zip_code: "1223"
+  status: "Draft"
+  tax_due: 216000.03
+  tax_payable: 216000.03
+  tin: "00012345300000"
+  total_amount_payable: 216000.03
+  total_gifts: 3850000.5
+  total_net_gifts: 3850000.5
+  total_personal: 1500000.0
+  total_real: 2350000.5
+  updated_at: "2026-11-25T13:49:27.390178126+00:00"
+  zip_code: "1223"
+
+### Draft id=5 | form=1800 | tin=00012345300000 | year=2025 | period_key=O10 | status=Draft
+  contact_number: "09171234567"
+  created_at: "2026-11-25T13:51:35.895450382+00:00"
+  donees: [{"name": "DELA CRUZ, MARCO ANTONIO SANTOS", "tin": "12345678900000"}]
+  donor_name: "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA"
+  email: "juana.santos.demo@example.com"
+  filing_year: 2025
+  id: 5
+  net_gifts_subject_to_tax: 123456539012.34
+  net_gifts_this_return: 123456789012.34
+  open_ended_key: 10
+  penalty_model_version: 2
+  personal_properties: [{"particulars": "LARGE PORTFOLIO SHARE TRANSFER", "fair_market_value": 123456789012.34}]
+  profile_baseline: {"/contact_number": "09171234567", "/donor_name": "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA", "/email": "juana.santos.demo@example.com", "/line_of_business": "", "/rdo_code": "", "/registered_address"...
+  registered_address: "UNIT 2408 TOWER B RESIDENCIAS DE SAN LORENZO CONDOMINIUM 1258 PASEO DE ROXAS BRGY SAN LORENZO MAKATI CITY METRO MANILA"
+  residence_address: "UNIT 2408 TOWER B RESIDENCIAS DE SAN LORENZO CONDOMINIUM 1258 PASEO DE ROXAS BRGY SAN LORENZO MAKATI CITY METRO MANILA"
+  residence_zip_code: "1223"
+  status: "Draft"
+  tax_due: 7407392340.74
+  tax_payable: 7407392340.74
+  tin: "00012345300000"
+  total_amount_payable: 7407392340.74
+  total_gifts: 123456789012.34
+  total_net_gifts: 123456789012.34
+  total_personal: 123456789012.34
+  updated_at: "2026-11-25T13:51:35.895450382+00:00"
+  zip_code: "1223"
+
+### Draft id=6 | form=1800 | tin=00012345300000 | year=2025 | period_key=O9 | status=Draft
+  contact_number: "09171234567"
+  created_at: "2026-11-25T13:51:41.998133761+00:00"
+  donees: [{"name": "DELA CRUZ, MARCO ANTONIO SANTOS", "tin": ""}]
+  donor_name: "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA"
+  email: "juana.santos.demo@example.com"
+  filing_year: 2025
+  id: 6
+  net_gifts_subject_to_tax: -250000.0
+  open_ended_key: 9
+  penalty_model_version: 2
+  profile_baseline: {"/contact_number": "09171234567", "/donor_name": "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA", "/email": "juana.santos.demo@example.com", "/line_of_business": "", "/rdo_code": "", "/registered_address"...
+  registered_address: "UNIT 2408 TOWER B RESIDENCIAS DE SAN LORENZO CONDOMINIUM 1258 PASEO DE ROXAS BRGY SAN LORENZO MAKATI CITY METRO MANILA"
+  residence_address: "UNIT 2408 TOWER B RESIDENCIAS DE SAN LORENZO CONDOMINIUM 1258 PASEO DE ROXAS BRGY SAN LORENZO MAKATI CITY METRO MANILA"
+  residence_zip_code: "1223"
+  status: "Draft"
+  tax_due: -15000.0
+  tax_payable: -15000.0
+  tin: "00012345300000"
+  total_amount_payable: -15000.0
+  updated_at: "2026-11-25T13:51:41.998133761+00:00"
+  zip_code: "1223"
+

@@ -1,0 +1,7 @@
+box	item	html_cells	case	draft_value	before_92b3e201	after_5cab6647	status	rank	notes
+item1_year	1	p1c4	normal	2025	2025 overprinting preprinted 20	2 0 2 5	pass	-	right box, centered in last 2 comb slots after preprinted 20
+item1_year	1	p1c4	year-2030	2030	2030 overprinting preprinted 20	2 0 3 0	pass	-	prints 30 after preprinted 20
+item1_year	1	p1c4	year-2009	2009	2009 overprinting preprinted 20	2 0 0 9	pass	-	zero-padded 09 prints after preprinted 20
+item1_year	1	p1c4	year-1999	1999	1999 overprinting preprinted 20	2 0 9 9	FAIL	4	app allows opening/saving/printing 1999; form_1604e.rs:397 computes 1999 % 100 = 99 -> prints 2099 (wrong century)
+item1_year	1	p1c4	hard-empty	2022	2022 overprinting preprinted 20	2 0 2 2	pass	-	UI refuses clearing txtYear ("picks which return this is"); fiscal year not supported on 1604E
+other_boxes	all	all_other	all	unchanged	identical	identical	pass	-	0 unintended boxes changed across pages 1-2; preview matches saved PDF

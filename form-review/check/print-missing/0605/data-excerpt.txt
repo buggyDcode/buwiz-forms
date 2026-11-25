@@ -1,0 +1,9 @@
+# Saved-draft data excerpt for BIR Form 0605
+# DB: check-pm-p2.db (fresh scratch DB, demo taxpayer 00012345300000, invented values)
+
+## Case: normal (tin=00012345300000, year=2025, period=12)
+  SQLite form_drafts.id=16 form_code=0605 tin=00012345300000 taxable_year=2025 period_key=O12
+  draft.tin = "00012345300000"
+  draft.taxable_year = 2025
+  draft.taxpayer_name = "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA"
+  Reopened form.fields (claimed keys):

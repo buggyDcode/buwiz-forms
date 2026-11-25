@@ -1,0 +1,5 @@
+box	item	html_cells	case	draft_value	before_92b3e201	after_5cab6647	status	rank	notes
+item14_total_net_gifts	14	p1c62,p1c64	normal	3600000.50	blank	3600000 . 50	pass_with_caveat	4	right box, readable; p1c64 centavo '0' sits on vertical tick because p1c64 is data-field-kind=text not a centered 2-slot comb
+item14_total_net_gifts	14	p1c62,p1c64	hard-long	123456539012.34	blank	blank	FAIL	1	12-digit peso > 10 comb slots -> frozen_html.rs:2707 skips cell (value held, prints blank; breaks RULES 2)
+item14_total_net_gifts	14	p1c62,p1c64	hard-empty	-250000.00	blank	-250000 . 00	caveat	4	0-gift return computes -250000.00 after 250k exemption and prints -250000.00 in item 14
+other_boxes	all	all_other	all	unchanged	identical	identical	pass	-	0 unintended boxes changed across p1 and p2; preview matches saved PDF

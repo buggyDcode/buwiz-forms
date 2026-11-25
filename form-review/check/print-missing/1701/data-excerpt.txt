@@ -1,0 +1,65 @@
+# Saved-draft data excerpt for BIR Form 1701
+# DB: check-pm-p2.db (fresh scratch DB, demo taxpayer 00012345300000, invented values)
+
+## Case: normal (tin=00012345300000, year=2025, period=12)
+  SQLite form_drafts.id=1 form_code=1701 tin=00012345300000 taxable_year=2025 period_key=A
+  draft.tin = "00012345300000"
+  draft.taxable_year = 2025
+  draft.employers = [{"owner": "Taxpayer", "employer_name": "ACME PACIFIC LOGISTICS AND TRADING CORP", "employer_tin": "12345678900001", "compensation_income": 850000.0, "tax_withheld": 95000.0}, {"owner": "Spouse", "employer_name": "METRO MANILA DIAGNOSTIC SYSTEMS INC", "employer_tin": "98765432100002", "compensation_income": 620000.0, "tax_withheld": 54000.0}]
+  draft.spouse = {"enabled": true, "tin": "", "rdo_code": "", "filer_type": "Professional", "atc": "Ii013", "name": "SANTOS, MARCO ANTONIO REYES", "contact_number": "", "citizenship": "", "claims_foreign_tax_credits": false, "foreign_tax_number": "", "has_exempt_income": false, "has_special_rate_income": false, "tax_rate": "Graduated", "deduction_method": "Itemized"}
+  draft.taxpayer_name = "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA"
+  Reopened form.fields (claimed keys):
+    frm1701:chkPg2IShed1a_1Taxpayer = 'true'
+    frm1701:txtPg2IShed1a_1TPName = 'ACME PACIFIC LOGISTICS AND TRADING CORP'
+    frm1701:txtPg2IShed1a_TIN1 = <not in form.fields>
+    frm1701:txtPg2IShed1a_TIN2 = <not in form.fields>
+    frm1701:txtPg2IShed1a_TIN3 = <not in form.fields>
+    frm1701:txtPg2IShed1a_BranchCode = <not in form.fields>
+    frm1701:chkPg2IShed2a_2Spouse = 'true'
+    frm1701:txtPg2IShed2a_2SName = 'METRO MANILA DIAGNOSTIC SYSTEMS INC'
+    frm1701:txtPg2IShed2a_TIN1 = <not in form.fields>
+    frm1701:txtPg2IShed2a_TIN2 = <not in form.fields>
+    frm1701:txtPg2IShed2a_TIN3 = <not in form.fields>
+    frm1701:txtPg2IShed2a_BranchCode = <not in form.fields>
+
+## Case: hard-long (tin=00012345300000, year=2024, period=12)
+  SQLite form_drafts.id=2 form_code=1701 tin=00012345300000 taxable_year=2024 period_key=A
+  draft.tin = "00012345300000"
+  draft.taxable_year = 2024
+  draft.employers = [{"owner": "Taxpayer", "employer_name": "PHILIPPINE NATIONAL INFRASTRUCTURE AND TELECOMMUNICATIONS CORPORATION XY", "employer_tin": "23456789000123", "compensation_income": 1250000.0, "tax_withheld": 180000.0}, {"owner": "Spouse", "employer_name": "METROPOLITAN COMMERCIAL BANKING AND INDUSTRIAL DEVELOPMENT HOLDINGS CORP", "employer_tin": "87654321000456", "compensation_income": 980000.0, "tax_withheld": 120000.0}]
+  draft.spouse = {"enabled": true, "tin": "", "rdo_code": "", "filer_type": "Professional", "atc": "Ii013", "name": "SANTOS, MARCO ANTONIO REYES", "contact_number": "", "citizenship": "", "claims_foreign_tax_credits": false, "foreign_tax_number": "", "has_exempt_income": false, "has_special_rate_income": false, "tax_rate": "Graduated", "deduction_method": "Itemized"}
+  draft.taxpayer_name = "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA"
+  Reopened form.fields (claimed keys):
+    frm1701:chkPg2IShed1a_1Taxpayer = 'true'
+    frm1701:txtPg2IShed1a_1TPName = 'PHILIPPINE NATIONAL INFRASTRUCTURE AND TELECOMMUNICATIONS CORPORATION XY'
+    frm1701:txtPg2IShed1a_TIN1 = <not in form.fields>
+    frm1701:txtPg2IShed1a_TIN2 = <not in form.fields>
+    frm1701:txtPg2IShed1a_TIN3 = <not in form.fields>
+    frm1701:txtPg2IShed1a_BranchCode = <not in form.fields>
+    frm1701:chkPg2IShed2a_2Spouse = 'true'
+    frm1701:txtPg2IShed2a_2SName = 'METROPOLITAN COMMERCIAL BANKING AND INDUSTRIAL DEVELOPMENT HOLDINGS CORP'
+    frm1701:txtPg2IShed2a_TIN1 = <not in form.fields>
+    frm1701:txtPg2IShed2a_TIN2 = <not in form.fields>
+    frm1701:txtPg2IShed2a_TIN3 = <not in form.fields>
+    frm1701:txtPg2IShed2a_BranchCode = <not in form.fields>
+
+## Case: hard-empty (tin=00012345300000, year=2023, period=12)
+  SQLite form_drafts.id=3 form_code=1701 tin=00012345300000 taxable_year=2023 period_key=A
+  draft.tin = "00012345300000"
+  draft.taxable_year = 2023
+  draft.employers = [{"owner": null, "employer_name": "", "employer_tin": "", "compensation_income": 0.0, "tax_withheld": 0.0}, {"owner": null, "employer_name": "", "employer_tin": "", "compensation_income": 0.0, "tax_withheld": 0.0}]
+  draft.spouse = {"enabled": true, "tin": "", "rdo_code": "", "filer_type": "Professional", "atc": "Ii013", "name": "SANTOS, MARCO ANTONIO REYES", "contact_number": "", "citizenship": "", "claims_foreign_tax_credits": false, "foreign_tax_number": "", "has_exempt_income": false, "has_special_rate_income": false, "tax_rate": "Graduated", "deduction_method": "Itemized"}
+  draft.taxpayer_name = "SANTOS, JUANA MARIE DELA CRUZ-VILLANUEVA"
+  Reopened form.fields (claimed keys):
+    frm1701:chkPg2IShed1a_1Taxpayer = 'false'
+    frm1701:txtPg2IShed1a_1TPName = ''
+    frm1701:txtPg2IShed1a_TIN1 = <not in form.fields>
+    frm1701:txtPg2IShed1a_TIN2 = <not in form.fields>
+    frm1701:txtPg2IShed1a_TIN3 = <not in form.fields>
+    frm1701:txtPg2IShed1a_BranchCode = <not in form.fields>
+    frm1701:chkPg2IShed2a_2Spouse = 'false'
+    frm1701:txtPg2IShed2a_2SName = ''
+    frm1701:txtPg2IShed2a_TIN1 = <not in form.fields>
+    frm1701:txtPg2IShed2a_TIN2 = <not in form.fields>
+    frm1701:txtPg2IShed2a_TIN3 = <not in form.fields>
+    frm1701:txtPg2IShed2a_BranchCode = <not in form.fields>

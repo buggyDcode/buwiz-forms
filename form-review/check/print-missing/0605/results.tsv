@@ -1,0 +1,2 @@
+box	item	html_cells	case	draft_value	before_92b3e201	after_5cab6647	status	rank	notes
+all_boxes	all	all	normal	demo_return	identical	identical	pass	-	printed sheet HTML is byte-identical between 92b3e201 and 5cab6647 (0 changed cells across 1 page)
