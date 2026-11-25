@@ -396,3 +396,85 @@ fn form_1702mx_prints_part_ii_and_schedule_1_details() {
     assert_eq!(printed_cell(&doc, "p2c71").0, "234567890");
     assert_eq!(printed_cell(&doc, "p2c72").0, "345678901");
 }
+
+#[test]
+fn form_2200a_part_iv_never_truncates_or_drops_negative_sign() {
+    let profile = demo_profile();
+
+    // 1. Fitting case unchanged byte for byte
+    let mut fit = Form2200ADraft::new_from_profile(&profile, 2026, 1);
+    fit.payment.cash_bank = "BDO".into();
+    fit.payment.cash_number = "123456".into();
+    fit.payment.cash_date = "01/15/2026".into();
+    fit.payment.cash_amount = "500.00".into();
+    // 2. 0.05 (leading zero peso + centavos)
+    fit.payment.check_bank = "BPI".into();
+    fit.payment.check_number = "654321".into();
+    fit.payment.check_date = "01/16/2026".into();
+    fit.payment.check_amount = "0.05".into();
+    // 3. 12-digit amount with centavos (1 over 11-slot peso comb)
+    fit.payment.tax_number = "TDM001".into();
+    fit.payment.tax_date = "01/17/2026".into();
+    fit.payment.tax_amount = "123,456,789,012.34".into();
+    // 4. 13-digit amount (2 over 11-slot peso comb)
+    fit.payment.others_bank = "LBP".into();
+    fit.payment.others_number = "OTH001".into();
+    fit.payment.others_date = "01/18/2026".into();
+    fit.payment.others_amount = "1,234,567,890,123.45".into();
+    let map = fit.to_print_field_map();
+    let doc = filled_document("2200a-2020", &map).expect("2200a-2020 render");
+
+    assert_eq!(
+        printed_cell(&doc, "p1c108").0,
+        "BDO  12345601152026        50000",
+        "fitting cash row must remain byte-for-byte unchanged"
+    );
+    assert_eq!(
+        printed_cell(&doc, "p1c110").0,
+        "BPI  65432101162026          005",
+        "0.05 must print 0 in peso units and 05 in centavos"
+    );
+    assert_eq!(
+        printed_cell(&doc, "p1c111").0,
+        "TDM00101172026             ",
+        "12-digit amount must not be truncated to 11 digits"
+    );
+    assert_eq!(
+        printed_cell(&doc, "p1c114").0,
+        "LBP  OTH00101182026             ",
+        "13-digit amount must not be truncated to 11 digits"
+    );
+
+    // 5. Negative amount, 6. Bank 1 char over 5, 7. Number 1 char over 6
+    let mut edges = Form2200ADraft::new_from_profile(&profile, 2026, 1);
+    edges.payment.cash_bank = "BDO".into();
+    edges.payment.cash_number = "123456".into();
+    edges.payment.cash_date = "01/15/2026".into();
+    edges.payment.cash_amount = "-500.00".into();
+    edges.payment.check_bank = "BDO-QC".into(); // 6 chars (1 over 5)
+    edges.payment.check_number = "654321".into();
+    edges.payment.check_date = "01/16/2026".into();
+    edges.payment.check_amount = "250.00".into();
+    edges.payment.others_bank = "LBP".into();
+    edges.payment.others_number = "1234567".into(); // 7 chars (1 over 6)
+    edges.payment.others_date = "01/18/2026".into();
+    edges.payment.others_amount = "750.00".into();
+    let map2 = edges.to_print_field_map();
+    let doc2 = filled_document("2200a-2020", &map2).expect("2200a-2020 edge render");
+
+    assert_eq!(
+        printed_cell(&doc2, "p1c108").0,
+        "BDO  12345601152026             ",
+        "negative amount must never print as positive"
+    );
+    assert_eq!(
+        printed_cell(&doc2, "p1c110").0,
+        "     65432101162026        25000",
+        "6-char bank must not be cut to 5 chars"
+    );
+    assert_eq!(
+        printed_cell(&doc2, "p1c114").0,
+        "LBP        01182026        75000",
+        "7-char number must not be cut to 6 chars"
+    );
+}

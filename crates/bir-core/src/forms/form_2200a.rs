@@ -727,26 +727,21 @@ fn cents(value: f64) -> f64 {
 }
 
 /// Shape one Part IV payment row into its shared sheet comb (`data-slot-index`
+/// Packs one Part IV payment row into the sheet's single comb cell (the cell
 /// skips the grey decimal-point slot, so the comb has 32 or 27 `<input>`s):
 /// - with `bank`: 32 inputs = 5 bank + 6 number + 8 date (`MMDDYYYY`) + 11 pesos (right-aligned) + 2 cents
 /// - without `bank` (Item 27 Tax Debit Memo): 27 inputs = 6 number + 8 date + 11 pesos + 2 cents.
+///
+/// Any part that does not fit its column width (bank > 5 chars, number > 6 chars,
+/// date > 8 digits, amount > 11 peso digits, > 2 non-zero centavo digits, or negative)
+/// is left blank rather than silently truncated or stripped of its sign.
+/// Follow-up after PR #355 merges: route non-fitting Part IV parts through PR #355's
+/// plain-rectangle / additional-sheet overflow path.
 fn part4_payment_comb_line(bank: Option<&str>, number: &str, date: &str, amount: &str) -> String {
     let bank_text = bank.map(str::trim).unwrap_or("");
     let num_text = number.trim();
-    let date_digits: String = date
-        .chars()
-        .filter(|c| c.is_ascii_digit())
-        .take(8)
-        .collect();
-    let amt_clean: String = amount
-        .trim()
-        .chars()
-        .filter(|c| c.is_ascii_digit() || *c == '.')
-        .collect();
-    if bank_text.is_empty() && num_text.is_empty() && date_digits.is_empty() && amt_clean.is_empty()
-    {
-        return String::new();
-    }
+    let date_digits: String = date.chars().filter(|c| c.is_ascii_digit()).collect();
+    let amt_trim = amount.trim();
 
     let (slots, num_off, date_off, peso_off) = if bank.is_some() {
         (32usize, 5usize, 11usize, 19usize)
@@ -754,45 +749,63 @@ fn part4_payment_comb_line(bank: Option<&str>, number: &str, date: &str, amount:
         (27usize, 0usize, 6usize, 14usize)
     };
     let mut line = vec![' '; slots];
-    let put_left = |buf: &mut [char], start: usize, width: usize, text: &str| {
-        for (i, ch) in text.chars().take(width).enumerate() {
+    let mut wrote_any = false;
+
+    let put_if_fits = |buf: &mut [char], start: usize, width: usize, text: &str| -> bool {
+        let chars: Vec<char> = text.chars().collect();
+        if chars.is_empty() || chars.len() > width {
+            return false;
+        }
+        for (i, ch) in chars.into_iter().enumerate() {
             buf[start + i] = ch;
         }
+        true
     };
+
     if bank.is_some() {
-        put_left(&mut line, 0, 5, bank_text);
+        wrote_any |= put_if_fits(&mut line, 0, 5, bank_text);
     }
-    put_left(&mut line, num_off, 6, num_text);
-    put_left(&mut line, date_off, 8, &date_digits);
+    wrote_any |= put_if_fits(&mut line, num_off, 6, num_text);
+    wrote_any |= put_if_fits(&mut line, date_off, 8, &date_digits);
 
-    if !amt_clean.is_empty() {
-        let (whole_raw, frac_raw) = amt_clean.split_once('.').unwrap_or((&amt_clean, ""));
-        let whole_digits: String = whole_raw.chars().filter(|c| c.is_ascii_digit()).collect();
-        let whole_trimmed = whole_digits.trim_start_matches('0');
-        let whole = if whole_trimmed.is_empty() {
-            "0"
-        } else {
-            whole_trimmed
-        };
-        let whole_chars: Vec<char> = whole.chars().collect();
-        let take = whole_chars.len().min(11);
-        let src_start = whole_chars.len() - take;
-        let dst_start = peso_off + (11 - take);
-        for (i, ch) in whole_chars[src_start..].iter().enumerate() {
-            line[dst_start + i] = *ch;
-        }
-        let mut frac_chars: Vec<char> = frac_raw
+    if !amt_trim.is_empty() && !amt_trim.starts_with('-') && !amt_trim.starts_with('(') {
+        let amt_clean: String = amt_trim
             .chars()
-            .filter(|c| c.is_ascii_digit())
-            .take(2)
+            .filter(|c| *c != ',' && *c != ' ')
             .collect();
-        while frac_chars.len() < 2 {
-            frac_chars.push('0');
+        let valid_chars = amt_clean.chars().all(|c| c.is_ascii_digit() || c == '.');
+        let dot_count = amt_clean.chars().filter(|c| *c == '.').count();
+        if valid_chars && dot_count <= 1 {
+            let (whole_raw, frac_raw) = amt_clean.split_once('.').unwrap_or((&amt_clean, ""));
+            if !whole_raw.is_empty() || !frac_raw.is_empty() {
+                let whole_trimmed = whole_raw.trim_start_matches('0');
+                let whole = if whole_trimmed.is_empty() {
+                    "0"
+                } else {
+                    whole_trimmed
+                };
+                let frac_fits = frac_raw.len() <= 2 || frac_raw[2..].chars().all(|c| c == '0');
+                if whole.len() <= 11 && frac_fits {
+                    let whole_chars: Vec<char> = whole.chars().collect();
+                    let dst_start = peso_off + (11 - whole_chars.len());
+                    for (i, ch) in whole_chars.into_iter().enumerate() {
+                        line[dst_start + i] = ch;
+                    }
+                    let mut frac_chars: Vec<char> = frac_raw.chars().take(2).collect();
+                    while frac_chars.len() < 2 {
+                        frac_chars.push('0');
+                    }
+                    line[peso_off + 11] = frac_chars[0];
+                    line[peso_off + 12] = frac_chars[1];
+                    wrote_any = true;
+                }
+            }
         }
-        line[peso_off + 11] = frac_chars[0];
-        line[peso_off + 12] = frac_chars[1];
     }
 
+    if !wrote_any {
+        return String::new();
+    }
     line.into_iter().collect()
 }
 
