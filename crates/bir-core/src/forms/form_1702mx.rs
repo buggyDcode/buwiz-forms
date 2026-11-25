@@ -400,6 +400,14 @@ impl Form1702MXDraft {
     ///   Ended (MM/20YY) over its four digit boxes.
     pub fn to_print_field_map(&self) -> BTreeMap<String, String> {
         let mut fields = self.to_bir_field_map();
+        // Overlay Schedule 6 official amounts, totals, and Item 4 "(Add more...)"
+        // modal rows (`txtPg6Sc6_{n}Col1..6`) so both the printed schedule and
+        // its continuation sheet receive every saved row and total.
+        for (key, value) in self.to_official_field_map() {
+            if key.contains("Sc6") {
+                fields.insert(key, value);
+            }
+        }
         let tin_digits = super::print_map::digits_of(
             &fields,
             &[
@@ -409,6 +417,9 @@ impl Form1702MXDraft {
             ],
         );
         fields.insert("derived:tin_digits".to_string(), tin_digits);
+        if !self.tin.trim().is_empty() {
+            fields.insert("derived:tin".to_string(), self.tin.trim().to_string());
+        }
         // Item 9's first line prints the registered address the return
         // files there (the official map's `txtPg1Pt1I10RegisteredAddress`),
         // not the first entry of the line list, which the page does not

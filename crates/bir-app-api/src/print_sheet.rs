@@ -76,9 +76,10 @@ fn fit_css_with_mode(native: (f32, f32), mode: PageScaleMode) -> String {
         "@page{{size:{w:.2}pt {h:.2}pt;margin:0}}\
 html,body{{width:{w:.2}pt;margin:0 auto;padding:0;background:#fff}}\
 body>:not(.sheet){{display:none !important}}\
-.sheet{{position:relative;width:{w:.2}pt;height:{sheet_h:.2}pt;overflow:hidden;background:#fff;padding-top:{safety:.0}pt;break-after:page;page-break-after:always}}\
+.sheet{{position:relative;width:{w:.2}pt;height:{sheet_h:.2}pt;box-sizing:border-box;overflow:hidden;background:#fff;padding-top:{safety:.0}pt;break-after:page;page-break-after:always}}\
 .sheet:last-of-type{{break-after:auto;page-break-after:auto}}\
 .sheet-flow{{height:auto;min-height:{sheet_h:.2}pt;overflow:visible}}\
+@media print{{.sheet-flow{{min-height:0}}}}\
 {page_rule}",
         w = PAPER_WIDTH_PT,
         h = PAPER_HEIGHT_PT,

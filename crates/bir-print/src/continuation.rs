@@ -2186,8 +2186,23 @@ fn slug_to_form_code(slug: &str) -> String {
 }
 
 fn extract_tin(fields: &BTreeMap<String, String>) -> String {
+    let br = first_matching_field(
+        fields,
+        &[
+            "txtBranchCode",
+            "txtTIN4",
+            "txtPg1TIN4",
+            "txtPg1Pt1I6TINC4",
+            "txtBranch",
+        ],
+    )
+    .unwrap_or_default();
     for k in ["derived:tin", "derived:tin_digits", "derived:tp_tin"] {
         if let Some(d) = fields.get(k).filter(|v| !v.trim().is_empty()) {
+            let digits: String = d.chars().filter(|c| c.is_ascii_digit()).collect();
+            if digits.len() == 9 && !br.is_empty() {
+                return format_tin_digits(&format!("{digits}{br}"));
+            }
             return format_tin_digits(d);
         }
     }
@@ -2197,11 +2212,6 @@ fn extract_tin(fields: &BTreeMap<String, String>) -> String {
         first_matching_field(fields, &["txtTIN2", "txtTin2", "txtPg1TIN2"]).unwrap_or_default();
     let t3 =
         first_matching_field(fields, &["txtTIN3", "txtTin3", "txtPg1TIN3"]).unwrap_or_default();
-    let br = first_matching_field(
-        fields,
-        &["txtBranchCode", "txtTIN4", "txtPg1TIN4", "txtBranch"],
-    )
-    .unwrap_or_default();
     if !t1.is_empty() && !t2.is_empty() && !t3.is_empty() {
         if br.is_empty() {
             return format!("{t1}-{t2}-{t3}");
