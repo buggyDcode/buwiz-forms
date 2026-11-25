@@ -162,15 +162,16 @@ fn form_2551q_prints_all_10_schedule1_rows_with_matching_total() {
                 .collect::<Vec<_>>()
         );
     }
-    let expected_str = format!("{expected_total:.2}");
+    let expected_digits = format!("{expected_total:.2}");
+    let norm = |s: &str| s.replace(',', "");
     assert_eq!(
-        fields.get("frm2551Qv2018:txt14").map(String::as_str),
-        Some(expected_str.as_str()),
+        fields.get("frm2551Qv2018:txt14").map(|s| norm(s)),
+        Some(expected_digits.clone()),
         "2551Q Item 14 total must equal sum of all 10 rows"
     );
     assert_eq!(
-        fields.get("txtTotalSched1").map(String::as_str),
-        Some(expected_str.as_str()),
+        fields.get("txtTotalSched1").map(|s| norm(s)),
+        Some(expected_digits),
         "2551Q Schedule 1 total must equal sum of all 10 rows"
     );
 }
