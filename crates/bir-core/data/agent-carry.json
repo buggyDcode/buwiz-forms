@@ -819,10 +819,7 @@
     ]
   },
   "1701ms-v2024": {
-    "computed": [
-      "frm1701MS:txtLessNonTaxablea",
-      "frm1701MS:txtLessNonTaxableb"
-    ],
+    "computed": [],
     "dates": [
       "frm1701MS:txtTaxpayerNo16a",
       "frm1701MS:txtTaxpayerNo16a1",
@@ -2049,9 +2046,6 @@
       "frm2200Av2020:txtSched1_3B_2022_Due",
       "frm2200Av2020:txtSched1_3B_2023_Due",
       "frm2200Av2020:txtSched1_3B_2024_Due",
-      "frm2200Av2020:txtSched1_xa_others1_Due",
-      "frm2200Av2020:txtSched1_xa_others2_Due",
-      "frm2200Av2020:txtSched1_xa_others3_Due",
       "frm2200Av2020:txtSched1_TotalDue"
     ],
     "page_writes": [],
@@ -2684,7 +2678,6 @@
       "frm2552:txtPg1P2I14TaxDue",
       "frm2552:txtPg1P2I15TaxDue",
       "frm2552:txtPg1P2I16TotTaxDue",
-      "frm2552:txtPg1P2I17TaxPaidInPrevRtrn",
       "frm2552:txtPg1P2I19TotTaxCredPmnt",
       "frm2552:txtPg1P2I20TotTaxStllDueOvrPmnt",
       "frm2552:txtPg1P2I24TotPenalties",
