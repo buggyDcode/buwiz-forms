@@ -470,7 +470,7 @@ pub fn continuation_pages_html_with_truncated(
             out.push_str(&format!(
                 "<div style=\"display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4pt\">\
                  <div style=\"font-size:9.5pt;font-weight:700\">{} (continued)</div>\
-                 <div style=\"font-size:7.5pt;color:#444\">Rows {}–{} (continuing after {} printed rows)</div>\
+                 <div style=\"font-size:8.6pt;color:#444\">Rows {}–{} (continuing after {} printed rows)</div>\
                  </div>",
                 escape_html(&sched.heading),
                 first_row,
@@ -479,7 +479,7 @@ pub fn continuation_pages_html_with_truncated(
             ));
 
             out.push_str(
-                "<table style=\"width:100%;border-collapse:collapse;table-layout:auto;font-size:7.5pt\"><thead><tr>",
+                "<table style=\"width:100%;border-collapse:collapse;table-layout:auto;font-size:8.6pt\"><thead><tr>",
             );
             out.push_str(
                 "<th style=\"width:22pt;border:0.75pt solid #000;background:#f2f2f2;padding:3pt 3pt;text-align:center;font-weight:700;vertical-align:bottom\">#</th>",
@@ -563,11 +563,11 @@ pub fn continuation_pages_html_with_truncated(
             out.push_str(&format!(
                 "<div style=\"display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4pt\">\
                  <div style=\"font-size:9.5pt;font-weight:700\">{section_heading}</div>\
-                 <div style=\"font-size:7.5pt;color:#444\">Full text of entries shortened with &quot;...&quot; on the form</div>\
+                 <div style=\"font-size:8.6pt;color:#444\">Full text of entries shortened with &quot;...&quot; on the form</div>\
                  </div>",
             ));
             out.push_str(
-                "<table style=\"width:100%;border-collapse:collapse;table-layout:fixed;font-size:7.5pt\"><thead><tr>\
+                "<table style=\"width:100%;border-collapse:collapse;table-layout:fixed;font-size:8.6pt\"><thead><tr>\
                  <th style=\"width:10%;border:0.75pt solid #000;background:#f2f2f2;padding:3pt 4pt;text-align:center;font-weight:700;vertical-align:bottom\">Page</th>\
                  <th style=\"width:32%;border:0.75pt solid #000;background:#f2f2f2;padding:3pt 4pt;text-align:left;font-weight:700;vertical-align:bottom\">Item / Field</th>\
                  <th style=\"width:58%;border:0.75pt solid #000;background:#f2f2f2;padding:3pt 4pt;text-align:left;font-weight:700;vertical-align:bottom\">Full Entry</th>\

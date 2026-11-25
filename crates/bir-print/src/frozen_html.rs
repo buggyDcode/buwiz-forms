@@ -844,6 +844,32 @@ impl SheetType {
         }
     }
 
+    /// Minimum sheet-coordinate font size (pt) that still prints at or above
+    /// [`PLAIN_TEXT_MIN_PT`] (7.5 pt) once A4 fit-scaling is applied.
+    fn a4_min_text_pt(&self) -> f64 {
+        const A4_W: f64 = 595.28;
+        const A4_H: f64 = 841.89;
+        const SAFETY: f64 = 10.0;
+        if self.css.is_empty() || !self.css.contains("@page") {
+            return PLAIN_TEXT_MIN_PT;
+        }
+        let (w_str, h_str) = page_size_from_css(self.css);
+        let (Ok(w), Ok(h)) = (
+            w_str.trim().trim_end_matches("pt").parse::<f64>(),
+            h_str.trim().trim_end_matches("pt").parse::<f64>(),
+        ) else {
+            return PLAIN_TEXT_MIN_PT;
+        };
+        let scale = ((A4_W - 2.0 * SAFETY) / w)
+            .min((A4_H - 2.0 * SAFETY) / h)
+            .min(1.0);
+        if scale >= 1.0 || scale <= 0.0 {
+            PLAIN_TEXT_MIN_PT
+        } else {
+            ((PLAIN_TEXT_MIN_PT / scale) * 20.0).ceil() / 20.0
+        }
+    }
+
     /// The letter-spacing an input of class list `classes` gets: its own
     /// size class's (`.fh4`, which follows `.fi` in the stylesheet), else
     /// `.fi`'s.
@@ -1021,6 +1047,7 @@ struct PlainTextFit {
     font_size_pt: f64,
     two_lines: bool,
     truncated: bool,
+    tight_inset_v: Option<f64>,
 }
 
 /// Truncate `text` with `"..."` so it fits within `room` pt at `size` pt.
@@ -1159,11 +1186,21 @@ fn fit_plain_text(
         return None;
     }
     let shrunk = shrunk_room(room);
-    let inner_height = input_height(height, tag);
-    let min_pt = PLAIN_TEXT_MIN_PT;
+    let min_pt = sheet.a4_min_text_pt().min(default_size.max(PLAIN_TEXT_MIN_PT));
     let start_size = default_size.max(min_pt);
+    let default_inner_height = input_height(height, tag);
+    let needed_two_line = min_pt * PLAIN_TWO_LINE_HEIGHT_FACTOR;
+    let (inner_height, tight_inset_v) = if default_inner_height >= needed_two_line {
+        (default_inner_height, None)
+    } else if height - 0.80 >= needed_two_line {
+        (height - 0.80, Some(0.40))
+    } else if height - 0.20 >= needed_two_line {
+        (height - 0.20, Some(0.10))
+    } else {
+        (default_inner_height, None)
+    };
 
-    if allow_wrap && inner_height >= PLAIN_WRAP_MIN_HEIGHT_PT {
+    if allow_wrap && inner_height >= needed_two_line {
         let top_two_line =
             floor_size((inner_height / PLAIN_TWO_LINE_HEIGHT_FACTOR).min(start_size)).max(min_pt);
         if let Some((l1, l2, sz)) = fit_two_lines(sheet, letter, shrunk, text, top_two_line, min_pt)
@@ -1173,6 +1210,7 @@ fn fit_plain_text(
                 font_size_pt: sz,
                 two_lines: true,
                 truncated: false,
+                tight_inset_v,
             });
         }
         if let Some((l1, l2)) = wrap_and_truncate_two_lines(sheet, letter, shrunk, text, min_pt) {
@@ -1181,6 +1219,7 @@ fn fit_plain_text(
                 font_size_pt: min_pt,
                 two_lines: true,
                 truncated: true,
+                tight_inset_v,
             });
         }
     }
@@ -1192,6 +1231,7 @@ fn fit_plain_text(
             font_size_pt: single_size,
             two_lines: false,
             truncated: false,
+            tight_inset_v: None,
         });
     }
     if let Some(truncated) = truncate_with_ellipsis(sheet, letter, shrunk, text, min_pt) {
@@ -1200,6 +1240,7 @@ fn fit_plain_text(
             font_size_pt: min_pt,
             two_lines: false,
             truncated: true,
+            tight_inset_v: None,
         });
     }
     Some(PlainTextFit {
@@ -1207,6 +1248,7 @@ fn fit_plain_text(
         font_size_pt: min_pt,
         two_lines: false,
         truncated: true,
+        tight_inset_v: None,
     })
 }
 
@@ -1226,7 +1268,7 @@ fn input_height(height: f64, tag: &str) -> f64 {
 
 /// The `(top, right, bottom, left)` of an input's `inset:` (1 to 4 lengths, pt).
 fn inset_box(style: &str) -> (f64, f64, f64, f64) {
-    let Some(at) = style.find("inset:") else {
+    let Some(at) = style.rfind("inset:") else {
         return (0.0, 0.0, 0.0, 0.0);
     };
     let values: Vec<f64> = style[at + "inset:".len()..]
@@ -2856,6 +2898,13 @@ fn fill_text_input(
                         tag = with_style_declaration(
                             &tag,
                             &format!("line-height:{PLAIN_TWO_LINE_CSS_HEIGHT}"),
+                        );
+                    }
+                    if let Some(v) = fit.tight_inset_v {
+                        let (_, right, _, left) = inset_box(attr(&tag, "style").unwrap_or(""));
+                        tag = with_style_declaration(
+                            &tag,
+                            &format!("inset:{v:.2}pt {right}pt {v:.2}pt {left}pt"),
                         );
                     }
                     if fit.truncated {
@@ -10867,7 +10916,7 @@ mod tests {
                 let style = attr(tag, "style").unwrap();
                 let at = style.find("font-size:").expect("an inline size") + "font-size:".len();
                 let size: f64 = style[at..].split("pt").next().unwrap().parse().unwrap();
-                assert!(size < class_size, "{slug} {cell} {space:?}");
+                assert!(size <= class_size, "{slug} {cell} {space:?}");
                 assert!(size >= PLAIN_TEXT_MIN_PT, "{slug} {cell} {space:?}");
                 assert!(room >= 2.0);
                 for line in printed.split("&#10;") {
@@ -10975,11 +11024,11 @@ mod donor_estate_print_tests {
             ),
             (
                 "1801-2018",
-                "ba0514d79d8c7b537eb0f294e7fc14c0362a1bc667a53460e7832eb508cab239",
+                "8989ce9589de1810d146d87bc2afbcb79e925dfc595dfebaf4db4ec6b6fd04dc",
             ),
             (
                 "1800-2018",
-                "ea482e7d127a1d07bb6aed8568a75acdb619fed15390bea0116f80dcd2d08db0",
+                "cbb7527e975e652ef3039de2849c52bd4491b88ca2af89ebcbbc1fa9d9dd06c4",
             ),
         ] {
             let html = filled_document(slug, &every_join_filled(slug)).unwrap();
@@ -11370,13 +11419,13 @@ mod donor_estate_print_tests {
             .find(|t| t.name == "p2c377")
             .expect("2200P Others row 1 description");
         assert!(
-            p2c377.tag.contains("font-size:7.50pt"),
-            "2200P Others row 1 must stay at >= 7.50pt floor: {}",
+            p2c377.tag.contains("font-size:8.55pt"),
+            "2200P Others row 1 must stay at >= 7.50pt A4 floor (8.55pt on folio): {}",
             p2c377.tag
         );
         assert!(
-            p2c377.tag.contains("&#10;") && p2c377.tag.contains("..."),
-            "2200P Others row 1 must wrap onto 2 lines then ellipsize: {}",
+            p2c377.tag.contains("..."),
+            "2200P Others row 1 must ellipsize at the A4 floor: {}",
             p2c377.tag
         );
         assert!(
@@ -11396,8 +11445,8 @@ mod donor_estate_print_tests {
             .find(|t| t.name == "p2c391")
             .expect("2200P Others row 2 description");
         assert!(
-            p2c391.tag.contains("&#10;") && !p2c391.tag.contains("..."),
-            "2200P Others row 2 medium text should wrap cleanly on 2 lines without truncating: {}",
+            p2c391.tag.contains("..."),
+            "2200P Others row 2 (16.68pt tall on folio) must ellipsize at the 8.55pt A4 floor rather than dropping below 7.5pt: {}",
             p2c391.tag
         );
         let sz = super::attr(p2c391.tag, "style")
@@ -11405,7 +11454,7 @@ mod donor_estate_print_tests {
             .and_then(|s| s.split("pt").next())
             .and_then(|s| s.parse::<f64>().ok())
             .expect("font-size on p2c391");
-        assert!(sz >= 7.5, "p2c391 font-size {sz}pt went below 7.5pt floor");
+        assert!(sz >= 8.55, "p2c391 font-size {sz}pt went below 7.5pt A4 floor");
     }
 
     #[test]
@@ -12077,7 +12126,7 @@ mod donor_estate_print_tests {
             "line 2 must ellipsize: {:?}",
             lines2[1]
         );
-        assert!(tag2.contains("font-size:7.50pt"), "got: {tag2}");
+        assert!(tag2.contains("font-size:8.55pt"), "got: {tag2}");
         assert_eq!(
             super::attr(tag2, "data-overflow-warning"),
             Some("text-truncated")
@@ -12191,5 +12240,76 @@ mod donor_estate_print_tests {
             !html.contains("data-overflow-warning=\"text-truncated\""),
             "1702Q Sched 4 item 6a must not be marked text-truncated"
         );
+    }
+
+    #[test]
+    fn form_0605_a4_scaled_font_size_never_below_7_5pt_at_100_137_200() {
+        // 0605-1999 is a 612pt x 936pt folio sheet printed onto A4 (595.28pt x 841.89pt)
+        // with 10pt safety margin -> fit_scale = 821.89 / 936.0 ~= 0.8781.
+        // Effective printed font size (sheet_pt * fit_scale) must never drop below 7.5pt
+        // on Page 1 (p1c33 line of business, p1c35 taxpayer name, p1c38 address) or on
+        // the Additional Sheet table.
+        let fit_scale = ((595.28_f64 - 20.0) / 612.0)
+            .min((841.89_f64 - 20.0) / 936.0)
+            .min(1.0);
+        let alpha = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        let make_val = |prefix: &str, len: usize| -> String {
+            let mut s = format!("{prefix}{len}-");
+            while s.len() < len {
+                s.push_str(alpha);
+            }
+            s.truncate(len);
+            s
+        };
+
+        for len in [60usize, 100, 137, 200] {
+            let name = make_val("NAME", len);
+            let addr = make_val("ADDRESS", len);
+            let lob = make_val("BUSINESS", len);
+            let mut fields = BTreeMap::new();
+            fields.insert("frm0605:txtTaxPayerName".to_string(), name.clone());
+            fields.insert("frm0605:txtAddress".to_string(), addr.clone());
+            fields.insert("frm0605:txtLineBus".to_string(), lob.clone());
+            let html = filled_document("0605-1999", &fields).unwrap();
+            let tags = super::input_tags(&html);
+            for (cid, full) in [("p1c33", &lob), ("p1c35", &name), ("p1c38", &addr)] {
+                let tag = tags
+                    .iter()
+                    .find(|t| t.name == cid)
+                    .unwrap_or_else(|| panic!("0605 {cid} at n={len}"))
+                    .tag;
+                let val = super::attr(tag, "value")
+                    .unwrap_or("")
+                    .replace("&#10;", "\n");
+                let sheet_pt: f64 = tag
+                    .split("font-size:")
+                    .nth(1)
+                    .and_then(|s| s.split("pt").next())
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(10.0);
+                let printed_pt = sheet_pt * fit_scale;
+                assert!(
+                    printed_pt >= super::PLAIN_TEXT_MIN_PT - 0.01,
+                    "0605 n={len} {cid}: sheet {sheet_pt:.2}pt -> A4 {printed_pt:.2}pt < 7.5pt (val={val:?})"
+                );
+                assert!(
+                    val.lines().count() <= 2,
+                    "0605 n={len} {cid}: must never exceed 2 lines, got {val:?}"
+                );
+                if val.contains("...") {
+                    assert!(
+                        html.contains(full.as_str()),
+                        "0605 n={len} {cid}: truncated field must carry full value to Additional Sheet"
+                    );
+                }
+            }
+            if len >= 100 {
+                // Additional Sheet table itself must also print >= 7.5pt after A4 fit_scale
+                assert!(
+                    !html.contains("table-layout:fixed;font-size:7.5pt"),
+                    "0605 n={len}: Additional Sheet table font-size:7.5pt scales to 6.59pt on A4"
+                );
+            }
+        }
     }
 }
