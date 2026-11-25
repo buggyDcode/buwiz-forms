@@ -221,6 +221,7 @@ struct FlowPageDom {
     width_pt: f64,
     height_pt: f64,
     svg_open_tag: String,
+    svg_images: Vec<(f64, String)>,
     svg_nodes: Vec<FlowSvgNode>,
     texts: Vec<FlowTextNode>,
     cells: Vec<FlowCellNode>,
@@ -253,6 +254,7 @@ fn parse_flow_page_dom(doc_html: &str, page_num: usize) -> Result<FlowPageDom, S
         fmt_pt(width_pt),
         fmt_pt(height_pt),
     );
+    let mut svg_images = Vec::new();
     let mut svg_nodes = Vec::new();
 
     if let Some(svg_start) = page_html.find("<svg ") {
@@ -282,14 +284,11 @@ fn parse_flow_page_dom(doc_html: &str, page_num: usize) -> Result<FlowPageDom, S
                     scan = a + 4;
                 } else if rest.starts_with("<image ") {
                     let end_img = find_svg_elem_end(svg, a, "image");
-                    let index = svg_nodes.len();
-                    svg_nodes.push(FlowSvgNode {
-                        index,
-                        layer: String::new(),
-                        rule_id: None,
-                        rect: None,
-                        raw_tag: svg[a..end_img].to_string(),
-                    });
+                    let img_tag = svg[a..end_img].to_string();
+                    let img_y = extract_svg_image_y(&img_tag).unwrap_or(0.0);
+                    svg_images.push((img_y, img_tag));
+                    // `<image>` elements are tracked in `svg_images` only so `svg_nodes`
+                    // indexing matches `formgen-page-layout` `svg_indices` (drawable shapes).
                     scan = end_img;
                 } else if rest.starts_with("<rect ") {
                     let end_r = find_svg_elem_end(svg, a, "rect");
@@ -526,6 +525,7 @@ fn parse_flow_page_dom(doc_html: &str, page_num: usize) -> Result<FlowPageDom, S
         width_pt,
         height_pt,
         svg_open_tag,
+        svg_images,
         svg_nodes,
         texts,
         cells,
@@ -540,6 +540,19 @@ fn drawable_svg_tag_name(rest: &str) -> Option<&'static str> {
         }
     }
     None
+}
+
+fn extract_svg_image_y(tag: &str) -> Option<f64> {
+    if let Some(t) = extract_attr(tag, "transform") {
+        if let Some(rest) = t.strip_prefix("matrix(").and_then(|s| s.strip_suffix(')')) {
+            if let Some(last) = rest.split(',').nth(5) {
+                if let Ok(v) = last.trim().parse::<f64>() {
+                    return Some(v);
+                }
+            }
+        }
+    }
+    extract_attr(tag, "y").and_then(|v| v.parse::<f64>().ok())
 }
 
 fn find_svg_elem_end(svg: &str, start: usize, tag_name: &str) -> usize {
@@ -2492,9 +2505,22 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
         )
     };
 
+    let header_y1 = layout
+        .bands
+        .iter()
+        .find(|b| b.kind == BandKind::PageHeader)
+        .map(|b| b.y1)
+        .unwrap_or(130.0);
+    let mut svg_images_out = String::new();
+    for (img_y, img_tag) in &dom.svg_images {
+        if *img_y <= header_y1 + 2.0 || pp.cont_index == 0 {
+            svg_images_out.push_str(img_tag);
+        }
+    }
+
     format!(
         "<div class=\"{page_class}\" id=\"{page_id}\" style=\"width:{}pt;height:{}pt\">\
-         {svg_open}{svg_out}</svg>\
+         {svg_open}{svg_images_out}{svg_out}</svg>\
          <div class=\"layer-text\">{text_out}</div>\
          <div class=\"layer-cells\">{cells_out}</div>\
          </div>",

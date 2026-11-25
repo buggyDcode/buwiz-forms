@@ -8922,19 +8922,19 @@ mod donor_estate_print_tests {
         for (slug, golden) in [
             (
                 "1706-2018",
-                "69105b4b984cd28487066d1882a6115c9b4fa5a8836b5880d7a29a9df9a08004",
+                "568cc0bb1ed07c552d2cb924d9014a20598f9933fe64788b1344f18a6a0298d2",
             ),
             (
                 "2000-ot-2018",
-                "a56443ec4032e55080476007b2e5921fe2e61823bbaa3231e30dab5f805ed68f",
+                "a5cfa1eb0b031a4470b0d45c940c3e73d88971b05e882c3c7b9b8aa62aacc2f5",
             ),
             (
                 "1801-2018",
-                "a5e0e0da9b90164d6f8b3bd8b840d64ce3fbe879c4d54435f7a0d03b7d334b46",
+                "dabb25108c05d4eb0d6de571493933c807e332007abeec2c3a467343bd55b2f0",
             ),
             (
                 "1800-2018",
-                "9c1d065da3c68490ea4516305f2de9e6c5392becc17254184065888d4ed0a68f",
+                "8340d00dcb242f3a5982247c1cced7366326d76687aa6d23333711fd9b4d597e",
             ),
         ] {
             let html = filled_document(slug, &every_join_filled(slug)).unwrap();
