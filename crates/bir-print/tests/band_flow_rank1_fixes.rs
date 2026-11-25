@@ -127,3 +127,50 @@ fn form_2200p_prints_all_31_schedule1_rows_including_added_28_to_31() {
         "2200P continuation sheet must carry filer TIN"
     );
 }
+
+#[test]
+fn form_2551q_prints_all_10_schedule1_rows_with_matching_total() {
+    use bir_core::forms::form_2551q::{Form2551QDraft, Schedule1Row};
+    let profile = demo_profile();
+    let mut d = Form2551QDraft::new_from_profile(&profile, 2025, 1);
+    let atcs = [
+        "PT010", "PT040", "PT041", "PT060", "PT070", "PT090", "PT101", "PT120", "PT140", "PT180",
+    ];
+    d.schedule_1.clear();
+    let mut expected_total = 0.0;
+    for (idx, code) in atcs.iter().enumerate() {
+        let mut row = Schedule1Row::new(code).unwrap();
+        row.taxable_amount = ((idx + 1) as f64) * 10_000.0;
+        row.recompute();
+        expected_total += row.tax_due;
+        d.schedule_1.push(row);
+    }
+    d.recompute(None);
+    let fields = d.to_print_field_map();
+    let doc = filled_document_with_report("2551q-2018", &fields, None).unwrap();
+    let cells = bir_print::frozen_html::printed_cells(&doc.html);
+    let cell_values: Vec<&str> = cells.values().map(|(v, _)| v.as_str()).collect();
+    for code in &atcs {
+        let hits = cell_values.iter().filter(|v| **v == *code).count()
+            + doc.html.matches(code).count();
+        assert!(
+            hits >= 1,
+            "2551Q Schedule 1 row {code} must print (cell_values={:?})",
+            cell_values
+                .iter()
+                .filter(|v| v.starts_with("PT"))
+                .collect::<Vec<_>>()
+        );
+    }
+    let expected_str = format!("{expected_total:.2}");
+    assert_eq!(
+        fields.get("frm2551Qv2018:txt14").map(String::as_str),
+        Some(expected_str.as_str()),
+        "2551Q Item 14 total must equal sum of all 10 rows"
+    );
+    assert_eq!(
+        fields.get("txtTotalSched1").map(String::as_str),
+        Some(expected_str.as_str()),
+        "2551Q Schedule 1 total must equal sum of all 10 rows"
+    );
+}

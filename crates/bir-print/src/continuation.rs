@@ -715,7 +715,10 @@ fn discover_schedules(parsed: &Value) -> Vec<ScheduleSpec> {
         if !looks_like_schedule_row_caption(&join.printed) {
             continue;
         }
-        if join.writer_key.starts_with("derived:") && !join.writer_key.starts_with("derived:rate") {
+        if join.writer_key.starts_with("derived:")
+            && !join.writer_key.starts_with("derived:rate")
+            && !join.writer_key.starts_with("derived:sched1_")
+        {
             continue;
         }
         let Some((schedule_heading, row_num, col_heading)) =

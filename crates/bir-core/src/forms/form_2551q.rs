@@ -1544,13 +1544,20 @@ impl Form2551QDraft {
             ("line:address_line2".to_string(), line2),
             ("line:tax_relief_specify".to_string(), specify),
         ];
-        for n in 1..=6 {
+        let row_limit = self.schedule_1.len().max(6);
+        for n in 1..=row_limit {
             let Some(row) = self.schedule_1.get(n - 1) else {
                 for key in ["txtATCAmt", "txtATCRate", "txtATCDue"] {
                     fields.insert(format!("{key}{n}"), String::new());
                 }
                 continue;
             };
+            if n > 6 {
+                let pct = row.tax_rate * 100.0;
+                fields.insert(format!("txtATCAmt{n}"), format!("{:.2}", row.taxable_amount));
+                fields.insert(format!("txtATCRate{n}"), format!("{pct}"));
+                fields.insert(format!("txtATCDue{n}"), format!("{:.2}", row.tax_due));
+            }
             let rate = fields
                 .get(&format!("txtATCRate{n}"))
                 .and_then(|rate| rate.parse::<f64>().ok())
