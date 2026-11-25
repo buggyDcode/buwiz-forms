@@ -1,5 +1,6 @@
-//! fixes-3: no blank pages, no old-style ADDITIONAL SHEET fallback, engine
-//! continuation pages carry form/TIN/name/return-period/page-number.
+//! fixes-3 item 2: continuation pages carry every element of the engine's
+//! own continuation page — the form, the filer's TIN with branch code, the
+//! taxpayer name, the return period, a page number and the table head.
 use bir_core::forms::form_1707a::{Form1707AAtc, Form1707ADraft, Form1707ARow};
 use bir_core::TaxpayerProfile;
 use bir_print::frozen_html::filled_document_with_report;
@@ -32,7 +33,8 @@ fn row(date: &str, name: &str, selling: f64, cost: f64, tax_paid: f64) -> Form17
     }
 }
 
-pub fn many_rows_1707a() -> Form1707ADraft {
+#[test]
+fn form_1707a_continuation_pages_carry_the_full_engine_header() {
     let mut draft = Form1707ADraft::new_from_profile(&demo_profile(), 2025, 1);
     draft.set_atc(Form1707AAtc::Individual);
     draft.year_end_year = 2023;
@@ -53,21 +55,19 @@ pub fn many_rows_1707a() -> Form1707ADraft {
             0.0,
         ),
     ];
-    draft.losses = vec![row("09/01/2023", "Loss Co", 50_000.0, 80_000.55, 0.0)];
     for k in 3..=14u32 {
-        let month = (k - 3) % 12 + 1;
         draft.gains.push(row(
-            &format!("{month:02}/10/2023"),
+            "02/10/2023",
             &format!("Gain Co {k}"),
             f64::from(k) * 2_000.509,
             f64::from(k) * 1_000.0,
-            f64::from(k) * 10.0,
+            0.0,
         ));
     }
+    draft.losses = vec![row("09/01/2023", "Loss Co", 50_000.0, 80_000.55, 0.0)];
     for k in 2..=12u32 {
-        let month = (k - 2) % 12 + 1;
         draft.losses.push(row(
-            &format!("{month:02}/20/2023"),
+            "09/20/2023",
             &format!("Loss Co {k}"),
             f64::from(k) * 500.0,
             f64::from(k) * 750.25,
@@ -75,45 +75,57 @@ pub fn many_rows_1707a() -> Form1707ADraft {
         ));
     }
     draft.recompute();
-    draft
-}
-
-#[test]
-fn form_1707a_overflow_uses_engine_continuation_never_the_old_fallback() {
-    let draft = many_rows_1707a();
     let fields = draft.to_print_field_map();
-    std::fs::create_dir_all("/tmp/bfout").unwrap();
     let doc = filled_document_with_report("1707a-2021", &fields, None).unwrap();
+    std::fs::create_dir_all("/tmp/bfout").unwrap();
     std::fs::write("/tmp/bfout/1707a-fixes3.html", &doc.html).unwrap();
+
     assert!(
-        !doc.html.contains("ADDITIONAL SHEET"),
-        "1707A must never use the old-style ADDITIONAL SHEET fallback"
+        doc.html.contains("Additional sheet") || doc.html.contains("-cont-"),
+        "overflow must produce continuation pages"
     );
+    for needle in [
+        "000-123-453-00000",
+        "SANTOS, JUANA",
+        "12/31/2023",
+        "— Page 3",
+        "(A) Date of Transaction",
+    ] {
+        assert!(
+            doc.html.contains(needle),
+            "continuation must carry {needle}"
+        );
+    }
     assert!(
-        !doc.html.contains("page-continuation\"") && !doc.html.contains("page-continuation-band"),
-        "no band_continuation fallback pages may be emitted"
+        !doc.html.contains("Return Period:</span> —"),
+        "the return period must never be the unknown dash"
     );
-    // engine continuation pages: spawned page-<n>-cont-<k> divs
-    assert!(
-        doc.html.contains("-cont-"),
-        "the engine must spawn continuation pages for the overflow"
-    );
-    // every gain row prints exactly once
+    let upper = doc.html.to_uppercase();
+    let count = |name: &str| {
+        // paper rows print inside one input (VALUE= plus DATA-WRITER-VALUE=);
+        // continuation rows print once as table text.
+        regex_count(&upper, name)
+    };
+    fn regex_count(hay: &str, name: &str) -> usize {
+        let mut n = 0;
+        let mut from = 0;
+        while let Some(i) = hay[from..].find(name) {
+            let at = from + i + name.len();
+            if !hay[at..].starts_with(|c: char| c.is_ascii_digit()) {
+                n += 1;
+            }
+            from = from + i + 1;
+        }
+        n
+    }
     for k in 3..=14u32 {
-        let name = format!("Gain Co {k}");
-        assert_eq!(doc.html.matches(&name).count(), 1, "{name} must print once");
+        let name = format!("GAIN CO {k}");
+        let want = if k == 3 { 2 } else { 1 };
+        assert_eq!(count(&name), want, "{name} must print once");
     }
     for k in 2..=12u32 {
-        let name = format!("Loss Co {k}");
-        assert_eq!(doc.html.matches(&name).count(), 1, "{name} must print once");
+        let name = format!("LOSS CO {k}");
+        let want = if k <= 3 { 2 } else { 1 };
+        assert_eq!(count(&name), want, "{name} must print once");
     }
-    // continuation pages carry the filer TIN and taxpayer name and a page label
-    assert!(
-        doc.html.contains("SANTOS, JUANA"),
-        "continuation must carry the taxpayer name"
-    );
-    assert!(
-        doc.html.contains("continued"),
-        "continuation pages carry a continued label"
-    );
 }

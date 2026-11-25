@@ -369,6 +369,19 @@ pub fn continuation_pages_html(
     width: &str,
     height: &str,
 ) -> String {
+    continuation_pages_html_after(slug, fields, report, width, height, 0)
+}
+
+/// [`continuation_pages_html`] with the count of official pages the sheets
+/// follow, so every continuation page carries its physical page number.
+pub fn continuation_pages_html_after(
+    slug: &str,
+    fields: &BTreeMap<String, String>,
+    report: &OverflowReport,
+    width: &str,
+    _height: &str,
+    official_pages: usize,
+) -> String {
     if report.is_empty() {
         return String::new();
     }
@@ -386,10 +399,11 @@ pub fn continuation_pages_html(
         } else {
             format!("page-continuation-{page_num}")
         };
+        let physical = official_pages + page_num;
         let sheet_label = if total_pages == 1 {
-            "Additional sheet".to_string()
+            format!("Additional sheet — Page {physical}")
         } else {
-            format!("Additional sheet ({page_num} of {total_pages})")
+            format!("Additional sheet ({page_num} of {total_pages}) — Page {physical}")
         };
 
         let break_rule = if page_idx + 1 < total_pages {
@@ -2408,6 +2422,7 @@ fn extract_return_period(fields: &BTreeMap<String, String>) -> String {
             "DateWithholdingMonth",
             "txtPg1I1Month",
             "txtPg1I2MonthEnded",
+            "txtI1YearEndMonth",
             "txtMonth",
             "rtnMonth",
             "txtMonth1",
@@ -2420,6 +2435,7 @@ fn extract_return_period(fields: &BTreeMap<String, String>) -> String {
             "txtDateTransactionDay",
             "DateWithholdingDay",
             "txtPg1I1Day",
+            "txtI1YearEndDay",
             "txtDay",
         ],
     );
@@ -2432,6 +2448,7 @@ fn extract_return_period(fields: &BTreeMap<String, String>) -> String {
             "txtPg1I1Year",
             "txtPg1I2YearEnded",
             "txtPg1I1YearEnded",
+            "txtI1YearEndYear",
             "txtI1Year",
             "txtYear",
             "rtnYear",

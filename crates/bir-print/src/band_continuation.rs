@@ -228,8 +228,14 @@ pub(crate) fn build_continuation_pages(
         let fb_report = OverflowReport {
             schedules: fallback_schedules,
         };
-        pages_html.push_str(&continuation::continuation_pages_html(
-            slug, fields, &fb_report, width, height,
+        let official_pages = raw_html.matches("class=\"page page-").count();
+        pages_html.push_str(&continuation::continuation_pages_html_after(
+            slug,
+            fields,
+            &fb_report,
+            width,
+            height,
+            official_pages,
         ));
     }
 
