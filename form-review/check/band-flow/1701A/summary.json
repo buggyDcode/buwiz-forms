@@ -1,0 +1,94 @@
+{
+  "overflow": {
+    "before": {
+      "pages": 2,
+      "blank_pages": [],
+      "old_fallback_pages": [],
+      "tables": {
+        "Item 42 Other Income (8)": {
+          "held": 8,
+          "printed_once": 0,
+          "missing": [
+            "IVA-OTHER-01",
+            "IVA-OTHER-02",
+            "IVA-OTHER-03",
+            "IVA-OTHER-04",
+            "IVA-OTHER-05",
+            "IVA-OTHER-06",
+            "IVA-OTHER-07",
+            "IVA-OTHER-08"
+          ],
+          "duped": [],
+          "in_order": false,
+          "exp_total": "119,996.00",
+          "tot_in_pdf": "False",
+          "sum_occ": 0
+        },
+        "Item 51 8% Other Income (8)": {
+          "held": 8,
+          "printed_once": 0,
+          "missing": [
+            "IVB-OTHER-01",
+            "IVB-OTHER-02",
+            "IVB-OTHER-03",
+            "IVB-OTHER-04",
+            "IVB-OTHER-05",
+            "IVB-OTHER-06",
+            "IVB-OTHER-07",
+            "IVB-OTHER-08"
+          ],
+          "duped": [],
+          "in_order": false,
+          "exp_total": "199,996.00",
+          "tot_in_pdf": "False",
+          "sum_occ": 0
+        }
+      }
+    },
+    "after": {
+      "pages": 2,
+      "blank_pages": [],
+      "old_fallback_pages": [],
+      "tables": {
+        "Item 42 Other Income (8)": {
+          "held": 8,
+          "printed_once": 0,
+          "missing": [
+            "IVA-OTHER-01",
+            "IVA-OTHER-02",
+            "IVA-OTHER-03",
+            "IVA-OTHER-04",
+            "IVA-OTHER-05",
+            "IVA-OTHER-06",
+            "IVA-OTHER-07",
+            "IVA-OTHER-08"
+          ],
+          "duped": [],
+          "in_order": false,
+          "exp_total": "119,996.00",
+          "tot_in_pdf": "False",
+          "sum_occ": 0
+        },
+        "Item 51 8% Other Income (8)": {
+          "held": 8,
+          "printed_once": 0,
+          "missing": [
+            "IVB-OTHER-01",
+            "IVB-OTHER-02",
+            "IVB-OTHER-03",
+            "IVB-OTHER-04",
+            "IVB-OTHER-05",
+            "IVB-OTHER-06",
+            "IVB-OTHER-07",
+            "IVB-OTHER-08"
+          ],
+          "duped": [],
+          "in_order": false,
+          "exp_total": "199,996.00",
+          "tot_in_pdf": "False",
+          "sum_occ": 0
+        }
+      }
+    }
+  }
+}
