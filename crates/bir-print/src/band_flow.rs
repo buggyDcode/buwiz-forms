@@ -2083,6 +2083,8 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
                     *head_precedes_height,
                     *total_follows_height,
                     *continues_next,
+                    true,
+                    !extra_rows.is_empty() || *continues_next,
                     &svg_by_id,
                     &mut svg_out,
                 );
@@ -2120,6 +2122,8 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
                     *head_precedes_height,
                     *total_follows_height,
                     *continues_next,
+                    false,
+                    true,
                     &svg_by_id,
                     &mut svg_out,
                 );
@@ -2340,12 +2344,14 @@ fn emit_svg_node_shifted(
 #[allow(clippy::too_many_arguments)]
 fn emit_spanning_rules(
     band: &LayoutBand,
-    _dy: f64,
+    dy: f64,
     rows_top_y: f64,
     rows_bottom_y: f64,
     head_precedes_height: f64,
     total_follows_height: f64,
     continues_next: bool,
+    is_original_rows: bool,
+    did_grow: bool,
     svg_by_id: &BTreeMap<&str, &FlowSvgNode>,
     svg_out: &mut String,
 ) {
@@ -2353,21 +2359,41 @@ fn emit_spanning_rules(
         let Some(node) = svg_by_id.get(rid.as_str()) else {
             continue;
         };
+        // If this original row_template band neither grew nor split across a page
+        // break, preserve every spanning rail intact (verbatim when `dy == 0`).
+        if is_original_rows && !did_grow {
+            emit_svg_node_shifted(node, band, dy, 0.0, svg_out);
+            continue;
+        }
         let Some((x, orig_y, w, orig_h, ref fill)) = node.rect else {
             continue;
         };
         let orig_bottom = orig_y + orig_h;
-        // Did this rule originally start above `band.y0` (in `table_head`)?
-        let starts_in_head = orig_y < band.y0 - 2.0 && head_precedes_height > 0.0;
-        let top_y = if starts_in_head {
-            (rows_top_y - (band.y0 - orig_y)).max(rows_top_y - head_precedes_height)
+        let top_y = if is_original_rows {
+            // On the table's starting page, never clip a spanning rail that starts
+            // above `band.y0` (e.g. a shared outer frame spanning a paired half-table).
+            orig_y + dy
         } else {
-            rows_top_y + (orig_y - band.y0).max(0.0)
+            // On a spawned continuation page, only the repeated `table_head` sits
+            // above the continued rows.
+            let starts_in_head = orig_y < band.y0 - 2.0 && head_precedes_height > 0.0;
+            if starts_in_head {
+                (rows_top_y - (band.y0 - orig_y)).max(rows_top_y - head_precedes_height)
+            } else {
+                rows_top_y + (orig_y - band.y0).max(0.0)
+            }
         };
         // Did this rule originally extend below `band.y1` (into `total_row`)?
         let extends_into_total = orig_bottom > band.y1 + 2.0;
-        let bottom_y = if !continues_next && extends_into_total && total_follows_height > 0.0 {
-            rows_bottom_y + (orig_bottom - band.y1).min(total_follows_height)
+        let bottom_y = if !continues_next && extends_into_total {
+            if is_original_rows {
+                let added_h = rows_bottom_y - (rows_top_y + (band.y1 - band.y0));
+                orig_bottom + dy + added_h
+            } else if total_follows_height > 0.0 {
+                rows_bottom_y + (orig_bottom - band.y1).min(total_follows_height)
+            } else {
+                rows_bottom_y
+            }
         } else {
             rows_bottom_y
         };
@@ -2848,5 +2874,125 @@ mod tests {
         let ov = detect_overflow("1707-2021", &fields).expect("detect");
         assert_eq!(ov.schedules.len(), 1);
         assert_eq!(ov.schedules[0].rows.len(), 3);
+    }
+
+    #[test]
+    fn above_first_growth_renders_identically_to_unflowed_page() {
+        // Compare un-flowed 1707 Page 2 (4 rows, no flow) against flowed 1707 Page 2
+        // (7 rows in place and 22 rows breaking at Schedule 3): every SVG node,
+        // text span, and cell strictly above Schedule 3 (y < 535pt, covering Header,
+        // Schedule 1, and all of Schedule 2 including its outer rails v145 & v698)
+        // must appear verbatim on the flowed Page 2.
+        let base_fields = build_1707_sched3_fields(4);
+        let unflowed = frozen_html::filled_document("1707-2021", &base_fields).expect("unflowed");
+        let base_dom = parse_flow_page_dom(&unflowed, 2).expect("base page 2 dom");
+        let cutoff_y = 535.0;
+
+        let expected_svg: BTreeSet<String> = base_dom
+            .svg_nodes
+            .iter()
+            .filter(|n| {
+                n.rect
+                    .as_ref()
+                    .map(|(_, y, _, h, _)| y + h <= cutoff_y)
+                    .unwrap_or(false)
+            })
+            .map(|n| n.raw_tag.clone())
+            .collect();
+        let expected_texts: BTreeSet<String> = base_dom
+            .texts
+            .iter()
+            .filter(|t| t.top < cutoff_y)
+            .map(|t| t.raw_html.clone())
+            .collect();
+        let expected_cells: BTreeSet<String> = base_dom
+            .cells
+            .iter()
+            .filter(|c| c.top < cutoff_y)
+            .map(|c| c.raw_html.clone())
+            .collect();
+
+        for row_count in [7usize, 22usize] {
+            let fields = build_1707_sched3_fields(row_count);
+            let flowed = frozen_html::filled_document("1707-2021", &fields).expect("flowed");
+            let flowed_dom = parse_flow_page_dom(&flowed, 2).expect("flowed page 2 dom");
+
+            let actual_svg: BTreeSet<String> = flowed_dom
+                .svg_nodes
+                .iter()
+                .filter(|n| {
+                    n.rect
+                        .as_ref()
+                        .map(|(_, y, _, h, _)| y + h <= cutoff_y)
+                        .unwrap_or(false)
+                })
+                .map(|n| n.raw_tag.clone())
+                .collect();
+            let missing_svg: Vec<_> = expected_svg.difference(&actual_svg).collect();
+            assert!(
+                missing_svg.is_empty(),
+                "1707 ({row_count} rows): SVG elements above Schedule 3 changed/disappeared: {:?}",
+                &missing_svg[..missing_svg.len().min(6)]
+            );
+
+            let actual_texts: BTreeSet<String> = flowed_dom
+                .texts
+                .iter()
+                .filter(|t| t.top < cutoff_y)
+                .map(|t| t.raw_html.clone())
+                .collect();
+            let missing_texts: Vec<_> = expected_texts.difference(&actual_texts).collect();
+            assert!(
+                missing_texts.is_empty(),
+                "1707 ({row_count} rows): text spans above Schedule 3 changed: {:?}",
+                &missing_texts[..missing_texts.len().min(6)]
+            );
+
+            let actual_cells: BTreeSet<String> = flowed_dom
+                .cells
+                .iter()
+                .filter(|c| c.top < cutoff_y)
+                .map(|c| c.raw_html.clone())
+                .collect();
+            let missing_cells: Vec<_> = expected_cells.difference(&actual_cells).collect();
+            assert!(
+                missing_cells.is_empty(),
+                "1707 ({row_count} rows): cells above Schedule 3 changed: {:?}",
+                &missing_cells[..missing_cells.len().min(6)]
+            );
+
+            // Check right edges of all SVG rects on every flowed page against the
+            // un-flowed Page 2 frame max right edge (no shifted band may extend
+            // outside the official frame).
+            let max_base_x1 = base_dom
+                .svg_nodes
+                .iter()
+                .filter_map(|n| n.rect.as_ref().map(|(x, _, w, _, _)| x + w))
+                .fold(0.0_f64, f64::max);
+            let mut flowed_pages = vec![flowed_dom];
+            let mut k = 1usize;
+            while flowed.contains(&format!("class=\"page page-2-cont-{k}\"")) {
+                let marker = format!("class=\"page page-2-cont-{k}\"");
+                let pos = flowed.find(&marker).unwrap();
+                let div_start = flowed[..pos].rfind("<div").unwrap();
+                let div_end = find_matching_div_end(&flowed, div_start).unwrap();
+                let fake_doc =
+                    flowed[div_start..div_end].replacen(&marker, "class=\"page page-2\"", 1);
+                flowed_pages.push(parse_flow_page_dom(&fake_doc, 2).expect("parse cont page"));
+                k += 1;
+            }
+            for (pi, pdom) in flowed_pages.iter().enumerate() {
+                for n in &pdom.svg_nodes {
+                    if let Some((x, y, w, h, _)) = n.rect {
+                        assert!(
+                            x + w <= max_base_x1 + 0.5,
+                            "1707 ({row_count} rows) flowed page {} rect (x={x}, y={y}, w={w}, h={h}) right edge {} exceeds frame {max_base_x1}",
+                            pi + 1,
+                            x + w
+                        );
+                    }
+                }
+            }
+        }
     }
 }
