@@ -12121,13 +12121,20 @@ mod donor_estate_print_tests {
         single_only.taxpayer_also_compensation_earner = false;
         single_only.atc = Some(Form1701Atc::Ii013);
         let html_single = filled_document("1701-2018", &single_only.to_print_field_map()).unwrap();
-        assert_eq!(cell_value(&html_single, "p1c23").as_deref(), Some("X"));
-        assert_eq!(cell_value(&html_single, "p1c27"), None);
+        let tags_single = super::input_tags(&html_single);
+        fn val_of<'a>(tags: &[super::InputTag<'a>], name: &str) -> Option<&'a str> {
+            tags.iter()
+                .find(|t| t.name == name)
+                .and_then(|t| super::attr(t.tag, "value"))
+        }
+        assert_eq!(val_of(&tags_single, "p1c23"), Some("X"));
+        assert_eq!(val_of(&tags_single, "p1c27"), None);
 
         let mut mixed = single_only.clone();
         mixed.taxpayer_also_compensation_earner = true;
         let html_mixed = filled_document("1701-2018", &mixed.to_print_field_map()).unwrap();
-        assert_eq!(cell_value(&html_mixed, "p1c23").as_deref(), Some("X"));
-        assert_eq!(cell_value(&html_mixed, "p1c27").as_deref(), Some("X"));
+        let tags_mixed = super::input_tags(&html_mixed);
+        assert_eq!(val_of(&tags_mixed, "p1c23"), Some("X"));
+        assert_eq!(val_of(&tags_mixed, "p1c27"), Some("X"));
     }
 }
