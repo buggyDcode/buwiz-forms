@@ -1,0 +1,2 @@
+box	item	html_cells	case	draft_value	before_92b3e201	after_d1777a31	status	rank	notes
+item15a_balance_carried_over	15A	p1c50	normal	1119.17 (amended=true)	1 1 1 9 . 1 7	1 1 1 9 . 1 7	pass	-	already prints on main 92b3e201 in right box (p1c50, 12 peso slots + 2 centavo slots across preprinted decimal dot); 15D (p1c56) also prints 1 1 1 9 . 1 7; byte-identical between 92b3e201 and d1777a31; preview matches saved PDF

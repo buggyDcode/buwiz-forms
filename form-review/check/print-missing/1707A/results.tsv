@@ -1,0 +1,8 @@
+box	item	html_cells	case	draft_value	before_92b3e201	after_d1777a31	status	rank	notes
+item12a_specify	12A	p1c207	len10	TAX TREATY	(blank)	T A X   T R E A T Y	pass	-	right box (25-slot comb), 1 char per slot, readable, Item 12 Yes (p1c42)=X
+item12a_specify	12A	p1c207	len25	PH-US TAX TREATY ART 13.4	(blank)	P H - U S   T A X   T R E A T Y   A R T   1 3 . 4	pass	-	fills all 25 comb slots cleanly, 1 char per slot, Item 12 Yes (p1c42)=X
+item12a_specify	12A	p1c207	len26	PH-US TAX TREATY ART 13.4X	(blank)	PH-US TAX TREATY ART 13.4X (plain 9.00pt over comb ticks)	FAIL	4	text prints whole at 9.00pt inside p1c207 (not cut, no additional sheet), but 25 SVG comb divider ticks stay drawn behind letters (RULES 1; pre-existing main engine, fixed on #355)
+item12a_specify	12A	p1c207	len60	PH-US INCOME TAX TREATY ARTICLE 13 PARAGRAPH 4 EXEMPTION REF	(blank)	PH-US INCOME TAX TREATY ARTICLE 13 PARAGRAPH 4 EXEMPTION REF (plain 9.00pt over comb ticks)	FAIL	4	text prints whole at 9.00pt inside p1c207 (not cut, not shrunk below 7.5pt, no additional sheet), but 25 SVG comb divider ticks stay drawn behind letters (RULES 1; pre-existing main engine, fixed on #355)
+item12a_specify	12A	p1c207	empty	(empty string)	(blank)	(blank)	pass	-	stays blank; Item 12 Yes (p1c42)=X; byte-identical between 92b3e201 and d1777a31
+item12a_specify	12A	p1c207	relief-no	(null / tax relief = No)	(blank)	(blank)	pass	-	stays blank; Item 12 No (p1c43)=X; byte-identical between 92b3e201 and d1777a31
+other_boxes	all	all_other	all	unchanged	identical	identical	pass	-	0 unintended boxes changed across pages 1-2 in all 6 cases; preview matches saved PDF
