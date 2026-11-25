@@ -118,6 +118,10 @@ pub struct LayoutBand {
     pub cell_ids: Vec<String>,
     #[serde(default)]
     pub spanning_svg_ids: Vec<String>,
+    /// Un-ID'd multi-band vertical rails promoted from `svg_indices` at flow time
+    /// so they split/extend cleanly per output page instead of shifting with one band.
+    #[serde(default)]
+    pub spanning_svg_indices: Vec<usize>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -356,6 +360,12 @@ fn parse_flow_page_dom(doc_html: &str, page_num: usize) -> Result<FlowPageDom, S
                 break;
             };
             let open_slice = &lt_inner[tag_open..tag_open + gt_rel + 1];
+            let lt_cls = extract_attr(open_slice, "class").unwrap_or("");
+            if open_slice.starts_with("<div") && lt_cls.split_whitespace().any(|tok| tok == "band")
+            {
+                pos = tag_open + gt_rel + 1;
+                continue;
+            }
             let is_div = open_slice.starts_with("<div");
             let elem_end = if is_div {
                 find_matching_div_end(lt_inner, tag_open).unwrap_or(tag_open + gt_rel + 1)
@@ -427,6 +437,14 @@ fn parse_flow_page_dom(doc_html: &str, page_num: usize) -> Result<FlowPageDom, S
                 break;
             };
             let open_slice = &lc_inner[tag_open..tag_open + gt_rel + 1];
+            // Unwrap `<div class="band" id="band-content-...">` wrappers in place so
+            // both their `<div class="c">` cells AND `<div class="t">` text nodes
+            // (e.g. row labels `1..4`) are parsed as first-class elements.
+            let cls = extract_attr(open_slice, "class").unwrap_or("");
+            if open_slice.starts_with("<div") && cls.split_whitespace().any(|tok| tok == "band") {
+                pos = tag_open + gt_rel + 1;
+                continue;
+            }
             let elem_end = if open_slice.starts_with("<div") {
                 find_matching_div_end(lc_inner, tag_open).unwrap_or(tag_open + gt_rel + 1)
             } else if open_slice.starts_with("<input") || open_slice.ends_with("/>") {
@@ -441,6 +459,24 @@ fn parse_flow_page_dom(doc_html: &str, page_num: usize) -> Result<FlowPageDom, S
                 continue;
             };
             let raw = &lc_inner[tag_open..elem_end];
+
+            // Text spans (`<div class="t" id="p2t...">`) wrapped inside `<div class="band">`
+            // belong in `texts`, not `cells`.
+            if open_slice.starts_with("<div") && cls.split_whitespace().any(|tok| tok == "t") {
+                let id = extract_attr(open_slice, "id").map(|s| s.to_string());
+                let left = extract_style_pt(open_slice, "left:").unwrap_or(0.0);
+                let top = extract_style_pt(open_slice, "top:").unwrap_or(0.0);
+                let inner = &raw[gt_rel + 1..raw.rfind("</").unwrap_or(raw.len())];
+                texts.push(FlowTextNode {
+                    id,
+                    left,
+                    top,
+                    raw_html: raw.to_string(),
+                    plain_text: strip_html_tags(inner).trim().to_string(),
+                });
+                pos = elem_end;
+                continue;
+            }
 
             // Check if this is a fill-time overlay keyed to a cell
             if let Some(owner) = extract_attr(open_slice, "data-overflow-of")
@@ -722,6 +758,7 @@ fn derive_page_layout(dom: &FlowPageDom, page_bands: &[&FormgenBand]) -> Option<
             text_ids: Vec::new(),
             cell_ids: Vec::new(),
             spanning_svg_ids: Vec::new(),
+            spanning_svg_indices: Vec::new(),
         })
         .collect();
 
@@ -1169,6 +1206,7 @@ fn render_extra_rows_for_band(
     slug: &str,
     raw_html: &str,
     dom: &FlowPageDom,
+    layout: &PageLayout,
     mb: &MatchedBand,
     sched: &OverflowSchedule,
 ) -> Result<Vec<RenderedExtraRow>, String> {
@@ -1280,6 +1318,39 @@ fn render_extra_rows_for_band(
     let mut batch_aliases: BTreeMap<String, String> = BTreeMap::new();
     let mut row_cell_ids: Vec<Vec<String>> = Vec::with_capacity(sched.rows.len());
 
+    // Detect form-wide item-number collisions (e.g. 1701A Part IV.A rows 40..42
+    // followed directly by Item 43 Total, and Part IV.B rows 49..51 followed by Item 52).
+    // When `first_extra_num` already appears as an item number in a following band,
+    // label extra rows as `42a`, `42b`, `42c`, ... instead of colliding with `43`/`52`.
+    let sub_item_base: Option<usize> = if !sched.row_label_lettered {
+        let first_extra = sched.rows.first().map(|r| r.row_number).unwrap_or(0);
+        if first_extra > 1 {
+            let needle = first_extra.to_string();
+            let this_band_idx = layout
+                .bands
+                .iter()
+                .position(|b| b.growable_id.as_deref() == Some(band.id.as_str()));
+            let collides = this_band_idx.is_some_and(|bi| {
+                layout.bands.iter().skip(bi + 1).take(3).any(|next_b| {
+                    next_b.text_ids.iter().any(|tid| {
+                        raw_texts_by_id
+                            .get(tid.as_str())
+                            .is_some_and(|t| t.plain_text.trim() == needle)
+                    })
+                })
+            });
+            if collides {
+                Some(first_extra - 1)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let mut out_rows: Vec<RenderedExtraRow> = Vec::with_capacity(sched.rows.len());
 
     for (r_idx, ov_row) in sched.rows.iter().enumerate() {
@@ -1289,7 +1360,8 @@ fn render_extra_rows_for_band(
         svg_structural.extend(tpl_structural_extra.iter().cloned());
         let svg_decorative = tpl_decorative_extra.clone();
 
-        // Clone row texts (enumerated row label `E, F, G` or `5, 6, 7`, plus dots `●`).
+        // Clone row texts (enumerated row label `E, F, G` or `5, 6, 7`, or `42a, 42b`
+        // when `43` is already an official item number below, plus dots `●`).
         let mut texts = Vec::new();
         for bt in &trow.texts {
             let Some(tid) = bt.id.as_deref() else {
@@ -1302,7 +1374,12 @@ fn render_extra_rows_for_band(
             // Strip source `id="..."` on cloned rows so IDs stay unique for conservation.
             elem = strip_id_attr(&elem);
             if bt.role.as_deref() == Some("enumerated") {
-                let label = format_row_label(ov_row.row_number, sched.row_label_lettered);
+                let label = if let Some(base) = sub_item_base {
+                    let suffix = format_row_label(r_idx + 1, true).to_ascii_lowercase();
+                    format!("{base}{suffix}")
+                } else {
+                    format_row_label(ov_row.row_number, sched.row_label_lettered)
+                };
                 elem = replace_inner_text(&elem, &label);
             }
             texts.push(elem);
@@ -1310,8 +1387,9 @@ fn render_extra_rows_for_band(
 
         // Clone cells relative to `trow_y0` (top = orig_top - trow_y0).
         let mut ids_for_row = Vec::new();
-        // Track money pairs `(peso_id, cents_id_opt)` per `col_idx` in this row.
-        let mut money_pairs: BTreeMap<usize, (Option<String>, Option<String>)> = BTreeMap::new();
+        // Track money pairs `(peso_id, cents_id_opt, orig_writer_key)` per `col_idx` in this row.
+        let mut money_pairs: BTreeMap<usize, (Option<String>, Option<String>, String)> =
+            BTreeMap::new();
 
         for bc in &trow.cells {
             let Some(orig_c) = raw_cells_by_id.get(bc.id.as_str()) else {
@@ -1325,47 +1403,59 @@ fn render_extra_rows_for_band(
 
             if let Some(join) = mb.cell_map.get(&bc.id) {
                 match join {
-                    CellJoinKind::Text { col_idx, .. } => {
+                    CellJoinKind::Text {
+                        col_idx,
+                        orig_writer_key,
+                    } => {
                         if let Some(val) = ov_row.values.get(*col_idx) {
                             if !val.trim().is_empty() {
-                                let syn_key = format!("__bf_t_{r_idx}_{new_id}");
+                                // Preserve `:orig_writer_key` tail so `frozen_html`'s
+                                // `is_amount_typed_key` right-aligns extra-row amounts (RULES 4).
+                                let syn_key = format!("__bf_t_{r_idx}_{new_id}:{orig_writer_key}");
                                 batch_values.insert(syn_key.clone(), val.clone());
                                 extra_joins.insert(syn_key, vec![new_id]);
                             }
                         }
                     }
                     CellJoinKind::Money {
-                        col_idx, is_peso, ..
+                        col_idx,
+                        orig_writer_key,
+                        is_peso,
                     } => {
-                        let entry = money_pairs.entry(*col_idx).or_insert((None, None));
+                        let entry = money_pairs
+                            .entry(*col_idx)
+                            .or_insert_with(|| (None, None, orig_writer_key.clone()));
                         if *is_peso {
                             entry.0 = Some(new_id);
                         } else {
                             entry.1 = Some(new_id);
                         }
                     }
-                    CellJoinKind::Peso { col_idx, .. } => {
+                    CellJoinKind::Peso {
+                        col_idx,
+                        orig_writer_key,
+                    } => {
                         if let Some(val) = ov_row.values.get(*col_idx) {
                             if !val.trim().is_empty() {
-                                let syn_key = format!("__bf_p_{r_idx}_{new_id}");
+                                let syn_key = format!("__bf_p_{r_idx}_{new_id}:{orig_writer_key}");
                                 batch_values.insert(syn_key.clone(), val.clone());
                                 extra_peso_joins.push((syn_key, new_id));
                             }
                         }
                     }
-                    CellJoinKind::Ordinal { .. } => {
-                        let syn_key = format!("__bf_o_{r_idx}_{new_id}");
+                    CellJoinKind::Ordinal { orig_writer_key } => {
+                        let syn_key = format!("__bf_o_{r_idx}_{new_id}:{orig_writer_key}");
                         batch_values.insert(syn_key.clone(), ov_row.row_number.to_string());
                         extra_joins.insert(syn_key, vec![new_id]);
                     }
                 }
             }
         }
-        for (col_idx, (peso_opt, cents_opt)) in money_pairs {
+        for (col_idx, (peso_opt, cents_opt, orig_writer_key)) in money_pairs {
             if let Some(peso_id) = peso_opt {
                 if let Some(val) = ov_row.values.get(col_idx) {
                     if !val.trim().is_empty() {
-                        let syn_key = format!("__bf_m_{r_idx}_{col_idx}");
+                        let syn_key = format!("__bf_m_{r_idx}_{col_idx}:{orig_writer_key}");
                         batch_values.insert(syn_key.clone(), val.clone());
                         extra_money_joins.push((syn_key, peso_id, cents_opt));
                     }
@@ -1585,6 +1675,60 @@ fn flow_single_page(
         }
     }
 
+    // Promote any un-ID'd vertical rail in `svg_indices` whose vertical span crosses
+    // 2+ non-TrailingSpace bands (e.g. 1600WP outer rails, 2550M Schedule 7 dividers)
+    // into `spanning_svg_indices` across every band it overlaps so it splits and
+    // extends cleanly per output page instead of shifting past paper bounds.
+    let mut promoted_spans: Vec<(usize, Vec<usize>)> = Vec::new();
+    for b in &mut effective_layout.bands {
+        let mut keep = Vec::with_capacity(b.svg_indices.len());
+        for &sidx in &b.svg_indices {
+            let is_multi_band_rail = dom
+                .svg_nodes
+                .get(sidx)
+                .and_then(|n| n.rect.as_ref())
+                .and_then(|&(_, y, w, h, _)| {
+                    if w <= 3.0 && h > 10.0 {
+                        let y_bot = y + h;
+                        let covered: Vec<usize> = layout
+                            .bands
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, cb)| {
+                                cb.kind != BandKind::TrailingSpace
+                                    && y < cb.y1 - 1.0
+                                    && y_bot > cb.y0 + 1.0
+                            })
+                            .map(|(ci, _)| ci)
+                            .collect();
+                        if covered.len() >= 2 {
+                            Some(covered)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                });
+            if let Some(covered) = is_multi_band_rail {
+                promoted_spans.push((sidx, covered));
+            } else {
+                keep.push(sidx);
+            }
+        }
+        b.svg_indices = keep;
+    }
+    for (sidx, covered) in promoted_spans {
+        for ci in covered {
+            if !effective_layout.bands[ci]
+                .spanning_svg_indices
+                .contains(&sidx)
+            {
+                effective_layout.bands[ci].spanning_svg_indices.push(sidx);
+            }
+        }
+    }
+
     let packed = pack_page(
         slug,
         raw_html,
@@ -1611,7 +1755,7 @@ fn pack_page(
     // Map `growable_id -> RenderedExtraRow` list.
     let mut extra_by_growable: BTreeMap<String, Vec<RenderedExtraRow>> = BTreeMap::new();
     for (mb, sched) in growths {
-        let rendered = render_extra_rows_for_band(slug, raw_html, dom, mb, sched)?;
+        let rendered = render_extra_rows_for_band(slug, raw_html, dom, layout, mb, sched)?;
         extra_by_growable.insert(mb.band.id.clone(), rendered);
     }
 
@@ -1641,15 +1785,16 @@ fn pack_page(
                 .as_ref()
                 .and_then(|gid| extra_by_growable.remove(gid))
                 .unwrap_or_default();
-            // Look back for immediately preceding `TableHead` in same `table_group`.
-            let head_band_idx = if i > 0
-                && layout.bands[i - 1].kind == BandKind::TableHead
-                && layout.bands[i - 1].table_group == b.table_group
-            {
-                Some(i - 1)
-            } else {
-                None
-            };
+            // Look back for preceding `TableHead` in same `table_group`, walking past up
+            // to 4 leading fixed `PlainBlock` rows (e.g. 1800 Schedule B, 1600PT/1600VT).
+            let head_band_idx = (0..i)
+                .rev()
+                .take(6)
+                .find(|&j| {
+                    let cand = &layout.bands[j];
+                    cand.kind == BandKind::TableHead && cand.table_group == b.table_group
+                })
+                .filter(|&j| (j + 1..i).all(|k| layout.bands[k].kind == BandKind::PlainBlock));
             // Look ahead for immediately following `TotalRow` in same `table_group`.
             let total_band_idx = if i + 1 < layout.bands.len()
                 && layout.bands[i + 1].kind == BandKind::TotalRow
@@ -2046,17 +2191,29 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
     let cell_by_id: BTreeMap<&str, &FlowCellNode> =
         dom.cells.iter().map(|c| (c.id.as_str(), c)).collect();
 
-    let mut svg_out = String::new();
+    let mut svg_bg_out = String::new();
+    let mut svg_rules_out = String::new();
     let mut text_out = String::new();
     let mut cells_out = String::new();
 
-    // Count how many bands in the source page layout reference each spanning SVG rule,
-    // and collect per-output-page spans so every spanning rail is emitted ONCE per
-    // output page with exact geometry (verbatim when un-grown and un-shifted).
-    let mut total_span_refs: BTreeMap<&str, usize> = BTreeMap::new();
+    // Count how many bands in the source page layout reference each spanning SVG rail
+    // (both `spanning_svg_ids` from layout metadata AND `spanning_svg_indices` promoted
+    // from un-ID'd multi-band vertical rails), so every spanning rail is emitted ONCE
+    // per output page with exact geometry (verbatim when un-grown and un-shifted).
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    enum SpanKey<'a> {
+        Id(&'a str),
+        Index(usize),
+    }
+    let mut total_span_refs: BTreeMap<SpanKey<'_>, usize> = BTreeMap::new();
     for b in &layout.bands {
         for rid in &b.spanning_svg_ids {
-            *total_span_refs.entry(rid.as_str()).or_default() += 1;
+            *total_span_refs
+                .entry(SpanKey::Id(rid.as_str()))
+                .or_default() += 1;
+        }
+        for &sidx in &b.spanning_svg_indices {
+            *total_span_refs.entry(SpanKey::Index(sidx)).or_default() += 1;
         }
     }
     struct SpanRef {
@@ -2067,7 +2224,7 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
         slice_top: f64,
         slice_bottom: f64,
     }
-    let mut span_refs: BTreeMap<&str, Vec<SpanRef>> = BTreeMap::new();
+    let mut span_refs: BTreeMap<SpanKey<'_>, Vec<SpanRef>> = BTreeMap::new();
 
     for slice in &pp.slices {
         match slice {
@@ -2090,20 +2247,37 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
                     &svg_by_id,
                     &text_by_id,
                     &cell_by_id,
-                    &mut svg_out,
+                    &mut svg_bg_out,
+                    &mut svg_rules_out,
                     &mut text_out,
                     &mut cells_out,
                 );
                 let slice_bottom = dest_y + (band.y1 - band.y0) - *shrunk_pt;
                 for rid in &band.spanning_svg_ids {
-                    span_refs.entry(rid.as_str()).or_default().push(SpanRef {
-                        band_idx: *band_idx,
-                        dy,
-                        shrunk_pt: *shrunk_pt,
-                        is_orig_band: true,
-                        slice_top: *dest_y,
-                        slice_bottom,
-                    });
+                    span_refs
+                        .entry(SpanKey::Id(rid.as_str()))
+                        .or_default()
+                        .push(SpanRef {
+                            band_idx: *band_idx,
+                            dy,
+                            shrunk_pt: *shrunk_pt,
+                            is_orig_band: true,
+                            slice_top: *dest_y,
+                            slice_bottom,
+                        });
+                }
+                for &sidx in &band.spanning_svg_indices {
+                    span_refs
+                        .entry(SpanKey::Index(sidx))
+                        .or_default()
+                        .push(SpanRef {
+                            band_idx: *band_idx,
+                            dy,
+                            shrunk_pt: *shrunk_pt,
+                            is_orig_band: true,
+                            slice_top: *dest_y,
+                            slice_bottom,
+                        });
                 }
             }
             PlacedSlice::OrigRowsPlusExtra {
@@ -2124,7 +2298,8 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
                     &svg_by_id,
                     &text_by_id,
                     &cell_by_id,
-                    &mut svg_out,
+                    &mut svg_bg_out,
+                    &mut svg_rules_out,
                     &mut text_out,
                     &mut cells_out,
                 );
@@ -2132,21 +2307,37 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
                 // 2. Emit extra rows directly beneath the original printed rows.
                 let mut row_y = dest_y + *orig_height_pt;
                 for er in extra_rows {
-                    emit_extra_row(er, row_y, &mut svg_out, &mut text_out, &mut cells_out);
+                    emit_extra_row(er, row_y, &mut svg_rules_out, &mut text_out, &mut cells_out);
                     row_y += er.height_pt;
                 }
 
                 // 3. Record spanning rail coverage for this slice.
                 let did_grow = !extra_rows.is_empty() || *continues_next;
                 for rid in &band.spanning_svg_ids {
-                    span_refs.entry(rid.as_str()).or_default().push(SpanRef {
-                        band_idx: *band_idx,
-                        dy,
-                        shrunk_pt: 0.0,
-                        is_orig_band: !did_grow,
-                        slice_top: *dest_y,
-                        slice_bottom: row_y,
-                    });
+                    span_refs
+                        .entry(SpanKey::Id(rid.as_str()))
+                        .or_default()
+                        .push(SpanRef {
+                            band_idx: *band_idx,
+                            dy,
+                            shrunk_pt: 0.0,
+                            is_orig_band: !did_grow,
+                            slice_top: *dest_y,
+                            slice_bottom: row_y,
+                        });
+                }
+                for &sidx in &band.spanning_svg_indices {
+                    span_refs
+                        .entry(SpanKey::Index(sidx))
+                        .or_default()
+                        .push(SpanRef {
+                            band_idx: *band_idx,
+                            dy,
+                            shrunk_pt: 0.0,
+                            is_orig_band: !did_grow,
+                            slice_top: *dest_y,
+                            slice_bottom: row_y,
+                        });
                 }
 
                 // 4. On a mid-table break, close the table cleanly and print the cue.
@@ -2155,7 +2346,7 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
                         layout.table_x0,
                         layout.table_x1,
                         row_y,
-                        &mut svg_out,
+                        &mut svg_rules_out,
                         &mut text_out,
                     );
                 }
@@ -2169,41 +2360,60 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
                 let band = &layout.bands[*band_idx];
                 let mut row_y = *dest_y;
                 for er in extra_rows {
-                    emit_extra_row(er, row_y, &mut svg_out, &mut text_out, &mut cells_out);
+                    emit_extra_row(er, row_y, &mut svg_rules_out, &mut text_out, &mut cells_out);
                     row_y += er.height_pt;
                 }
                 for rid in &band.spanning_svg_ids {
-                    span_refs.entry(rid.as_str()).or_default().push(SpanRef {
-                        band_idx: *band_idx,
-                        dy: dest_y - band.y0,
-                        shrunk_pt: 0.0,
-                        is_orig_band: false,
-                        slice_top: *dest_y,
-                        slice_bottom: row_y,
-                    });
+                    span_refs
+                        .entry(SpanKey::Id(rid.as_str()))
+                        .or_default()
+                        .push(SpanRef {
+                            band_idx: *band_idx,
+                            dy: dest_y - band.y0,
+                            shrunk_pt: 0.0,
+                            is_orig_band: false,
+                            slice_top: *dest_y,
+                            slice_bottom: row_y,
+                        });
+                }
+                for &sidx in &band.spanning_svg_indices {
+                    span_refs
+                        .entry(SpanKey::Index(sidx))
+                        .or_default()
+                        .push(SpanRef {
+                            band_idx: *band_idx,
+                            dy: dest_y - band.y0,
+                            shrunk_pt: 0.0,
+                            is_orig_band: false,
+                            slice_top: *dest_y,
+                            slice_bottom: row_y,
+                        });
                 }
                 if *continues_next {
                     emit_break_closing_and_cue(
                         layout.table_x0,
                         layout.table_x1,
                         row_y,
-                        &mut svg_out,
+                        &mut svg_rules_out,
                         &mut text_out,
                     );
                 }
             }
             PlacedSlice::Rule6Line { dest_y, ins } => {
-                emit_rule6_line(*dest_y, ins, &mut svg_out, &mut text_out);
+                emit_rule6_line(*dest_y, ins, &mut svg_rules_out, &mut text_out);
             }
         }
     }
 
     // Emit each spanning SVG rail ONCE per output page.
-    for (rid, refs) in span_refs {
-        let Some(node) = svg_by_id.get(rid) else {
+    for (skey, refs) in span_refs {
+        let Some(node) = (match skey {
+            SpanKey::Id(rid) => svg_by_id.get(rid).copied(),
+            SpanKey::Index(sidx) => dom.svg_nodes.get(sidx),
+        }) else {
             continue;
         };
-        let total = total_span_refs.get(rid).copied().unwrap_or(0);
+        let total = total_span_refs.get(&skey).copied().unwrap_or(0);
         let all_intact = refs.len() == total
             && refs
                 .iter()
@@ -2214,7 +2424,7 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
                 &layout.bands[refs[0].band_idx],
                 refs[0].dy,
                 0.0,
-                &mut svg_out,
+                &mut svg_rules_out,
             );
             continue;
         }
@@ -2224,7 +2434,7 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
                 &layout.bands[refs[0].band_idx],
                 refs[0].dy,
                 0.0,
-                &mut svg_out,
+                &mut svg_rules_out,
             );
             continue;
         };
@@ -2251,17 +2461,24 @@ fn emit_packed_page(dom: &FlowPageDom, layout: &PageLayout, pp: &PackedPage) -> 
             }
         }
         if min_top.is_finite() && max_bottom.is_finite() {
-            let new_h = (max_bottom - min_top).max(0.5);
-            svg_out.push_str(&format!(
-                "<g class=\"{}\"><rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{fill}\" data-rule-id=\"{rid}\"/></g>",
+            let clamped_top = min_top.max(0.0);
+            let clamped_bot = max_bottom.min(layout.content_bottom_y.max(clamped_top + 0.5));
+            let new_h = (clamped_bot - clamped_top).max(0.5);
+            let id_attr = match skey {
+                SpanKey::Id(rid) => format!(" data-rule-id=\"{rid}\""),
+                SpanKey::Index(_) => String::new(),
+            };
+            svg_rules_out.push_str(&format!(
+                "<g class=\"{}\"><rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" fill=\"{fill}\"{id_attr}/></g>",
                 node.layer,
                 fmt_pt(x),
-                fmt_pt(min_top),
+                fmt_pt(clamped_top),
                 fmt_pt(w),
                 fmt_pt(new_h),
             ));
         }
     }
+    let svg_out = format!("{svg_bg_out}{svg_rules_out}");
 
     let (page_class, page_id) = if pp.cont_index == 0 {
         (
@@ -2298,20 +2515,31 @@ fn emit_original_band(
     svg_by_id: &BTreeMap<&str, &FlowSvgNode>,
     text_by_id: &BTreeMap<&str, &FlowTextNode>,
     cell_by_id: &BTreeMap<&str, &FlowCellNode>,
-    svg_out: &mut String,
+    svg_bg_out: &mut String,
+    svg_rules_out: &mut String,
     text_out: &mut String,
     cells_out: &mut String,
 ) {
-    // Emit SVG nodes in original paint order: un-ID'd fills/shading (`svg_indices`)
-    // first, then ID'd rules (`svg_ids`) on top so background rects never paint over rules.
+    // Emit SVG nodes into `bg` (fills/shading) and `rules` (borders/dividers)
+    // buckets so background fills from one band never paint over borders of another.
     for &sidx in &band.svg_indices {
         if let Some(node) = dom.svg_nodes.get(sidx) {
-            emit_svg_node_shifted(node, band, dy, shrunk_pt, svg_out);
+            let dst = if node.layer == "bg" {
+                &mut *svg_bg_out
+            } else {
+                &mut *svg_rules_out
+            };
+            emit_svg_node_shifted(node, band, dy, shrunk_pt, dst);
         }
     }
     for rid in &band.svg_ids {
         if let Some(node) = svg_by_id.get(rid.as_str()) {
-            emit_svg_node_shifted(node, band, dy, shrunk_pt, svg_out);
+            let dst = if node.layer == "bg" {
+                &mut *svg_bg_out
+            } else {
+                &mut *svg_rules_out
+            };
+            emit_svg_node_shifted(node, band, dy, shrunk_pt, dst);
         }
     }
 
@@ -2397,18 +2625,29 @@ fn emit_original_band_non_spanning(
     svg_by_id: &BTreeMap<&str, &FlowSvgNode>,
     text_by_id: &BTreeMap<&str, &FlowTextNode>,
     cell_by_id: &BTreeMap<&str, &FlowCellNode>,
-    svg_out: &mut String,
+    svg_bg_out: &mut String,
+    svg_rules_out: &mut String,
     text_out: &mut String,
     cells_out: &mut String,
 ) {
     for &sidx in &band.svg_indices {
         if let Some(node) = dom.svg_nodes.get(sidx) {
-            emit_svg_node_shifted(node, band, dy, 0.0, svg_out);
+            let dst = if node.layer == "bg" {
+                &mut *svg_bg_out
+            } else {
+                &mut *svg_rules_out
+            };
+            emit_svg_node_shifted(node, band, dy, 0.0, dst);
         }
     }
     for rid in &band.svg_ids {
         if let Some(node) = svg_by_id.get(rid.as_str()) {
-            emit_svg_node_shifted(node, band, dy, 0.0, svg_out);
+            let dst = if node.layer == "bg" {
+                &mut *svg_bg_out
+            } else {
+                &mut *svg_rules_out
+            };
+            emit_svg_node_shifted(node, band, dy, 0.0, dst);
         }
     }
     for tid in &band.text_ids {
@@ -2437,10 +2676,12 @@ fn emit_svg_node_shifted(
         let mut new_y = y + dy;
         let mut new_h = h;
         if shrunk_pt > 0.0 {
-            if w <= 3.0 && h > 10.0 {
-                // Vertical side border of elastic box: shorten by `shrunk_pt`.
+            let band_h = (band.y1 - band.y0).max(1.0);
+            if h > 10.0 && (w <= 3.0 || h >= band_h * 0.5) {
+                // Vertical side border OR full-height background fill of an elastic box:
+                // shorten by `shrunk_pt` so the fill does not cover the shifted bottom border.
                 new_h = (h - shrunk_pt).max(1.0);
-            } else if y > band.y0 + (band.y1 - band.y0) * 0.5 {
+            } else if y > band.y0 + band_h * 0.5 {
                 // Bottom rule of elastic box: shift up by `shrunk_pt`.
                 new_y -= shrunk_pt;
             }
@@ -2867,6 +3108,7 @@ mod tests {
                     text_ids: vec!["p1t0".into()],
                     cell_ids: vec![],
                     spanning_svg_ids: vec![],
+                    spanning_svg_indices: vec![],
                 },
                 LayoutBand {
                     id: "p1b1".into(),
@@ -2885,6 +3127,7 @@ mod tests {
                     text_ids: vec!["p1t1".into()],
                     cell_ids: vec!["p1c1".into()],
                     spanning_svg_ids: vec![],
+                    spanning_svg_indices: vec![],
                 },
                 LayoutBand {
                     id: "p1b2".into(),
@@ -2903,6 +3146,7 @@ mod tests {
                     text_ids: vec!["p1t2".into()],
                     cell_ids: vec!["p1c2".into()],
                     spanning_svg_ids: vec![],
+                    spanning_svg_indices: vec![],
                 },
             ],
             rule6_fields: vec![],
@@ -3065,5 +3309,380 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn defect1_wrapped_band_containers_preserve_filled_rows_and_labels() {
+        // 2000-OT Page 2 wraps Schedule 1.A rows 1..4 inside `<div class="band" id="band-content-...">`.
+        let mut fields = BTreeMap::new();
+        fields.insert("frm2000OT:txtTIN1".into(), "000".into());
+        fields.insert("frm2000OT:txtTIN2".into(), "123".into());
+        fields.insert("frm2000OT:txtTIN3".into(), "453".into());
+        fields.insert("frm2000OT:txtBranchCode".into(), "00000".into());
+        fields.insert("frm2000OT:txtTaxpayerName".into(), "SANTOS, JUANA".into());
+        for i in 0..8 {
+            fields.insert(
+                format!("frm2000OT:sched1A:txtOCTNo{i}"),
+                format!("TCT-{:04}", i + 1),
+            );
+            fields.insert(
+                format!("frm2000OT:sched1A:txtLoc{i}"),
+                format!("MAKATI LOT {}", i + 1),
+            );
+            fields.insert(
+                format!("frm2000OT:sched1A:txtArea{i}"),
+                format!("{}.00", (i + 1) * 100),
+            );
+        }
+        let html = frozen_html::filled_document("2000-ot-2018", &fields).expect("2000-OT flowed");
+        // Both original rows (1..5) AND extra rows (6..8) must survive `<div class="band">` unwrapping.
+        for i in 1..=8 {
+            assert!(
+                html.contains(&format!("TCT-{i:04}")),
+                "2000-OT missing Schedule 1.A row {i} value TCT-{i:04}"
+            );
+        }
+        // Conservation on page 2 must hold (including row labels `1..4` wrapped inside `.band`).
+        let raw = frozen_html::raw_bundle_html("2000-ot-2018").expect("2000-OT raw");
+        assert_conservation("2000-ot-2018", raw, &html, 2, "cap+3");
+    }
+
+    #[test]
+    fn defect2_outer_side_borders_and_1600wp_shrunk_elastic_box_bottom_border_preserved() {
+        // 1600WP Page 1 with 9 rows (capacity 6 + 3) shrinks the Machine Validation elastic box.
+        let mut fields = BTreeMap::new();
+        fields.insert("frm1600WP:txtTIN1".into(), "000".into());
+        fields.insert("frm1600WP:txtTIN2".into(), "123".into());
+        fields.insert("frm1600WP:txtTIN3".into(), "453".into());
+        fields.insert("frm1600WP:txtBranchCode".into(), "00000".into());
+        fields.insert("frm1600WP:txtTaxpayerName".into(), "SANTOS, JUANA".into());
+        for i in 1..=9 {
+            fields.insert(
+                format!("frm1600WP:dtSched:txtTin{i}"),
+                format!("000-123-453-00{i:03}"),
+            );
+            fields.insert(
+                format!("frm1600WP:dtSched:txtFullname{i}"),
+                format!("PAYEE {i}"),
+            );
+            fields.insert(
+                format!("frm1600WP:dtSched:amount{i}"),
+                format!("{}.00", i * 1000),
+            );
+            fields.insert(
+                format!("frm1600WP:dtSched:taxWithheld{i}"),
+                format!("{}.00", i * 100),
+            );
+        }
+        let html = frozen_html::filled_document("1600wp-2010", &fields).expect("1600WP flowed");
+        let dom = parse_flow_page_dom(&html, 1).expect("1600WP p1 dom");
+
+        // 1) Outer left (x ~= 17.0) and right (x ~= 593.0) rails must span through the page
+        //    and stay inside `content_bottom_y` (918pt).
+        let left_rails: Vec<_> = dom
+            .svg_nodes
+            .iter()
+            .filter_map(|n| n.rect.as_ref())
+            .filter(|(x, _, w, h, _)| *x < 20.0 && *w <= 3.0 && *h > 500.0)
+            .collect();
+        let right_rails: Vec<_> = dom
+            .svg_nodes
+            .iter()
+            .filter_map(|n| n.rect.as_ref())
+            .filter(|(x, _, w, h, _)| *x > 590.0 && *w <= 3.0 && *h > 500.0)
+            .collect();
+        assert!(
+            !left_rails.is_empty() && !right_rails.is_empty(),
+            "1600WP p1 missing outer side rails: left={left_rails:?}, right={right_rails:?}"
+        );
+        for (_, y, _, h, _) in left_rails.iter().chain(right_rails.iter()) {
+            assert!(
+                *y >= 0.0 && y + h <= 918.5,
+                "1600WP p1 outer rail y={y}..{} outside content box",
+                y + h
+            );
+        }
+
+        // 2) Shrunk Machine Validation elastic box must keep its bottom horizontal border
+        //    in `rules` AFTER `bg` fills, and its white bg rect must not extend past that border.
+        let bottom_rules: Vec<_> = dom
+            .svg_nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, n)| {
+                n.rect.as_ref().and_then(|(x, y, w, h, fill)| {
+                    if *x < 25.0 && *w > 500.0 && *h <= 3.0 && *y > 850.0 && fill != "#ffffff" {
+                        Some((idx, *y))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .collect();
+        let last_bottom_rule = bottom_rules
+            .iter()
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+            .copied()
+            .expect("1600WP p1 shrunk elastic box bottom horizontal border missing");
+        // Verify no white bg rect emitted after `last_bottom_rule` covers it.
+        for (idx, n) in dom.svg_nodes.iter().enumerate() {
+            if let Some((_, y, w, h, fill)) = n.rect.as_ref() {
+                if fill == "#ffffff" && *w > 400.0 && *y > 800.0 {
+                    assert!(
+                        idx < last_bottom_rule.0,
+                        "1600WP white elastic-box fill (idx={idx}) emitted after bottom border (idx={})",
+                        last_bottom_rule.0
+                    );
+                    assert!(
+                        y + h <= last_bottom_rule.1 + 1.5,
+                        "1600WP white elastic-box fill bottom {} overshoots bottom border {}",
+                        y + h,
+                        last_bottom_rule.1
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn defect3_2550m_schedule3c_no_overlap_and_schedule7_dividers_within_paper() {
+        // 2550M Page 2 with 6 Schedule 3A rows (capacity 3 + 3).
+        let mut fields = BTreeMap::new();
+        fields.insert("frm2550m:txtTIN1".into(), "000".into());
+        fields.insert("frm2550m:txtTIN2".into(), "123".into());
+        fields.insert("frm2550m:txtTIN3".into(), "453".into());
+        fields.insert("frm2550m:txtBranchCode".into(), "00000".into());
+        fields.insert("frm2550m:txtTaxpayerName".into(), "SANTOS, JUANA".into());
+        for i in 0..6 {
+            fields.insert(
+                format!("txtDatePurchased3A{i}"),
+                format!("01/0{}/2026", i + 1),
+            );
+            fields.insert(
+                format!("txtDescription3A{i}"),
+                format!("EQUIPMENT {}", i + 1),
+            );
+            fields.insert(format!("txtAmt3A{i}"), format!("{}.00", (i + 1) * 50000));
+        }
+        let html = frozen_html::filled_document("2550m-2007", &fields).expect("2550M flowed");
+        assert!(
+            html.contains("EQUIPMENT 6"),
+            "2550M extra row 6 must be printed"
+        );
+        // Every SVG rect on Page 2 and any continuation page must stay inside 990pt content box (and 1008pt paper).
+        let mut pages = vec![parse_flow_page_dom(&html, 2).expect("2550M p2")];
+        let mut k = 1usize;
+        while html.contains(&format!("class=\"page page-2-cont-{k}\"")) {
+            let marker = format!("class=\"page page-2-cont-{k}\"");
+            let pos = html.find(&marker).unwrap();
+            let div_start = html[..pos].rfind("<div").unwrap();
+            let div_end = find_matching_div_end(&html, div_start).unwrap();
+            let fake_doc = html[div_start..div_end].replacen(&marker, "class=\"page page-2\"", 1);
+            pages.push(parse_flow_page_dom(&fake_doc, 2).expect("2550M cont page"));
+            k += 1;
+        }
+        for (pi, pdom) in pages.iter().enumerate() {
+            for n in &pdom.svg_nodes {
+                if let Some((x, y, w, h, _)) = n.rect {
+                    assert!(
+                        y >= -0.5 && y + h <= 991.0,
+                        "2550M page {} SVG rect (x={x}, y={y}, w={w}, h={h}) runs past content box (y_bot={})",
+                        pi + 1,
+                        y + h
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn defect4_extra_row_amounts_right_aligned_and_1701a_no_item_number_collision() {
+        // (a) 1600WP extra-row amounts must be right-aligned (RULES 4).
+        let mut f1600 = BTreeMap::new();
+        f1600.insert("frm1600WP:txtTIN1".into(), "000".into());
+        f1600.insert("frm1600WP:txtTIN2".into(), "123".into());
+        f1600.insert("frm1600WP:txtTIN3".into(), "453".into());
+        f1600.insert("frm1600WP:txtBranchCode".into(), "00000".into());
+        f1600.insert("frm1600WP:txtTaxpayerName".into(), "SANTOS, JUANA".into());
+        for i in 1..=8 {
+            f1600.insert(
+                format!("frm1600WP:dtSched:txtTin{i}"),
+                format!("000-123-453-00{i:03}"),
+            );
+            f1600.insert(
+                format!("frm1600WP:dtSched:txtFullname{i}"),
+                format!("PAYEE {i}"),
+            );
+            f1600.insert(
+                format!("frm1600WP:dtSched:amount{i}"),
+                format!("{}.00", i * 1000),
+            );
+            f1600.insert(
+                format!("frm1600WP:dtSched:taxWithheld{i}"),
+                format!("{}.00", i * 100),
+            );
+        }
+        let html_1600 = frozen_html::filled_document("1600wp-2010", &f1600).expect("1600WP");
+        let dom_1600 = parse_flow_page_dom(&html_1600, 1).expect("1600WP p1");
+        let extra_amt_cells: Vec<_> = dom_1600
+            .cells
+            .iter()
+            .filter(|c| {
+                c.id.starts_with("bf_p1_")
+                    && (c.raw_html.contains("8,000.00") || c.raw_html.contains("8000.00"))
+            })
+            .collect();
+        assert!(
+            !extra_amt_cells.is_empty(),
+            "1600WP extra row 8 amount 8,000.00 not found"
+        );
+        for c in extra_amt_cells {
+            assert!(
+                c.raw_html.contains("text-align:right"),
+                "1600WP extra-row amount cell {} must be right-aligned: {}",
+                c.id,
+                c.raw_html
+            );
+        }
+
+        // (b) 1701A Part IV.A (rows 40..42, followed by Item 43 Total) and Part IV.B
+        //     (rows 49..51, followed by Item 52 Total) must label extra rows `42a..` / `51a..`
+        //     instead of reusing `43` and `52`.
+        let mut f1701 = BTreeMap::new();
+        f1701.insert("frm1701A:txtTIN1".into(), "000".into());
+        f1701.insert("frm1701A:txtTIN2".into(), "123".into());
+        f1701.insert("frm1701A:txtTIN3".into(), "453".into());
+        f1701.insert("frm1701A:txtBranchCode".into(), "00000".into());
+        f1701.insert("frm1701A:txtTaxpayerName".into(), "SANTOS, JUANA".into());
+        f1701.insert("frm1701A:txt41Desc".into(), "MISC INCOME 1".into());
+        f1701.insert("frm1701A:txt42Desc".into(), "MISC INCOME 2".into());
+        f1701.insert("frm1701A:txt50Desc".into(), "NONOP INCOME 1".into());
+        f1701.insert("frm1701A:txt51Desc".into(), "NONOP INCOME 2".into());
+        for i in 1..=3 {
+            f1701.insert(
+                format!("frm1701A:txtmodalPartIVADesc_{i}C1"),
+                format!("EXTRA IVA {i}"),
+            );
+            f1701.insert(
+                format!("frm1701A:txtmodalPartIVA_{i}C2"),
+                format!("{}.00", i * 1000),
+            );
+            f1701.insert(
+                format!("frm1701A:txtmodalPartIVBDesc_{i}C1"),
+                format!("EXTRA IVB {i}"),
+            );
+            f1701.insert(
+                format!("frm1701A:txtmodalPartIVB_{i}C2"),
+                format!("{}.00", i * 2000),
+            );
+        }
+        let html_1701 = frozen_html::filled_document("1701a-2018", &f1701).expect("1701A");
+        assert!(
+            html_1701.contains(">42a<") && html_1701.contains(">42b<"),
+            "1701A Part IV.A extra rows must use 42a, 42b instead of colliding with 43"
+        );
+        assert!(
+            html_1701.contains(">51a<") && html_1701.contains(">51b<"),
+            "1701A Part IV.B extra rows must use 51a, 51b instead of colliding with 52"
+        );
+        assert_eq!(
+            html_1701.matches(">43<").count(),
+            1,
+            "1701A item number 43 must appear only once (on the official Total row)"
+        );
+        assert_eq!(
+            html_1701.matches(">52<").count(),
+            1,
+            "1701A item number 52 must appear only once (on the official Total row)"
+        );
+    }
+
+    #[test]
+    fn defect5_gapped_table_head_separated_by_fixed_rows_repeats_on_break() {
+        // Simulate 1800 Schedule B where `p2b15` (table_head, table_group=p2g1) is separated
+        // from `p2b18` (row_template, table_group=p2g1) by 2 fixed PlainBlock rows (`p2b16`, `p2b17`).
+        let raw = frozen_html::raw_bundle_html("1800-2018").expect("1800 raw");
+        let mut layout_doc = parse_page_layout(raw).expect("1800 layout");
+        let mut page2_layout = layout_doc
+            .pages
+            .drain(..)
+            .find(|p| p.page == 2)
+            .expect("1800 p2 layout");
+        for b in &mut page2_layout.bands {
+            if b.id == "p2b15" {
+                b.kind = BandKind::TableHead;
+                b.table_group = Some("p2g1".into());
+                b.repeat_on_break = true;
+            }
+        }
+        let mut fields = BTreeMap::new();
+        fields.insert("frm1800:txtTIN1".into(), "000".into());
+        fields.insert("frm1800:txtTIN2".into(), "123".into());
+        fields.insert("frm1800:txtTIN3".into(), "453".into());
+        fields.insert("frm1800:txtBranchCode".into(), "00000".into());
+        fields.insert("frm1800:txtTaxpayerName".into(), "SANTOS, JUANA".into());
+        // 45 Schedule A (`p2g1`) rows (well past Page 2 height) to force a mid-table break.
+        for i in 0..45 {
+            fields.insert(
+                format!("frm1800v2018:schedA:txtParticulars{i}"),
+                format!("PERSONAL PROPERTY {}", i + 1),
+            );
+            fields.insert(
+                format!("frm1800v2018:schedA:txtFairMarketValue{i}"),
+                format!("{}.00", (i + 1) * 10000),
+            );
+        }
+        let official_filled =
+            frozen_html::filled_document("1800-2018", &BTreeMap::new()).expect("1800 base");
+        let dom = parse_flow_page_dom(&official_filled, 2).expect("1800 p2 dom");
+        let bands_doc = parse_formgen_bands(raw);
+        let wc: serde_json::Value =
+            serde_json::from_str(frozen_html::writer_cells_json("1800-2018").expect("1800 wc"))
+                .expect("1800 wc json");
+        let overflow =
+            crate::continuation::detect_overflow("1800-2018", &fields).expect("overflow");
+        let mut growths = Vec::new();
+        for sched in overflow.schedules {
+            if let Some(matched) = match_schedule_to_bands(&sched, &bands_doc, &wc) {
+                for mb in matched.bands {
+                    if mb.band.page == 2 {
+                        growths.push((mb, sched.clone()));
+                    }
+                }
+            }
+        }
+        assert!(
+            !growths.is_empty(),
+            "1800 Schedule B should produce overflow growths"
+        );
+        let flowed = flow_single_page(
+            "1800-2018",
+            raw,
+            &dom,
+            &page2_layout,
+            &growths,
+            &fields,
+            &[],
+        )
+        .expect("1800 p2 flowed");
+        assert!(
+            flowed.contains("class=\"page page-2-cont-1\""),
+            "1800 Schedule B with 30 rows should break to Page 2 (continued)"
+        );
+        let cont_pos = flowed.find("class=\"page page-2-cont-1\"").unwrap();
+        let cont_html = &flowed[cont_pos..];
+        assert!(
+            cont_html.contains("(continued)"),
+            "1800 Page 2 (continued) must repeat gapped table_head p2b15 with (continued)"
+        );
+        // Verify p2b15's own text IDs were repeated on the continuation page.
+        let p2b15 = page2_layout.bands.iter().find(|b| b.id == "p2b15").unwrap();
+        assert!(
+            p2b15
+                .text_ids
+                .iter()
+                .any(|tid| cont_html.contains(&format!("id=\"{tid}\""))),
+            "1800 Page 2 (continued) did not repeat p2b15 table_head text spans"
+        );
     }
 }
