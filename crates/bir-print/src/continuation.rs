@@ -2093,7 +2093,7 @@ fn slug_to_form_code(slug: &str) -> String {
 }
 
 fn extract_tin(fields: &BTreeMap<String, String>) -> String {
-    let br = first_matching_field_ci(
+    let br = first_top_level_digits_ci(
         fields,
         &[
             "txtBranchCode",
@@ -2109,6 +2109,7 @@ fn extract_tin(fields: &BTreeMap<String, String>) -> String {
             "txtI5BranchCode",
             "txtBranchCode1",
         ],
+        5,
     )
     .unwrap_or_default();
 
@@ -2136,7 +2137,7 @@ fn extract_tin(fields: &BTreeMap<String, String>) -> String {
             }
         }
     }
-    let t1 = first_matching_field_ci(
+    let t1 = first_top_level_digits_ci(
         fields,
         &[
             "txtTIN1",
@@ -2147,9 +2148,10 @@ fn extract_tin(fields: &BTreeMap<String, String>) -> String {
             "txtPg1I6SellerTIN0",
             "txtI5TIN1",
         ],
+        3,
     )
     .unwrap_or_default();
-    let t2 = first_matching_field_ci(
+    let t2 = first_top_level_digits_ci(
         fields,
         &[
             "txtTIN2",
@@ -2160,9 +2162,10 @@ fn extract_tin(fields: &BTreeMap<String, String>) -> String {
             "txtPg1I6SellerTIN1",
             "txtI5TIN2",
         ],
+        3,
     )
     .unwrap_or_default();
-    let t3 = first_matching_field_ci(
+    let t3 = first_top_level_digits_ci(
         fields,
         &[
             "txtTIN3",
@@ -2173,6 +2176,7 @@ fn extract_tin(fields: &BTreeMap<String, String>) -> String {
             "txtPg1I6SellerTIN2",
             "txtI5TIN3",
         ],
+        3,
     )
     .unwrap_or_default();
     if !t1.is_empty() && !t2.is_empty() && !t3.is_empty() {
@@ -2182,6 +2186,34 @@ fn extract_tin(fields: &BTreeMap<String, String>) -> String {
         return format!("{t1}-{t2}-{t3}-{br}");
     }
     nine_digit_fallback.unwrap_or_else(|| "—".to_string())
+}
+
+/// Match a top-level filer TIN or branch-code key (`key` has at most one `:`
+/// namespace separator, excluding schedule/row keys like `frm1600WP:dtSched:txtTin1`
+/// or `frmDummy:sched1:txtTIN1`) whose trimmed value is `1..=max_digits` ASCII digits.
+fn first_top_level_digits_ci(
+    fields: &BTreeMap<String, String>,
+    suffixes: &[&str],
+    max_digits: usize,
+) -> Option<String> {
+    for suffix in suffixes {
+        for (key, value) in fields {
+            if key.matches(':').count() > 1 {
+                continue;
+            }
+            let tail = key.rsplit(':').next().unwrap_or(key);
+            if tail.eq_ignore_ascii_case(suffix) {
+                let trimmed = value.trim();
+                if !trimmed.is_empty()
+                    && trimmed.len() <= max_digits
+                    && trimmed.chars().all(|c| c.is_ascii_digit())
+                {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 fn first_matching_field_ci(fields: &BTreeMap<String, String>, suffixes: &[&str]) -> Option<String> {
@@ -3833,11 +3865,20 @@ mod tests {
             full_text: "VERY LONG REGISTERED ADDRESS FOR TEST".into(),
         }];
         let mut missing = Vec::new();
-        for (slug, fields) in &forms {
-            let tin = extract_tin(fields);
+        for (slug, base_fields) in &forms {
+            let mut fields = base_fields.clone();
+            // Seed schedule/payee row TIN decoys (matching 1600WP's `frm1600WP:dtSched:txtTin1..2`)
+            // so the header must always pick the filer's own TIN + branch code, never a row's.
+            fields.insert("frm1600WP:dtSched:txtTin1".into(), "12345678900001".into());
+            fields.insert("frm1600WP:dtSched:txtTin2".into(), "12345678900002".into());
+            fields.insert("frmDummy:sched1:txtTIN1".into(), "999".into());
+            fields.insert("frmDummy:sched1:txtTIN2".into(), "888".into());
+            fields.insert("frmDummy:sched1:txtTIN3".into(), "777".into());
+            fields.insert("frmDummy:sched1:txtBranchCode".into(), "99999".into());
+            let tin = extract_tin(&fields);
             let html = continuation_pages_html_with_truncated(
                 slug,
-                fields,
+                &fields,
                 &OverflowReport::default(),
                 &truncated,
                 "612pt",
