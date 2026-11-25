@@ -815,13 +815,18 @@ impl Form1600PtDraft {
         let mut fields = self.to_bir_field_map();
         let (a, b, c, d) = split_tin(&self.tin);
         fields.insert("derived:tin_digits".to_string(), format!("{a}{b}{c}{d}"));
-        for (index, row) in self.atc_rows.iter().enumerate().take(FORM_1600PT_ATC_ROWS) {
+        for (index, row) in self.atc_rows.iter().enumerate() {
             let rate = row.rate_text.trim_end_matches(".0");
             let rate = rate
                 .strip_prefix('0')
                 .filter(|r| r.starts_with('.'))
                 .unwrap_or(rate);
-            fields.insert(format!("derived:rate{}", index + 1), rate.to_string());
+            let aligned = if rate.len() == 1 {
+                format!(" {rate}")
+            } else {
+                rate.to_string()
+            };
+            fields.insert(format!("derived:rate{}", index + 1), aligned);
         }
         fields
     }

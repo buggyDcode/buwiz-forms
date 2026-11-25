@@ -1751,7 +1751,14 @@ fn render_extra_rows_for_band(
                                 // Preserve `:orig_writer_key` tail so `frozen_html`'s
                                 // `is_amount_typed_key` right-aligns extra-row amounts (RULES 4).
                                 let syn_key = format!("__bf_t_{r_idx}_{new_id}:{orig_writer_key}");
-                                batch_values.insert(syn_key.clone(), val.clone());
+                                let put_val = if orig_writer_key.starts_with("derived:rate")
+                                    && val.trim().len() == 1
+                                {
+                                    format!(" {}", val.trim())
+                                } else {
+                                    val.clone()
+                                };
+                                batch_values.insert(syn_key.clone(), put_val);
                                 extra_joins.insert(syn_key, vec![new_id]);
                             }
                         }

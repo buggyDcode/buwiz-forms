@@ -179,20 +179,31 @@ impl FilledDocument {
 }
 
 #[derive(Debug, Clone)]
-struct ColumnSpec {
-    stem: String,
-    suffix: String,
-    heading: String,
-    is_amount: bool,
-    start_idx: usize,
-    end_idx: usize,
+pub struct ColumnSpec {
+    pub stem: String,
+    pub suffix: String,
+    pub heading: String,
+    pub is_amount: bool,
+    pub start_idx: usize,
+    pub end_idx: usize,
 }
 
 #[derive(Debug, Clone)]
-struct ScheduleSpec {
-    heading: String,
-    columns: Vec<ColumnSpec>,
-    has_total: bool,
+pub struct ScheduleSpec {
+    pub heading: String,
+    pub columns: Vec<ColumnSpec>,
+    pub has_total: bool,
+}
+
+#[doc(hidden)]
+pub fn discover_schedules_for_test(slug: &str) -> Vec<ScheduleSpec> {
+    let Some(wc_json) = frozen_html::writer_cells_json(slug) else {
+        return Vec::new();
+    };
+    let Ok(parsed) = serde_json::from_str::<Value>(wc_json) else {
+        return Vec::new();
+    };
+    discover_schedules(&parsed)
 }
 
 /// Detect schedule rows in `fields` whose values no cell on `slug`'s frozen
@@ -692,10 +703,10 @@ fn discover_schedules(parsed: &Value) -> Vec<ScheduleSpec> {
 
     let mut col_groups: Vec<ColGroup> = Vec::new();
     for (order, join) in raw_joins.iter().enumerate() {
-        if join.writer_key.starts_with("derived:") {
+        if !looks_like_schedule_row_caption(&join.printed) {
             continue;
         }
-        if !looks_like_schedule_row_caption(&join.printed) {
+        if join.writer_key.starts_with("derived:") && !join.writer_key.starts_with("derived:rate") {
             continue;
         }
         let Some((schedule_heading, row_num, col_heading)) =
@@ -896,7 +907,18 @@ fn match_stem_index(key: &str, stem: &str, suffix: &str) -> Option<usize> {
 
 fn looks_like_schedule_row_caption(printed: &str) -> bool {
     let lower = printed.to_ascii_lowercase();
-    lower.contains(" row ") && (lower.contains("schedule ") || lower.contains("part "))
+    if lower.contains(" row ") && (lower.contains("schedule ") || lower.contains("part ")) {
+        return true;
+    }
+    let trimmed = printed.trim();
+    let digits_end = trimmed.bytes().take_while(|b| b.is_ascii_digit()).count();
+    if digits_end > 0 && digits_end < trimmed.len() && trimmed[digits_end..].starts_with(' ') {
+        return matches!(
+            trimmed[digits_end..].trim(),
+            "ATC" | "Tax Base" | "Tax Rate" | "Tax Withheld"
+        );
+    }
+    false
 }
 
 /// Extract `(schedule_heading, row_number, column_heading)` from a
@@ -942,6 +964,21 @@ fn parse_schedule_row_and_column(printed: &str) -> Option<(String, usize, String
             .trim_start_matches(|c: char| c == ':' || c == '-' || c == ',' || c.is_whitespace())
             .to_string();
         return Some((raw_sched, row_num, col));
+    }
+
+    // Shape 4: "<item_num> <column>" for numbered Part II ATC tables such as 1600-PT
+    // ("13 ATC".."17 ATC", "13 Tax Base".."17 Tax Base", "13 Tax Rate", "13 Tax Withheld").
+    let digits_end = trimmed.bytes().take_while(|b| b.is_ascii_digit()).count();
+    if digits_end > 0 && digits_end < trimmed.len() {
+        let rest = &trimmed[digits_end..];
+        if rest.starts_with(' ') {
+            let col = rest.trim();
+            if matches!(col, "ATC" | "Tax Base" | "Tax Rate" | "Tax Withheld") {
+                if let Ok(item_num) = trimmed[..digits_end].parse::<usize>() {
+                    return Some(("Part II".to_string(), item_num, col.to_string()));
+                }
+            }
+        }
     }
 
     None
@@ -1661,13 +1698,33 @@ fn match_template_index(key: &str, template: &str) -> Option<usize> {
 /// Returns true when `key` is a registered "(Add more...)" popup/modal overflow
 /// key printed by band-flow or continuation sheets for `slug`.
 pub fn is_popup_overflow_key(slug: &str, key: &str) -> bool {
-    POPUP_SCHEDULES.iter().any(|def| {
+    if POPUP_SCHEDULES.iter().any(|def| {
         def.slug == slug
             && def
                 .columns
                 .iter()
                 .any(|col| match_template_index(key, col.key_template).is_some())
-    })
+    }) {
+        return true;
+    }
+    if let Some(wc_json) = frozen_html::writer_cells_json(slug) {
+        if let Ok(parsed) = serde_json::from_str::<Value>(wc_json) {
+            for sched in discover_schedules(&parsed) {
+                for col in &sched.columns {
+                    if let Some(rest) = key.strip_prefix(&col.stem) {
+                        if let Some(digits) = rest.strip_suffix(&col.suffix) {
+                            if let Ok(idx) = digits.parse::<usize>() {
+                                if idx > col.end_idx {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 fn detect_popup_overflow(

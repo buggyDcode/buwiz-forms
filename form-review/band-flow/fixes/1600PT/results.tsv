@@ -1,0 +1,5 @@
+case	state	rows_held	rows_on_paper	pages	sum_wh_arith	printed_item18	verdict
+plus3	before_b9552e27	8	5	2	18822222.14	18822222.14	FAIL_DROPPED_3_ROWS
+plus3	after	8	8	3	18822222.14	18822222.14	PASS
+max	before_b9552e27	31	5	2	206566663.65	206566663.65	FAIL_DROPPED_26_ROWS
+max	after	31	31	3	206566663.65	206566663.65	PASS

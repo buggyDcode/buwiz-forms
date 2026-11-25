@@ -2187,7 +2187,7 @@ impl Form2550QDraft {
             if row.is_empty() {
                 continue;
             }
-            let suffix = 10 + offset;
+            let suffix = format!("1{offset}");
             fields.insert(
                 format!("txtDatePurchase{suffix}"),
                 fmt_date(row.purchase_or_import_date),
