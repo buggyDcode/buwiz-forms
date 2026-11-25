@@ -1,0 +1,5 @@
+case	state	rows_held	rows_on_paper	pages	taxpayer_name_header	period_header	subtotal	verdict
+plus3	before_b9552e27	6	6	3	missing_dash	missing_dash	600000.00	FAIL_MISSING_HEADER_META
+plus3	after	6	6	3	SANTOS, JUANA	2025	600000.00	PASS
+max	before_b9552e27	15	15	3	missing_dash	missing_dash	1500000.00	FAIL_MISSING_HEADER_META
+max	after	15	15	3	SANTOS, JUANA	2025	1500000.00	PASS

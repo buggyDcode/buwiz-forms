@@ -1,0 +1,5 @@
+case	state	sched_a_held	sched_a_paper	sched_b_held	sched_b_paper	pages	sum_a	sum_b	verdict
+plus3	before_b9552e27	13	13_with_5_blank_gap_rows	13	13_no_cont_header	3	1378000.00	7280000.00	FAIL_GAPS_AND_NO_CONT_HEADER
+plus3	after	13	13	13	13	3	1378000.00	7280000.00	PASS
+max	before_b9552e27	18	18_with_5_blank_gap_rows	18	18_no_cont_header	3	1953000.00	10530000.00	FAIL_GAPS_AND_NO_CONT_HEADER
+max	after	18	18	18	18	3	1953000.00	10530000.00	PASS

@@ -1,0 +1,5 @@
+case	state	rows_held	rows_on_paper	pages	verdict
+plus3	before_b9552e27	6	6	2	PASS
+plus3	after	6	6	2	PASS
+max	before_b9552e27	12	12	3	PASS
+max	after	12	12	3	PASS

@@ -1,0 +1,5 @@
+case	state	rows_held	rows_on_paper	pages	taxpayer_name_header	period_header	verdict
+plus3	before_b9552e27	7	7	3	SANTOS, JUANA	missing_dash	FAIL_MISSING_PERIOD
+plus3	after	7	7	3	SANTOS, JUANA	03/15/2025	PASS
+max	before_b9552e27	12	12	3	SANTOS, JUANA	missing_dash	FAIL_MISSING_PERIOD
+max	after	12	12	3	SANTOS, JUANA	03/15/2025	PASS

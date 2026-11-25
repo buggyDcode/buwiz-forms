@@ -8580,7 +8580,7 @@ mod tests {
             }
             now.insert(slug.clone(), document_hash(&slug, &fields));
         }
-        assert_eq!(total, 1458, "band boxes");
+        assert_eq!(total, 1481, "band boxes");
         assert_eq!(golden, now, "every band box prints as at dcc6386a");
     }
 
@@ -8998,7 +8998,7 @@ mod donor_estate_print_tests {
             ),
             (
                 "1800-2018",
-                "8340d00dcb242f3a5982247c1cced7366326d76687aa6d23333711fd9b4d597e",
+                "f5123d95404ce9ad37e75039a9b964d48e448f32f8291966ed86561a76be6df5",
             ),
         ] {
             let html = filled_document(slug, &every_join_filled(slug)).unwrap();

@@ -1,0 +1,3 @@
+case	state	pages	rule6_lines	box_height_pt	stamp_box_page	verdict
+specify	before_b9552e27	3	2	16.5_struck_through	3_orphan	FAIL_BORDER_STRIKETHROUGH_AND_ORPHAN_PAGE3
+specify	after	2	2	27.0	1	PASS

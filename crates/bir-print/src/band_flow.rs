@@ -1384,6 +1384,27 @@ pub(crate) fn apply_band_flow(
             clear_rule6_cell_inline_text(&mut dom, &ins.field.cell_id);
         }
 
+        // 1701A Item 42 (Part IV.A) and Item 51 (Part IV.B) print "OTHERS" plus
+        // their subtotal on the single summary line of the official sheet. When
+        // band-flow expands the itemized modal rows (42a..42l / 51a..51l) inline
+        // directly beneath that line, clear the summary amount cells so the
+        // expanded rows are not visually double-counted against Item 44 / Item 53.
+        if slug == "1701a-2018" {
+            for (mb, _) in &active_growths {
+                match mb.band.id.as_str() {
+                    "p2g0" => {
+                        clear_rule6_cell_inline_text(&mut dom, "p2c36");
+                        clear_rule6_cell_inline_text(&mut dom, "p2c37");
+                    }
+                    "p2g1" => {
+                        clear_rule6_cell_inline_text(&mut dom, "p2c69");
+                        clear_rule6_cell_inline_text(&mut dom, "p2c70");
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         let flowed_pages_html = flow_single_page(
             slug,
             raw_html,
@@ -1420,9 +1441,40 @@ pub struct Rule6Insertion {
 impl Rule6Insertion {
     pub fn from_text(field: Rule6Field, text: String) -> Self {
         let width_pt = (field.x1 - field.x0 - 8.0).max(60.0);
-        // Conservative 4.3pt average glyph width at 7.5pt font size.
-        let chars_per_line = (width_pt / 4.3).floor().max(12.0) as usize;
-        let line_count = text.chars().count().div_ceil(chars_per_line).clamp(1, 6);
+        // Word-wrap line-count estimate for 7.5pt Arimo (all-caps glyphs average
+        // ~5.5pt, lowercase/digits ~4.5pt, spaces ~2.6pt) so the enclosing box
+        // never clips or strikes through a wrapped 2nd/3rd line.
+        let char_w = |ch: char| -> f64 {
+            if ch.is_whitespace() {
+                2.6
+            } else if ch.is_ascii_uppercase() || matches!(ch, 'W' | 'M' | '@' | '%' | '&') {
+                5.6
+            } else if matches!(
+                ch,
+                'i' | 'l' | 'I' | '1' | '.' | ',' | ':' | ';' | '-' | '/'
+            ) {
+                3.0
+            } else {
+                4.6
+            }
+        };
+        let mut lines: usize = 1;
+        let mut cur_w = 0.0_f64;
+        for (wi, word) in text.split_whitespace().enumerate() {
+            let word_w: f64 = word.chars().map(char_w).sum();
+            let space_w = if wi == 0 || cur_w == 0.0 { 0.0 } else { 2.6 };
+            if cur_w > 0.0 && cur_w + space_w + word_w > width_pt {
+                lines += 1;
+                cur_w = word_w;
+                while cur_w > width_pt {
+                    lines += 1;
+                    cur_w -= width_pt;
+                }
+            } else {
+                cur_w += space_w + word_w;
+            }
+        }
+        let line_count = lines.clamp(1, 8);
         let height_pt = 6.0 + (line_count as f64) * 10.5;
         Self {
             field,
@@ -2099,6 +2151,119 @@ fn flow_single_page(
         }
     }
 
+    // Split any `PlainBlock` immediately before a `RowTemplate` whose top holds
+    // label-only column headers and whose bottom holds the table's row-1 input
+    // cells (e.g. 1800 Schedule B Continuation `p2b25`), so the column header
+    // becomes a proper `TableHead` in `next.table_group` and repeats cleanly
+    // (along with any preceding `SectionTitle`) whenever the table breaks.
+    let mut si = 0usize;
+    while si + 1 < effective_layout.bands.len() {
+        let should_split = if effective_layout.bands[si].kind == BandKind::PlainBlock
+            && effective_layout.bands[si + 1].kind == BandKind::RowTemplate
+        {
+            let tg = effective_layout.bands[si + 1].table_group.clone();
+            let already_has_head = tg.as_deref().is_some_and(|g| {
+                effective_layout
+                    .bands
+                    .iter()
+                    .any(|x| x.kind == BandKind::TableHead && x.table_group.as_deref() == Some(g))
+            });
+            if already_has_head {
+                None
+            } else {
+                let b = &effective_layout.bands[si];
+                let first_input_top = b
+                    .cell_ids
+                    .iter()
+                    .filter_map(|cid| dom.cells.iter().find(|c| c.id == *cid))
+                    .filter(|c| c.raw_html.contains("<input"))
+                    .map(|c| c.top)
+                    .fold(f64::INFINITY, f64::min);
+                let has_head_text = first_input_top.is_finite()
+                    && first_input_top > b.y0 + 6.0
+                    && b.text_ids.iter().any(|tid| {
+                        dom_texts_by_id
+                            .get(tid.as_str())
+                            .is_some_and(|t| t.top < first_input_top - 1.0)
+                    });
+                if has_head_text {
+                    Some((first_input_top, tg))
+                } else {
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        if let Some((split_y, tg)) = should_split {
+            let orig = effective_layout.bands[si].clone();
+            let mut head = orig.clone();
+            head.id = format!("{}_head", orig.id);
+            head.kind = BandKind::TableHead;
+            head.table_group = tg;
+            head.y1 = split_y;
+            head.cell_ids = orig
+                .cell_ids
+                .iter()
+                .filter(|cid| {
+                    dom.cells
+                        .iter()
+                        .find(|c| c.id == **cid)
+                        .is_some_and(|c| c.top < split_y - 0.5)
+                })
+                .cloned()
+                .collect();
+            head.text_ids = orig
+                .text_ids
+                .iter()
+                .filter(|tid| {
+                    dom_texts_by_id
+                        .get(tid.as_str())
+                        .is_some_and(|t| t.top < split_y - 0.5)
+                })
+                .cloned()
+                .collect();
+            head.svg_indices = orig
+                .svg_indices
+                .iter()
+                .copied()
+                .filter(|&idx| {
+                    dom.svg_nodes
+                        .get(idx)
+                        .and_then(|n| n.rect.as_ref())
+                        .is_some_and(|&(_, y, _, _, _)| y < split_y - 0.5)
+                })
+                .collect();
+
+            let mut row1 = orig.clone();
+            row1.y0 = split_y;
+            row1.cell_ids = orig
+                .cell_ids
+                .iter()
+                .filter(|cid| !head.cell_ids.contains(*cid))
+                .cloned()
+                .collect();
+            row1.text_ids = orig
+                .text_ids
+                .iter()
+                .filter(|tid| !head.text_ids.contains(*tid))
+                .cloned()
+                .collect();
+            row1.svg_indices = orig
+                .svg_indices
+                .iter()
+                .copied()
+                .filter(|idx| !head.svg_indices.contains(idx))
+                .collect();
+
+            effective_layout.bands[si] = head;
+            effective_layout.bands.insert(si + 1, row1);
+            si += 2;
+        } else {
+            si += 1;
+        }
+    }
+
     // Promote any un-ID'd vertical rail in `svg_indices` whose vertical span crosses
     // 2+ non-TrailingSpace bands (e.g. 1600WP outer rails, 2550M Schedule 7 dividers)
     // into `spanning_svg_indices` across every band it overlaps so it splits and
@@ -2242,8 +2407,7 @@ fn pack_page(
                 repeat_prefix_bands.push(si);
                 if si + 1 < i
                     && layout.bands[si + 1].kind == BandKind::PlainBlock
-                    && layout.bands[si + 1].cell_ids.is_empty()
-                    && !layout.bands[si + 1].text_ids.is_empty()
+                    && band_is_label_only_header(dom, &layout.bands[si + 1])
                 {
                     repeat_prefix_bands.push(si + 1);
                 }
@@ -2282,11 +2446,40 @@ fn pack_page(
 
     // Item H (RULES 5): Shrink elastic boxes ONLY when shrinking down to their
     // stated `min_height_pt` frees enough space to keep the entire page whole.
-    // If the page breaks anyway, leave elastic boxes at full official height so
-    // they print unshrunk on the continuation page.
+    // For Rule-6-only pages (no table growth, e.g. 1601C Page 1 with a stamp box),
+    // also honor the sheet's own printed footer extent (up to `page_height - 4pt`)
+    // and allow the stamp box to absorb up to `min(min_height_pt, 18.0)` so an
+    // empty stamp box is not orphaned onto an extra Page 1 continuation.
+    let rule6_only_page = growths.is_empty() && !rule6_insertions.is_empty();
+    let orig_content_y1 = layout
+        .bands
+        .iter()
+        .filter(|b| b.kind != BandKind::TrailingSpace)
+        .map(|b| b.y1)
+        .fold(0.0_f64, f64::max);
+    let page_bottom_y = if rule6_only_page {
+        layout
+            .content_bottom_y
+            .max(orig_content_y1)
+            .min(layout.height_pt - 4.0)
+    } else {
+        layout.content_bottom_y
+    };
+    let elastic_floor = |b: &LayoutBand| -> Option<f64> {
+        if b.kind != BandKind::ElasticBox {
+            return None;
+        }
+        b.min_height_pt.map(|min_h| {
+            if rule6_only_page {
+                min_h.min(18.0)
+            } else {
+                min_h
+            }
+        })
+    };
     let total_needed_y = header_height + total_items_height(&items, layout);
-    if total_needed_y > layout.content_bottom_y {
-        let deficit = total_needed_y - layout.content_bottom_y;
+    if total_needed_y > page_bottom_y {
+        let deficit = total_needed_y - page_bottom_y;
         let total_slack: f64 = items
             .iter()
             .filter_map(|item| match item {
@@ -2294,14 +2487,8 @@ fn pack_page(
                     band_idx,
                     height_pt,
                     ..
-                } => {
-                    let b = &layout.bands[*band_idx];
-                    if b.kind == BandKind::ElasticBox {
-                        b.min_height_pt.map(|min_h| (*height_pt - min_h).max(0.0))
-                    } else {
-                        None
-                    }
-                }
+                } => elastic_floor(&layout.bands[*band_idx])
+                    .map(|min_h| (*height_pt - min_h).max(0.0)),
                 _ => None,
             })
             .sum();
@@ -2317,15 +2504,12 @@ fn pack_page(
                     shrunk_pt,
                 } = item
                 {
-                    let b = &layout.bands[*band_idx];
-                    if b.kind == BandKind::ElasticBox {
-                        if let Some(min_h) = b.min_height_pt {
-                            let avail = (*height_pt - min_h).max(0.0);
-                            let take = avail.min(rem_deficit);
-                            *height_pt -= take;
-                            *shrunk_pt += take;
-                            rem_deficit -= take;
-                        }
+                    if let Some(min_h) = elastic_floor(&layout.bands[*band_idx]) {
+                        let avail = (*height_pt - min_h).max(0.0);
+                        let take = avail.min(rem_deficit);
+                        *height_pt -= take;
+                        *shrunk_pt += take;
+                        rem_deficit -= take;
                     }
                 }
             }
@@ -2394,7 +2578,7 @@ fn pack_page(
                 } else {
                     *height_pt
                 };
-                if cur_y + min_group_h > layout.content_bottom_y && cur_slices.len() > 1 {
+                if cur_y + min_group_h > page_bottom_y && cur_slices.len() > 1 {
                     let prev_was_cell_band = matches!(
                         cur_slices.last(),
                         Some(PlacedSlice::OriginalBand { band_idx: pb, .. })
@@ -2444,7 +2628,7 @@ fn pack_page(
                             active_static_prefix = vec![*band_idx];
                         }
                     }
-                    BandKind::PlainBlock if b.cell_ids.is_empty() && !b.text_ids.is_empty() => {
+                    BandKind::PlainBlock if band_is_label_only_header(dom, b) => {
                         if active_static_prefix.len() == 1
                             && layout.bands[active_static_prefix[0]].kind == BandKind::SectionTitle
                         {
@@ -2460,7 +2644,7 @@ fn pack_page(
             }
             FlowItem::Rule6Line(ins) => {
                 active_static_prefix.clear();
-                if cur_y + ins.height_pt > layout.content_bottom_y && cur_slices.len() > 1 {
+                if cur_y + ins.height_pt > page_bottom_y && cur_slices.len() > 1 {
                     start_new_page(&mut pages, &mut cur_slices, &mut cur_y);
                 }
                 cur_slices.push(PlacedSlice::Rule6Line {
@@ -2550,17 +2734,35 @@ fn pack_page(
                     }
                     pulled.reverse();
                     start_new_page(&mut pages, &mut cur_slices, &mut cur_y);
-                    for pi in pulled {
-                        let pb = &layout.bands[pi];
-                        cur_slices.push(PlacedSlice::OriginalBand {
-                            band_idx: pi,
-                            dest_y: cur_y,
-                            shrunk_pt: 0.0,
-                            is_repeated_header: false,
-                            is_repeated_section_title: false,
-                            is_repeated_table_head: false,
-                        });
-                        cur_y += pb.y1 - pb.y0;
+                    if !pulled.is_empty() {
+                        for pi in pulled {
+                            let pb = &layout.bands[pi];
+                            cur_slices.push(PlacedSlice::OriginalBand {
+                                band_idx: pi,
+                                dest_y: cur_y,
+                                shrunk_pt: 0.0,
+                                is_repeated_header: false,
+                                is_repeated_section_title: false,
+                                is_repeated_table_head: false,
+                            });
+                            cur_y += pb.y1 - pb.y0;
+                        }
+                    } else {
+                        // Prefix bands stayed on the previous page above an intervening
+                        // row-1 PlainBlock (e.g. 1800 Schedule B Continuation): repeat
+                        // the section title and table head at the top of the new page.
+                        for &pi in repeat_prefix_bands {
+                            let pb = &layout.bands[pi];
+                            cur_slices.push(PlacedSlice::OriginalBand {
+                                band_idx: pi,
+                                dest_y: cur_y,
+                                shrunk_pt: 0.0,
+                                is_repeated_header: false,
+                                is_repeated_section_title: pb.kind == BandKind::SectionTitle,
+                                is_repeated_table_head: pb.kind != BandKind::SectionTitle,
+                            });
+                            cur_y += pb.y1 - pb.y0;
+                        }
                     }
                     continue;
                 }
@@ -2645,7 +2847,19 @@ fn pack_page(
         }
     }
 
-    if !cur_slices.is_empty() {
+    let has_body_slice = cur_slices.iter().any(|s| match s {
+        PlacedSlice::OriginalBand {
+            is_repeated_header,
+            is_repeated_section_title,
+            is_repeated_table_head,
+            ..
+        } => !(*is_repeated_header || *is_repeated_section_title || *is_repeated_table_head),
+        PlacedSlice::OrigRowsPlusExtra { .. }
+        | PlacedSlice::ExtraRowsSlice { .. }
+        | PlacedSlice::Rule6Line { .. } => true,
+        PlacedSlice::ClosingRule { .. } => false,
+    });
+    if !cur_slices.is_empty() && (pages.is_empty() || has_body_slice) {
         let cont_index = pages.len();
         pages.push(PackedPage {
             cont_index,
@@ -2654,6 +2868,16 @@ fn pack_page(
     }
 
     Ok(pages)
+}
+
+fn band_is_label_only_header(dom: &FlowPageDom, b: &LayoutBand) -> bool {
+    !b.text_ids.is_empty()
+        && b.cell_ids.iter().all(|cid| {
+            dom.cells
+                .iter()
+                .find(|c| c.id == *cid)
+                .is_none_or(|c| !c.raw_html.contains("<input"))
+        })
 }
 
 fn total_items_height(items: &[FlowItem], layout: &PageLayout) -> f64 {

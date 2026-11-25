@@ -1,0 +1,5 @@
+case	state	rows_held	rows_on_paper	pages	sum_modal_arith	item42_summary	item44_total	verdict
+plus3	before_b9552e27	5	5	3	500000	500000_double_counted	500000	FAIL_DOUBLE_COUNT
+plus3	after	5	5	3	500000	cleared	500000	PASS
+max	before_b9552e27	12	12	3	1200000	1200000_double_counted	1200000	FAIL_DOUBLE_COUNT
+max	after	12	12	3	1200000	cleared	1200000	PASS

@@ -388,8 +388,13 @@ pub fn continuation_pages_html(
             format!("Additional sheet ({page_num} of {total_pages})")
         };
 
+        let break_rule = if page_idx + 1 < total_pages {
+            "page-break-after:always;break-after:page;"
+        } else {
+            "page-break-after:auto;break-after:auto;"
+        };
         out.push_str(&format!(
-            "<div class=\"page page-continuation\" id=\"{id_attr}\" style=\"width:{width};min-height:{height};height:auto;overflow:visible;padding:24pt 28pt;box-sizing:border-box;font-family:'eBIRForms Arimo',Arial,Helvetica,sans-serif;font-size:8.5pt;line-height:1.3;color:#000;background:#fff\">"
+            "<div class=\"page page-continuation\" id=\"{id_attr}\" style=\"width:{width};height:{height};overflow:hidden;{break_rule}padding:24pt 28pt;box-sizing:border-box;font-family:'eBIRForms Arimo',Arial,Helvetica,sans-serif;font-size:8.5pt;line-height:1.3;color:#000;background:#fff\">"
         ));
 
         // Header block
@@ -2141,6 +2146,11 @@ fn extract_header_meta(slug: &str, fields: &BTreeMap<String, String>) -> HeaderM
         &[
             "txtTaxpayerName",
             "txtPg2RegisteredName",
+            "txtI8RegisteredName",
+            "txtI8RegisteredNameP2",
+            "txtPg1I9RegisteredName",
+            "txtPg1Pt1I9RegisteredName",
+            "txtPg1Pt1I8Name1",
             "registeredName",
             "txtDonorName",
             "txtDecedentName",
@@ -2230,8 +2240,10 @@ fn extract_return_period(fields: &BTreeMap<String, String>) -> String {
         fields,
         &[
             "txtDateMonth",
+            "txtDateTransactionMonth",
             "DateWithholdingMonth",
             "txtPg1I1Month",
+            "txtPg1I2MonthEnded",
             "txtMonth",
             "rtnMonth",
             "txtMonth1",
@@ -2239,14 +2251,24 @@ fn extract_return_period(fields: &BTreeMap<String, String>) -> String {
     );
     let d = first_matching_field(
         fields,
-        &["txtDateDay", "DateWithholdingDay", "txtPg1I1Day", "txtDay"],
+        &[
+            "txtDateDay",
+            "txtDateTransactionDay",
+            "DateWithholdingDay",
+            "txtPg1I1Day",
+            "txtDay",
+        ],
     );
     let y = first_matching_field(
         fields,
         &[
             "txtDateYear",
+            "txtDateTransactionYear",
             "DateWithholdingYear",
             "txtPg1I1Year",
+            "txtPg1I2YearEnded",
+            "txtPg1I1YearEnded",
+            "txtI1Year",
             "txtYear",
             "rtnYear",
             "txtYearEnded",
@@ -2453,19 +2475,19 @@ mod tests {
         assert_eq!(report.schedules.len(), 1);
         let sched = &report.schedules[0];
         assert_eq!(sched.heading, "Schedule A");
-        assert_eq!(sched.printed_capacity, 5);
-        assert_eq!(sched.rows.len(), 13);
-        assert_eq!(sched.rows[0].row_number, 6);
-        assert_eq!(sched.rows[12].row_number, 18);
+        assert_eq!(sched.printed_capacity, 10);
+        assert_eq!(sched.rows.len(), 8);
+        assert_eq!(sched.rows[0].row_number, 11);
+        assert_eq!(sched.rows[7].row_number, 18);
         assert_eq!(sched.columns.len(), 2);
         assert_eq!(sched.columns[0].heading, "Particulars");
         assert_eq!(sched.columns[1].heading, "Fair Market Value");
         assert!(sched.has_total);
-        // Sum of 600k + 700k + ... + 1.8M = 15,600,000.00
-        assert_eq!(sched.columns[1].subtotal.as_deref(), Some("15,600,000.00"));
+        // Sum of 1.1M + 1.2M + ... + 1.8M = 11,600,000.00
+        assert_eq!(sched.columns[1].subtotal.as_deref(), Some("11,600,000.00"));
         assert_eq!(
             report.warning_lines(),
-            vec!["Schedule A: 13 rows are on an additional sheet"]
+            vec!["Schedule A: 8 rows are on an additional sheet"]
         );
     }
 
