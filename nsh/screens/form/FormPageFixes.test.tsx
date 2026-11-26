@@ -42,7 +42,7 @@ test("F3-11 desktop: Cmd+Right inside a text box stays in the box; outside one i
   await app.waitFor("text:/^Item 20 · /");
 });
 
-test("money round trip desktop: a focused zero amount is never rewritten while 15000.50 or 99999.99 is typed", async () => {
+test("money round trip desktop: a zero amount is its placeholder and the first key of 15000.50 or 99999.99 is the number", async () => {
   const box = "id:fp-frm2551Qv2018:txt15";
   for (const [period, amount] of [[4, "15000.50"], [1, "99999.99"]] as const) {
     const app = await open(ENTRY, {
@@ -52,9 +52,9 @@ test("money round trip desktop: a focused zero amount is never rewritten while 1
     await app.waitFor("text:BIR Form 2551Q");
     await app.press("id:fp-nav-2");
     await app.waitFor(box);
-    expect(app.value(box)).toBe("0.00");
-    await app.type(box, ""); // focus: a zero amount becomes empty once, before the first key
-    await app.waitUntil(() => app.value(box) === "", { timeout: 3000 });
+    expect(app.value(box)).toBe("");
+    await app.type(box, ""); // focus writes nothing: the zero is only the placeholder
+    expect(app.value(box)).toBe("");
     let expected = "";
     for (const ch of amount) {
       expected += ch;
@@ -69,6 +69,25 @@ test("money round trip desktop: a focused zero amount is never rewritten while 1
   }
 }, 60_000);
 
+
+test("zero placeholder desktop: a 2551Q zero amount types 5, saves 5.00, and clearing returns to the held zero", async () => {
+  const box = "id:fp-frm2551Qv2018:txt15";
+  const app = await open(ENTRY, {
+    ...DESKTOP,
+    host: { params: { formCode: "2551Q", year: 2025, period: 1, probeKey: "frm2551Qv2018:txt15" } },
+  });
+  await app.waitFor("text:BIR Form 2551Q");
+  await app.press("id:fp-nav-2");
+  await app.waitFor(box);
+  expect(app.value(box)).toBe("");
+  await app.type(box, "5");
+  expect(app.value(box)).toBe("5");
+  await app.submit(box);
+  await app.waitUntil(() => app.value(box) === "5.00" && app.texts().includes("probe 5.00"), { timeout: 8000 });
+  await app.clear(box);
+  await app.submit(box);
+  await app.waitUntil(() => app.value(box) === "" && app.texts().includes("probe 0.00"), { timeout: 8000 });
+}, 30_000);
 
 test("money round trip desktop: focus on a filled amount keeps its grouped text and a digit with separators saves the right amount", async () => {
   const box = "id:fp-frm2551Qv2018:txt15";
@@ -149,8 +168,8 @@ test("money unreadable desktop: leaving 1500x keeps the old amount, says so, and
   await app.waitFor("text:✓ Saved", { timeout: 8000 });
 }, 30_000);
 
-test("F7-1 desktop: emptying an amount box shows the host's zero, not the old amount, and the save line says Saved", async () => {
-  // The amount is typed through the fixture (app.type lands beside a box's prefilled 0.00).
+test("F7-1 desktop: emptying an amount box returns to the host zero's placeholder, not the old amount, and the save line says Saved", async () => {
+  // The amount is typed through the fixture.
   const box = "id:fp-frm2551Qv2018:txt15";
   const app = await open(ENTRY, { ...DESKTOP, host: { params: { formCode: "2551Q", year: 2025, period: 3, edits: { "frm2551Qv2018:txt15": "100" } } } });
   await app.waitFor("text:BIR Form 2551Q");
@@ -164,7 +183,7 @@ test("F7-1 desktop: emptying an amount box shows the host's zero, not the old am
   await app.wait(300);
   expect(app.value(box)).toBe("");
   await app.submit(box);
-  await app.waitUntil(() => app.value(box) === "0.00", { timeout: 5000 });
+  await app.waitUntil(() => app.value(box) === "", { timeout: 5000 });
   await app.waitFor("text:✓ Saved", { timeout: 5000 });
   expect(app.texts().some((t) => /must be an amount/.test(t))).toBe(false);
 });

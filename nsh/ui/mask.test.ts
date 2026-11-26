@@ -199,18 +199,15 @@ test("money: no 'Infinity.undefined', no '-0.00', every digit of a long amount s
 });
 
 test("money: what a box shows for a stored value (negatives shown, non-amounts verbatim)", () => {
-  expect(shownMoney("-250", false)).toBe("-250.00");
-  expect(shownMoney("-250", true)).toBe("-250.00");
-  expect(shownMoney("1250000.5", true)).toBe("1,250,000.50");
-  expect(shownMoney("1250000.5", false)).toBe("1,250,000.50");
-  expect(shownMoney("1234.5", false, true)).toBe("1234.5");
-  expect(shownMoney("-0", false)).toBe("0.00");
-  expect(shownMoney("", false)).toBe("");
+  expect(shownMoney("-250")).toBe("-250.00");
+  expect(shownMoney("1250000.5")).toBe("1,250,000.50");
+  expect(shownMoney("1234.5", true)).toBe("1234.5");
+  expect(shownMoney("-0")).toBe("0.00");
+  expect(shownMoney("")).toBe("");
   // Wave 1 showed "1e21" as "121".
-  expect(shownMoney("1e21", false)).toBe("1e21");
-  expect(shownMoney("1e21", true)).toBe("1e21");
-  expect(shownMoney("Infinity", false)).toBe("Infinity");
-  expect(shownMoney("abc", true)).toBe("abc");
+  expect(shownMoney("1e21")).toBe("1e21");
+  expect(shownMoney("Infinity")).toBe("Infinity");
+  expect(shownMoney("abc")).toBe("abc");
   expect(isPlainAmount("1,250.50")).toBe(true);
   expect(isPlainAmount("1e21")).toBe(false);
   expect(isPlainAmount("")).toBe(false);
@@ -335,9 +332,9 @@ test("money: a stored value is laid out, never rounded away; rounding is for wha
   expect(formatMoney("1234.5678", false, false)).toBe("1,234.5678");
   expect(formatMoney("1.5", false, false)).toBe("1.50");
   expect(formatMoney("-0.001", false, false)).toBe("-0.001");
-  expect(shownMoney("1.255", false)).toBe("1.255");
-  expect(shownMoney("1234.5678", false)).toBe("1,234.5678");
-  expect(shownMoney("1234.5", false)).toBe("1,234.50");
+  expect(shownMoney("1.255")).toBe("1.255");
+  expect(shownMoney("1234.5678")).toBe("1,234.5678");
+  expect(shownMoney("1234.5")).toBe("1,234.50");
 });
 
 // ---------------------------------------------------------------- selections: one edit, however the text lost its range

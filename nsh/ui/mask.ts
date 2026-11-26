@@ -606,12 +606,10 @@ export function formatMoney(text: string, whole = false, round = true): string {
 
 /**
  * What a money box shows for a value, never another number than the value: grouped by formatMoney (two decimals at least,
- * none rounded away), except that a zero amount is empty while focused so its first digit starts the amount; anything else
- * (a stored "1e21", text) exactly as it is.
+ * none rounded away); anything else (a stored "1e21", text) exactly as it is.
  */
-export function shownMoney(value: string, focused: boolean, whole = false): string {
+export function shownMoney(value: string, whole = false): string {
   if (!isPlainAmount(value)) return String(value ?? "");
-  if (focused && isZeroAmount(moneyPlain(value))) return "";
   return formatMoney(value, whole, false);
 }
 

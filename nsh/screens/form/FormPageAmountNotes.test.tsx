@@ -28,8 +28,8 @@ test("a 20-digit amount: once the box is left it shows what the return holds, a 
   await app.waitFor("text:✓ Saved", { timeout: 8000 });
   const stored = probe(app);
   expect(stored).toBe("0.00");
-  // The box shows the stored amount, never the typed text (nor another number made from it).
-  expect(app.value(BOX)).toBe(stored);
+  // The box shows the stored amount, never the typed text (nor another number made from it); a stored zero is its placeholder.
+  expect(app.value(BOX)).toBe(stored === "0.00" ? "" : stored);
   const note = app.texts().find((t) => t.includes("you typed")) ?? "";
   expect(note.startsWith("Item 15: you typed 12,345,678,901,234,567,890.00; the return holds 0.00. ")).toBe(true);
   expect(note).toContain("12-digit");
@@ -48,7 +48,7 @@ test("the note survives folding and reopening the part, still true: the box show
   await app.waitUntil(() => !app.shows(BOX), { timeout: 3000 });
   await app.press("id:fp-part-2-toggle");
   await app.waitFor(BOX);
-  expect(app.value(BOX)).toBe(stored);
+  expect(app.value(BOX)).toBe(stored === "0.00" ? "" : stored);
   expect(app.texts().some((t) => t.includes(`the return holds ${stored}`))).toBe(true);
   // Back in the box and out again with no edit: the note stays (focus never ends a note; an edit does).
   await app.type(BOX, "");
@@ -75,7 +75,7 @@ test("valid edits made after a note are saved with it: the save line says Saved 
   await app.waitUntil(() => probe(app) === "250.00" && app.texts().includes("✓ Saved"), { timeout: 8000 });
   expect(app.texts()).toContain("saved returns 1");
   expect(app.texts()).not.toContain("Unsaved changes");
-  expect(app.value(BOX)).toBe("0.00");
+  expect(app.value(BOX)).toBe("");
 }, 40_000);
 
 /** The host's queue check spoke (the demo taxpayer's profile is incomplete): Queue went past the page's own stops. Never a send here. */
@@ -89,7 +89,7 @@ test("Queue with the amount box still focused leaves it first and stops once on 
   await app.press("id:fp-queue");
   await app.waitUntil(() => app.texts().some((t) => t.includes("you typed")), { timeout: 5000 });
   await app.wait(400);
-  // The stored amount (0.00; shown empty if the page's reveal put the keys back in the box, as a zero amount is while focused).
+  // The stored amount (0.00; shown empty as an untouched zero amount is, whether or not the page's reveal put the keys back in the box).
   expect([probe(app), ""]).toContain(app.value(BOX) ?? "");
   // The toast says the note (it names Item 15), on top of the note under the box.
   expect(app.texts().filter((t) => t.startsWith("Item 15: you typed")).length).toBeGreaterThanOrEqual(2);

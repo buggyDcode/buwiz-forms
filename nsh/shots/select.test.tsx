@@ -1,6 +1,6 @@
 // What the number boxes do with the selection, in the window a person uses. Emptying a box (Cmd+A and Backspace or Delete, a
 // selected range and Backspace, a typed digit over a selection) reaches the page as one edit and reports "" for an empty box; a
-// box of zero becomes empty as it takes the keys, so the first digit starts it; Tab and the box's own focus() select the
+// box of zero is already empty with its zero as the placeholder, so the first digit starts it; Tab and the box's own focus() select the
 // whole text whatever it holds. Focused money text is not grouped; grouping returns when the box is left. Selections and a real caret exist only in a real window, so this file is in the shots lane:
 // `just nsh-shots select` (nsh test --target macos). A headless run of it checks nothing, as every shots file's does; what a
 // headless box can do (the clear gesture, typing) is in ui/fields.select.test.tsx.
@@ -118,7 +118,7 @@ test("a real window: a selected range that holds a separator, deleted or typed o
 test("a real window: a box of zero is empty when a click gives it the keys, so the first digit starts it", async () => {
   const app = await open(FIXTURE, WIDE);
   if (!(await real(app))) return;
-  expect(app.value("id:s-zero")).toBe("0.00");
+  expect(app.value("id:s-zero")).toBe("");
   await app.type("id:s-zero", "100");
   expect(app.value("id:s-zero")).toBe("100");
   expect(read(app, "Zero:")).toBe("Zero: 100");

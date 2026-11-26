@@ -172,7 +172,7 @@ for (const size of SIZES) {
     expect(readout(app, "Amount:")).toBe("Amount: empty"); // the valid prefix is rolled back, not saved
     expect(app.texts().some((t) => t.includes(" is not an amount. The box kept "))).toBe(false);
     await app.type("id:m-other", " ");
-    expect(app.value("id:m-amount")).toBe("0.00");
+    expect(app.value("id:m-amount")).toBe("");
     expect(readout(app, "Amount:")).toBe("Amount: empty");
     expect(app.texts()).toContain(leftSentence("1250000.5x", "0.00"));
   });
@@ -326,13 +326,13 @@ for (const size of SIZES) {
     expect(readout(app, "Reports:")).toBe(reports);
   });
 
-  test(`${size.name}: a focused zero is empty and, left untouched, shows its zero again without a new report`, async () => {
+  test(`${size.name}: a zero box is empty before and after an untouched focus, without a new report`, async () => {
     const app = await open("./masked.fixture.tsx", size.options);
-    expect(app.value("id:m-host")).toBe("0.00");
+    expect(app.value("id:m-host")).toBe("");
     await app.type("id:m-host", "");
     await app.waitUntil(() => app.value("id:m-host") === "", { timeout: 2000 });
     await app.type("id:m-other", " ");
-    expect(app.value("id:m-host")).toBe("0.00");
+    expect(app.value("id:m-host")).toBe("");
     expect(readout(app, "Host:")).toBe("Host: 0.00");
   });
 
@@ -371,7 +371,7 @@ for (const size of SIZES) {
     expect(readout(app, "Amount:")).toBe("Amount: empty");
     expect(app.texts().some((t) => t.includes(" is not an amount. The box kept "))).toBe(false);
     await app.type("id:m-other", " ");
-    expect(app.value("id:m-amount")).toBe("0.00");
+    expect(app.value("id:m-amount")).toBe("");
     expect(readout(app, "Amount:")).toBe("Amount: empty");
     expect(app.texts()).toContain(leftSentence("99999999.995x.", "0.00"));
   });
@@ -389,7 +389,7 @@ for (const size of SIZES) {
       expect(readout(app, "Text writes:")).toBe(textWrites);
       expect(readout(app, "Caret writes:")).toBe(caretWrites);
       await app.type("id:m-other", " ");
-      expect(app.value("id:m-amount")).toBe("0.00");
+      expect(app.value("id:m-amount")).toBe("");
       expect(readout(app, "Amount:")).toBe("Amount: empty");
       expect(app.texts()).toContain(leftSentence(bad, "0.00"));
     }
@@ -408,7 +408,7 @@ for (const size of SIZES) {
       expect(readout(app, "Text writes:")).toBe(textWrites);
       expect(readout(app, "Caret writes:")).toBe(caretWrites);
       await app.type("id:m-other", " ");
-      expect(app.value("id:m-amount")).toBe("0.00");
+      expect(app.value("id:m-amount")).toBe("");
       expect(readout(app, "Amount:")).toBe("Amount: empty");
       expect(app.texts()).toContain(leftSentence(bad, "0.00"));
     }
@@ -426,7 +426,7 @@ for (const size of SIZES) {
     expect(readout(app, "Text writes:")).toBe(textWrites);
     expect(readout(app, "Caret writes:")).toBe(caretWrites);
     await app.type("id:m-other", " ");
-    expect(app.value("id:m-amount")).toBe("0.00");
+    expect(app.value("id:m-amount")).toBe("");
     expect(readout(app, "Amount:")).toBe("Amount: empty");
     expect(app.texts()).toContain(leftSentence("15000..50", "0.00"));
   });
