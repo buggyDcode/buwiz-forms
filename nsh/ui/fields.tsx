@@ -10,7 +10,7 @@ import { AppButton } from "./buttons";
 import type { IconName } from "./icons";
 import { cx, TOUCH } from "./look";
 import {
-  DATE_ERROR, digitsOnly, editBase, formatIso, formatLongDate, formatMDY, formatMoney, formatTinDigits, intMask, type Mask, moneyEntryMask,
+  DATE_ERROR, digitsOnly, editBase, formatIso, formatLongDate, formatMDY, formatMoney, formatTinDigits, intMask, isZeroAmount, type Mask, moneyEntryMask,
   parseTypedDate, PERCENT_MASK, readAmount, reconcile, sameAmount, shownMoney, TIN_LENGTH, TIN_MASK, type TextSelection, validAmountText,
 } from "./mask";
 import { Chip } from "./status";
@@ -81,6 +81,10 @@ export interface TextFieldProps {
 
 /** A text box: 32 tall (44 on touch), radius 8, the strong border, the accent while it has the keys, danger on error. */
 export function TextField(props: TextFieldProps) {
+  let input: InputRef | undefined;
+  let hasFocus = false;
+  // Set only through the wrapped ref a page receives; platform focus never sets it.
+  let programmaticFocus = false;
   const sm = () => props.size === "sm";
   const message = () => (typeof props.error === "string" && props.error ? props.error : "");
   const flat = () => !!props.locked || !!props.disabled;
@@ -114,7 +118,21 @@ export function TextField(props: TextFieldProps) {
           <Text variant="meta" tone="fg3">{props.prefix}</Text>
         </If>
         <Input
-          ref={(r: InputRef) => props.inputRef?.(r)}
+          ref={(r: InputRef) => {
+            input = r;
+            props.inputRef?.({
+              focus: () => {
+                programmaticFocus = !hasFocus;
+                r.focus();
+              },
+              blur: () => r.blur(),
+              measure: () => r.measure(),
+              reveal: (options?: Parameters<typeof r.reveal>[0]) => r.reveal(options),
+              animateLayout: (transition?: Parameters<typeof r.animateLayout>[0]) => r.animateLayout(transition),
+              setSelection: (start: number, end?: number) => r.setSelection(start, end),
+              insertText: (value: string) => r.insertText(value),
+            });
+          }}
           testID={props.testID}
           value={props.value}
           onChange={(e) => props.onChange(e.value)}
@@ -131,8 +149,21 @@ export function TextField(props: TextFieldProps) {
           returnKeyType={props.returnKeyType}
           accessibilityLabel={props.label ?? props.accessibilityLabel}
           accessibilityDescribedBy={props.accessibilityDescribedBy ?? (message() ? messageRef() : null)}
-          onFocus={() => props.onFocus?.()}
-          onBlur={() => props.onBlur?.()}
+          onFocus={() => {
+            // One of exactly two deliberate selection writes in typed boxes: the page's own focus(), never platform focus.
+            if (programmaticFocus) {
+              const length = (props.value ?? "").length;
+              if (length > 0) input?.setSelection(0, length);
+            }
+            programmaticFocus = false;
+            hasFocus = true;
+            props.onFocus?.();
+          }}
+          onBlur={() => {
+            hasFocus = false;
+            programmaticFocus = false;
+            props.onBlur?.();
+          }}
           onSubmit={() => props.onSubmit?.()}
           onSelectionChange={props.onSelectionChange}
           onKeyPress={props.onKeyPress}
@@ -243,6 +274,11 @@ function MaskedField(props: MaskedProps) {
   let focusValue = props.value ?? "";
   let invalidActive = false;
   let rollbackReported = false;
+  // Set only through the wrapped ref the page receives; a platform Tab, click or tap never sets it.
+  let programmaticFocus = false;
+  // The zero text a focus is clearing, while its empty write waits one turn so same-turn input can supersede it.
+  let zeroFocusText: string | undefined;
+  let zeroWriteTimer: ReturnType<typeof setTimeout> | undefined;
   const writeText = (value: string) => {
     if (untracked(text) !== value) props.field.writeProbe?.("text");
     text.set(value);
@@ -257,7 +293,9 @@ function MaskedField(props: MaskedProps) {
     // Focused text is never rewritten. A change equal to what this box just reported is its own echo; only a different
     // value is outside, and is held for blur until the filer's own edit supersedes it.
     if (untracked(focused)) {
-      if (!same(value, last)) {
+      // Empty is zero in a form host: its zero answer to this box's own empty report is an echo, not a new outside value.
+      const ownEmptyEcho = last === "" && isZeroAmount(value);
+      if (!same(value, last) && !ownEmptyEcho) {
         outsideValue = value;
         last = value;
       }
@@ -281,7 +319,9 @@ function MaskedField(props: MaskedProps) {
       // Focused text is authoritative: strict reading decides the report; no mask rewrite or refusal answer is computed for it.
       boxText = raw;
       text.set(raw);
-      const valid = props.valid ? props.valid(raw) : true;
+      // If the zero text did not leave before the first key, that stale prefix is presentation, not part of the number.
+      const reading = zeroFocusText && raw.startsWith(zeroFocusText) ? raw.slice(zeroFocusText.length) : raw;
+      const valid = props.valid ? props.valid(reading) : true;
       if (!valid) {
         invalidActive = true;
         if (!rollbackReported) {
@@ -299,7 +339,7 @@ function MaskedField(props: MaskedProps) {
         invalidActive = false;
         rollbackReported = false;
       }
-      const value = props.valueOf(raw);
+      const value = props.valueOf(reading);
       // A key and its Backspace are no edit: a value held from outside still wins on leaving.
       edited = !same(value, focusValue);
       if (value === last) return;
@@ -332,7 +372,18 @@ function MaskedField(props: MaskedProps) {
       keyboardType={props.keyboardType}
       inputRef={(r) => {
         input = r;
-        props.field.inputRef?.(r);
+        props.field.inputRef?.({
+          focus: () => {
+            programmaticFocus = !untracked(focused);
+            r.focus();
+          },
+          blur: () => r.blur(),
+          measure: () => r.measure(),
+          reveal: (options?: Parameters<typeof r.reveal>[0]) => r.reveal(options),
+          animateLayout: (transition?: Parameters<typeof r.animateLayout>[0]) => r.animateLayout(transition),
+          setSelection: (start: number, end?: number) => r.setSelection(start, end),
+          insertText: (value: string) => r.insertText(value),
+        });
       }}
       tabular
       label={props.field.label}
@@ -363,6 +414,11 @@ function MaskedField(props: MaskedProps) {
         props.field.onKeyPress?.(e);
       }}
       onFocus={() => {
+        // A duplicate focus without a blur is not a new edit session: no reset, rewrite, reselect or renotify.
+        if (untracked(focused)) {
+          programmaticFocus = false;
+          return;
+        }
         focused.set(true);
         boxText = undefined;
         edited = false;
@@ -370,18 +426,41 @@ function MaskedField(props: MaskedProps) {
         rollbackReported = false;
         invalidActive = false;
         leftUnreadable.set(null);
-        if (props.noLiveFormat) {
-          const before = untracked(text);
-          const plain = props.shown(props.value ?? "", true);
-          // A zero amount becomes empty so its first digit starts the amount. A non-zero amount keeps exactly the
-          // grouped text already in the box: no write means the platform's own Tab selection or click caret stands.
-          if (plain !== before) writeText(plain);
+        zeroFocusText = undefined;
+        const before = untracked(text);
+        const focusShown = props.shown(props.value ?? "", true);
+        if (focusShown !== before) {
+          if (focusShown === "") {
+            // Give same-turn input one chance to win over the zero-to-empty write; otherwise that write can land after
+            // the key and erase it. When no input arrived, the zero still becomes empty on the next turn.
+            zeroFocusText = before;
+            zeroWriteTimer = setTimeout(() => {
+              zeroWriteTimer = undefined;
+              if (!edited && untracked(focused) && untracked(text) === before) {
+                writeText("");
+                zeroFocusText = undefined;
+              }
+            }, 0);
+          } else {
+            writeText(focusShown);
+          }
         }
+        // One of exactly two deliberate selection writes in typed boxes: the page's own focus(), never platform focus.
+        if (programmaticFocus && focusShown !== "") {
+          const length = untracked(text).length;
+          if (length > 0) writeCaret(0, length);
+        }
+        programmaticFocus = false;
         props.field.onFocus?.();
       }}
       onBlur={() => {
+        if (zeroWriteTimer !== undefined) {
+          clearTimeout(zeroWriteTimer);
+          zeroWriteTimer = undefined;
+        }
         const held = text();
-        const validBlur = !props.valid || props.valid(held);
+        const reading = zeroFocusText && held.startsWith(zeroFocusText) ? held.slice(zeroFocusText.length) : held;
+        const validBlur = !props.valid || props.valid(reading);
         if (!validBlur) {
           // The return keeps the fallback amount. A newer outside value held during this focus is that fallback.
           const fallback = outsideValue ?? focusValue;
@@ -394,10 +473,12 @@ function MaskedField(props: MaskedProps) {
           rollbackReported = false;
         } else {
           if (!edited && outsideValue !== undefined) writeText(props.shown(outsideValue, false));
-          const laidOut = edited ? props.shown(props.valueOf(text()), false) : props.shown(outsideValue ?? props.value ?? "", false);
-          const shown = edited && props.settle ? props.settle(laidOut) : laidOut;
+          const laidOut = edited ? props.shown(props.valueOf(reading), false) : props.shown(outsideValue ?? props.value ?? "", false);
+          const semanticShown = edited && props.settle ? props.settle(laidOut) : laidOut;
+          // An empty money amount is zero; once the box is left it shows that zero rather than staying blank.
+          const shown = props.noLiveFormat && semanticShown === "" ? props.shown("0", false) : semanticShown;
           if (shown !== text()) writeText(shown);
-          const value = props.valueOf(shown);
+          const value = props.valueOf(semanticShown);
           if (!same(value, last)) {
             last = value;
             props.onChange(value);
@@ -408,6 +489,8 @@ function MaskedField(props: MaskedProps) {
         editFrom = undefined;
         editTyped = false;
         edited = false;
+        zeroFocusText = undefined;
+        programmaticFocus = false;
         props.field.onBlur?.();
       }}
     />
@@ -497,7 +580,7 @@ export function PercentInput(props: NumberTextProps) {
       suffix="%"
       align="right"
       mask={PERCENT_MASK}
-      shown={(v) => v}
+      shown={(v, focused) => (focused && isZeroAmount(v) ? "" : v)}
       valueOf={(t) => t}
       keyboardType="decimal-pad"
     />
@@ -512,7 +595,7 @@ export function IntInput(props: NumberTextProps & { maxDigits?: number }) {
       value={props.value}
       onChange={props.onChange}
       mask={intMask(props.maxDigits)}
-      shown={(v) => v}
+      shown={(v, focused) => (focused && isZeroAmount(v) ? "" : v)}
       valueOf={(t) => t}
       keyboardType="number-pad"
     />

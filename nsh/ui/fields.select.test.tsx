@@ -26,3 +26,66 @@ test("the clear gesture empties every number box and reports empty; typing then 
     expect(read(app, key)).toBe(reported);
   }
 }, 120_000);
+
+
+test("zero percent and whole-number boxes are empty when focused, so 4 then 2 saves 42", async () => {
+  const app = await open("./select.fixture.tsx", WIDE);
+  for (const [id, key] of [
+    ["s-rate", "Rate:"],
+    ["s-count", "Count:"],
+  ] as const) {
+    await app.type(`id:${id}`, ""); // focus the input; the headless harness has no pointer click on inputs
+    await app.waitUntil(() => app.value(`id:${id}`) === "");
+    await app.type(`id:${id}`, "4");
+    expect(app.value(`id:${id}`)).toBe("4");
+    await app.type(`id:${id}`, "2");
+    expect(app.value(`id:${id}`)).toBe("42");
+    expect(read(app, key)).toBe(`${key} 42`);
+  }
+});
+
+test("zero percent and whole-number boxes are empty on Tab entry, so 4 then 2 saves 42", async () => {
+  const app = await open("./select.fixture.tsx", WIDE);
+  for (const [before, id, key] of [
+    ["s-zero", "s-rate", "Rate:"],
+    ["s-rate", "s-count", "Count:"],
+  ] as const) {
+    await app.type(`id:${before}`, ""); // focus the preceding box; the headless harness has no pointer click on inputs
+    await app.keyboard.press("tab");
+    await app.waitUntil(() => app.value(`id:${id}`) === "");
+    await app.keyboard.press("4");
+    expect(app.value(`id:${id}`)).toBe("4");
+    await app.keyboard.press("2");
+    expect(app.value(`id:${id}`)).toBe("42");
+    expect(read(app, key)).toBe(`${key} 42`);
+  }
+});
+
+test("input in the zero focus's own turn wins over the empty write and reads without its stale zero prefix", async () => {
+  const app = await open("./select.fixture.tsx", { ...WIDE, clock: {} });
+  await app.press("id:s-zero-same");
+  await app.waitUntil(() => readout(app, "Zero:") === "Zero: 15");
+  // The filer's text wins: when the deferred write is due, editing has already superseded it.
+  await app.clock?.runFor(5);
+  expect(readout(app, "Zero:")).toBe("Zero: 15");
+  expect(app.value("id:s-zero")).toBe("0.0015");
+});
+
+test("after the zero box is empty, a typed 0.005 keeps its own leading zeroes", async () => {
+  const app = await open("./select.fixture.tsx", WIDE);
+  await app.type("id:s-zero", "");
+  await app.waitUntil(() => app.value("id:s-zero") === "");
+  await app.type("id:s-zero", "0.005");
+  expect(readout(app, "Zero:")).toBe("Zero: 0.005");
+});
+
+test("a percent typed over a zero stays shown after leaving, matching what it reported", async () => {
+  const app = await open("./select.fixture.tsx", WIDE);
+  await app.type("id:s-rate", "");
+  await app.waitUntil(() => app.value("id:s-rate") === "");
+  await app.type("id:s-rate", "42");
+  await app.type("id:s-free", "x");
+  await app.wait(100);
+  expect(readout(app, "Rate:")).toBe("Rate: 42");
+  expect(app.value("id:s-rate")).toBe("42");
+});

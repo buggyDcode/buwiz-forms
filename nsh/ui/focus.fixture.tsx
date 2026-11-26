@@ -17,6 +17,8 @@ function App() {
   const filled = signal("1234.56");
   const textWrites = signal(0);
   const caretWrites = signal(0);
+  const caretRange = signal("none");
+  const focusEvents = signal(0);
   const pct = signal("");
   const int = signal("");
   const tin = signal("");
@@ -38,6 +40,8 @@ function App() {
         <Text variant="cap">{`Filled: ${filled() || "empty"}`}</Text>
         <Text variant="cap">{`Text writes: ${textWrites()}`}</Text>
         <Text variant="cap">{`Caret writes: ${caretWrites()}`}</Text>
+        <Text variant="cap">{`Caret range: ${caretRange()}`}</Text>
+        <Text variant="cap">{`Focus events: ${focusEvents()}`}</Text>
         <Text variant="cap">{`Pct: ${pct() || "empty"}`}</Text>
         <Text variant="cap">{`Int: ${int() || "empty"}`}</Text>
         <Text variant="cap">{`Tin: ${tin() || "empty"}`}</Text>
@@ -48,6 +52,11 @@ function App() {
       <View class="flex-row flex-wrap gap-2">
         <AppButton label="Focus money" size="sm" testID="go-money" onPress={() => moneyRef?.focus()} />
         <AppButton label="Focus filled" size="sm" testID="go-filled" onPress={() => filledRef?.focus()} />
+        <AppButton label="Insert 2500" size="sm" testID="insert-filled" onPress={() => filledRef?.insertText("2500")} />
+        <AppButton label="Focus filled twice" size="sm" testID="go-filled-twice" onPress={() => {
+          filledRef?.focus();
+          filledRef?.focus();
+        }} />
         <AppButton label="Focus pct" size="sm" testID="go-pct" onPress={() => pctRef?.focus()} />
         <AppButton label="Focus int" size="sm" testID="go-int" onPress={() => intRef?.focus()} />
         <AppButton label="Focus tin" size="sm" testID="go-tin" onPress={() => tinRef?.focus()} />
@@ -61,7 +70,14 @@ function App() {
         value={filled()}
         onChange={(v) => filled.set(v)}
         inputRef={(r) => (filledRef = r)}
-        writeProbe={(write) => (write === "text" ? textWrites.update((n) => n + 1) : caretWrites.update((n) => n + 1))}
+        onFocus={() => focusEvents.update((n) => n + 1)}
+        writeProbe={(write, start, end) => {
+          if (write === "text") textWrites.update((n) => n + 1);
+          else {
+            caretWrites.update((n) => n + 1);
+            caretRange.set(`${start}:${end}`);
+          }
+        }}
         testID="f-filled"
       />
       <PercentInput label="Pct" value={pct()} onChange={(v) => pct.set(v)} inputRef={(r) => (pctRef = r)} testID="f-pct" />

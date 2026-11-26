@@ -302,10 +302,7 @@ export function isPlainAmount(text: string): boolean {
 export function sameAmount(a: string, b: string): boolean {
   if (a === b) return true;
   const x = canonicalAmount(a);
-  const y = canonicalAmount(b);
-  // Empty is the zero amount a money box reports; it must equal every textual zero, or a host echo clobbers the focus fallback.
-  if ((a === "" || x === "0") && (b === "" || y === "0")) return true;
-  return x !== null && x === y;
+  return x !== null && x === canonicalAmount(b);
 }
 
 /** Options of the money mask. */
