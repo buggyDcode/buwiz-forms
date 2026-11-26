@@ -165,9 +165,10 @@ test("a real window: after Tab, a caret the user moves later is not turned back 
   await app.type("id:s-free", "");
   await app.keyboard.press("tab"); // into the filled amount, selected whole
   await app.wait(900);
-  await app.keyboard.press("end"); // the user collapses the selection at the end
+  await app.keyboard.press("right"); // one arrow key collapses the selection at the end; End does not in a single-line macOS box
   await app.keyboard.press("9");
-  expect(app.value("id:s-some")).toBe("12509");
+  expect(app.value("id:s-some")).toBe("1,250.009");
+  expect(read(app, "Some:")).toBe("Some: 1250.009");
 }, 120_000);
 
 test("a real window: an outside refill waits for the box to be left, and typing supersedes it", async () => {
