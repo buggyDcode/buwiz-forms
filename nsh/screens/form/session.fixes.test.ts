@@ -625,3 +625,36 @@ test("F9: a mismatch stays while its box can be corrected, and goes when a gate 
     s?.dispose();
   }
 });
+
+test("F10: an amount typed in a row that a Delete row in the same batch clears or moves is no mismatch; a real one in that batch still is", async () => {
+  const other = "frm2550qv2024:vatRefund";
+  const restore = hostFault(other, "100", "99.00");
+  const mismatch = (s: FormSession, k: string) => (s.boxMessageOf(k) ?? "").includes("Correct this amount");
+  const cells = [0, 1, 2].flatMap((n) => sched3(n));
+  let s: FormSession | undefined;
+  try {
+    s = await opened(at("2550Q", 2025, 3));
+    fillSched3Row(s, 0, "Agent One", "1000");
+    fillSched3Row(s, 1, "Agent Two", "2000");
+    await s.idle();
+    // Typed, still pending, then its own row deleted: one batch, with a real mismatch in another box.
+    s.edit("txtIncomePayment31", "2500");
+    s.edit(other, "100");
+    deleteRow(s, 1);
+    await s.idle();
+    expect(cells.filter((k) => mismatch(s!, k))).toEqual([]);
+    expect(mismatch(s, other)).toBe(true);
+    // Typed in row 1, still pending, then row 0 deleted (row 1's rows move up): one batch, with a real mismatch again.
+    fillSched3Row(s, 1, "Agent Two", "2000");
+    await s.idle();
+    s.edit("txtIncomePayment31", "2600");
+    s.edit(other, "100");
+    deleteRow(s, 0);
+    await s.idle();
+    expect(cells.filter((k) => mismatch(s!, k))).toEqual([]);
+    expect(mismatch(s, other)).toBe(true);
+  } finally {
+    restore();
+    s?.dispose();
+  }
+});
