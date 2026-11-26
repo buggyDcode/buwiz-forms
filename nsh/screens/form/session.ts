@@ -385,8 +385,9 @@ interface St {
   rejected: Record<string, string>;
   /**
    * Notes under amount boxes: the box shows what the return holds, and this says what the filer typed instead: "<kind>|<held>|<typed>"
-   * with kind "amount typed" (the host stored another number) or "amount unreadable" (the box's text was not an amount). `held` is
-   * what the box shows. A note holds no save; it goes when its box is focused or edited, or the amount under it moves.
+   * with kind "amount typed" (the host stored another number), "amount unreadable" (the box's text was not an amount) or "amount
+   * refused" (the host refused the amount; its reason follows, "|<reason>"). `held` is what the box shows. A note holds no save; it
+   * goes when its box is focused or edited, or the amount under it moves.
    */
   amountNotes: Record<string, string>;
   /** Refused keys whose refusal retyping cannot fix (shut/locked): they restore the stored value and do not hold Save or Queue. */
@@ -1613,6 +1614,7 @@ export class FormSession {
     }
     if (Object.keys(s.pending).length) this.flush();
     else this.publish();
+    if (kind === "money" || kind === "num") this.noteRefusedAmount(k, raw);
     this.syncHostCase(k);
     // Q1 P1b: leaving a profile-backed box with a new complete value asks "Save to profile?" once.
     this.maybeProfileAskKeys([baseKey]);
@@ -1826,6 +1828,23 @@ export class FormSession {
       const id = this.keyIndex.get(k);
       if (id) s.messageKeys[id] = (s.messageKeys[id] || []).filter((x) => x !== k);
     }
+  }
+
+  /**
+   * A money box left with an amount the host refused (more than the field's 12 digits, a negative where none may be): it shows what
+   * the return holds, and a note says what was typed and why it was not taken. The refusal goes with it: the box and the return agree.
+   */
+  private noteRefusedAmount(k: string, typed: string) {
+    const s = this.st;
+    const reason = s.rejected[k];
+    if (reason === undefined || s.unfixable.has(k) || s.focusKey === k || this.isShut(k) || k in s.pending) return;
+    const whole = this.kindOf.get(k) === "money" && this.wholeKeys.has(k);
+    const stored = String(s.values[k] ?? "");
+    delete s.rejected[k];
+    s.amountNotes[k] = `amount refused|${stored === "" ? "no amount" : exactMoney(stored, whole)}|${exactMoney(typed, whole)}|${reason}`;
+    this.sValue.get(k).set(this.shownText(k));
+    this.setErrors(s.errors);
+    this.publish();
   }
 
   /** Drops the notes whose box is shut now or whose amount is no longer the one the note named (it moved or was cleared). True when one went. */
