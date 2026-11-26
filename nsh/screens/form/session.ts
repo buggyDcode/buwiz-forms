@@ -383,6 +383,12 @@ interface St {
   messageCounts: Record<string, number>;
   /** Boxes the host refused at the last fill, with its message (kept until the box is edited again). */
   rejected: Record<string, string>;
+  /**
+   * Notes under amount boxes: the box shows what the return holds, and this says what the filer typed instead. "amount typed|<typed>|
+   * <stored>" (the host stored another number) or "amount unreadable|<typed>|<kept>" (the box's text was not an amount). A note holds
+   * no save; it goes when its box is focused or edited, or the amount under it moves.
+   */
+  amountNotes: Record<string, string>;
   /** Refused keys whose refusal retyping cannot fix (shut/locked): they restore the stored value and do not hold Save or Queue. */
   unfixable: Set<string>;
   /** `dirty` as it was before the pending batch opened, so an all-unfixable batch can give it back. */
@@ -434,7 +440,7 @@ function freshState(target: FormTarget): St {
     stepFromTop: false, asks: [], askAt: new Map(), askPick: {}, askText: {}, askSavedAt: new Map(), factErrors: [],
     profileSave: {}, profileEdited: new Set(), profileAsked: new Set(), profileAskUnknown: false, guessed: new Set(), profileAskSeen: {}, profileAskMsg: {},
     askDone: new Set(), askDoneRaw: new Map(), profileChanged: [], errors: [], messages: {},
-    messageKeys: {}, messageCounts: {}, rejected: {}, unfixable: new Set(), dirtyBatch: null, boxMessages: {}, formErrors: [], checkable: {}, electionAt: null, electionPick: null, electionSavedAt: null,
+    messageKeys: {}, messageCounts: {}, rejected: {}, amountNotes: {}, unfixable: new Set(), dirtyBatch: null, boxMessages: {}, formErrors: [], checkable: {}, electionAt: null, electionPick: null, electionSavedAt: null,
     profileRefreshed: false, dateErrors: {}, datesEdited: new Set(), pending: {}, rangeHeld: {}, forget: [], chosenFrom: {}, dirty: false,
     editSeq: 0, validateSeq: 0, checking: false, removal: null, queueWarn: null, openParts: new Set([0]), current: 0,
     touched: new Set(), showAll: false, previewOpen: false, overlay: null, saveState: { state: "idle" },
@@ -444,7 +450,6 @@ function freshState(target: FormTarget): St {
 
 const sameJson = <T,>(a: T, b: T) => a === b || JSON.stringify(a) === JSON.stringify(b);
 
-const AMOUNT_MISMATCH = "shown amount mismatch";
 
 /** Two amounts are the same number; a blank one is zero. */
 function sameNumber(a: string, b: string): boolean {
@@ -1386,6 +1391,7 @@ export class FormSession {
       if (s.opened.has(k) && s.profileSave[k]) s.profileEdited.add(k);
       delete s.kept[k];
       delete s.rejected[k];
+      delete s.amountNotes[k];
       s.unfixable.delete(k);
       delete s.boxMessages[k];
     }
@@ -1460,6 +1466,7 @@ export class FormSession {
     for (const k of Object.keys(edits)) {
       delete s.kept[k];
       delete s.rejected[k];
+      delete s.amountNotes[k];
       s.unfixable.delete(k);
     }
     s.chosenFrom = Object.fromEntries(Object.keys(edits).map((k) => [k, s.values[k] ?? ""]));
@@ -1523,6 +1530,12 @@ export class FormSession {
   focus(k: string) {
     const s = this.st;
     s.focusKey = k;
+    // A note under the box goes once the filer is back in it.
+    if (this.anchorKey(k) in s.amountNotes) {
+      delete s.amountNotes[this.anchorKey(k)];
+      this.setErrors(s.errors);
+      this.publish();
+    }
     const here = this.keyIndex.get(this.anchorKey(k));
     if (here) this.sFocusedRow.set({ row: here, seq: ++this.revealSeq });
     if (this.endProfileEdit([...s.editing].filter((key) => this.keyIndex.get(key) !== here))) this.publish();
@@ -1702,7 +1715,8 @@ export class FormSession {
       }
     }
     const rej = r.rejected || {};
-    const shownRejected = { ...rej };
+    // A note whose amount moved (a deleted row's rows moved up) or whose box is shut now no longer says what is in that box.
+    if (this.dropStaleNotes()) this.setErrors(s.errors);
     for (const k of Object.keys(edits)) {
       const kind = this.kindOf.get(k);
       if ((kind !== "money" && kind !== "num") || k in rej || this.pools.has(k) || this.oneDateParts.has(k) || this.periodPartKeys.has(k)) continue;
@@ -1715,14 +1729,17 @@ export class FormSession {
       if (sameNumber(typed, stored)) continue;
       const whole = kind === "money" && this.wholeKeys.has(k);
       const shownAmount = formatMoney(typed, whole);
-      const storedAmount = stored === "" ? "blank" : formatMoney(stored, whole);
-      if (shownAmount === storedAmount) continue;
-      shownRejected[k] = `${AMOUNT_MISMATCH}|${shownAmount}|${storedAmount}`;
-      s.rejected[k] = shownRejected[k];
+      const storedAmount = stored === "" ? "no amount" : formatMoney(stored, whole);
+      if (shownAmount === storedAmount || sameNumber(shownAmount, stored)) continue;
+      // The host stored another number than the one typed (a long number rounded, a clamp): the box shows what the return holds
+      // (syncShown: the host changed it) and a note under it says what was typed. It holds no save.
+      s.amountNotes[k] = `amount typed|${shownAmount}|${storedAmount}`;
+      const sentence = this.refusalText(k, s.amountNotes[k]);
+      s.boxMessages[k] = s.boxMessages[k] ? `${s.boxMessages[k]} ${sentence}` : sentence;
       const id = this.keyIndex.get(k);
       if (id) s.touched.add(id);
     }
-    this.syncShown(before, edits, shownRejected);
+    this.syncShown(before, edits, rej);
     this.checkRangeOrders();
     this.livePreview();
     this.sayYearEndPutBack(edits);
@@ -1770,6 +1787,19 @@ export class FormSession {
       const id = this.keyIndex.get(k);
       if (id) s.messageKeys[id] = (s.messageKeys[id] || []).filter((x) => x !== k);
     }
+  }
+
+  /** Drops the notes whose box is shut now or whose amount is no longer the one the note named (it moved or was cleared). True when one went. */
+  private dropStaleNotes(): boolean {
+    const s = this.st;
+    let dropped = false;
+    for (const [k, note] of Object.entries(s.amountNotes)) {
+      const named = note.slice(note.lastIndexOf("|") + 1);
+      if (!this.isShut(k) && sameNumber(named === "no amount" ? "" : named, String(s.values[k] ?? ""))) continue;
+      delete s.amountNotes[k];
+      dropped = true;
+    }
+    return dropped;
   }
 
   /**
@@ -1909,11 +1939,8 @@ export class FormSession {
         st.values = this.shown({ ...st.values, ...r.values });
         st.options = (r.options || {}) as Record<string, unknown[]>;
         st.off = r.off || {};
-        // A gate answer can arrive after the fill that zeroed its amount: the zeroing is the gate's own outside change,
-        // not a shown-against-stored mismatch. Drop only that synthetic refusal; host refusals and real mismatches stay.
-        for (const [k, msg] of Object.entries(st.rejected)) {
-          if (st.off[k] && msg.startsWith(`${AMOUNT_MISMATCH}|`)) delete st.rejected[k];
-        }
+        // A gate answer can arrive after the fill that zeroed its amount: a note on a box shut now goes (setErrors below redraws).
+        this.dropStaleNotes();
         this.liftOpenGates();
         if (Array.isArray(r.penalties)) st.penalties = r.penalties;
         if (r.pools) st.poolTexts = r.pools;
@@ -1982,7 +2009,7 @@ export class FormSession {
     s.electionAt = null;
     const items = this.rowIds.map((id) => ({ id, it: this.items.get(id)! }));
     // A refused edit's sentence sits on its box; it counts toward the row it belongs to.
-    for (const [k, msg] of Object.entries(s.rejected)) {
+    for (const [k, msg] of [...Object.entries(s.rejected), ...Object.entries(s.amountNotes)]) {
       const sentence = this.refusalText(k, msg);
       s.boxMessages[k] = s.boxMessages[k] ? `${s.boxMessages[k]} ${sentence}` : sentence;
       const id = this.keyIndex.get(k);
@@ -3247,11 +3274,10 @@ export class FormSession {
       // Only a refusal whose typed text still stands keeps the save line honest.
       if (Object.keys(s.rejected).some((k) => !s.unfixable.has(k))) s.dirty = true;
       s.saveState = s.dirty ? this.restingSaveState() : { state: "saved" };
-      const mismatch = Object.values(s.rejected).some((msg) => msg.startsWith(`${AMOUNT_MISMATCH}|`));
-      if (changed && !mismatch) this.hooks.onSaved?.(s.target);
-      if (announce) this.toast(mismatch ? "An amount was not saved. Correct the highlighted box." : "Draft saved.", mismatch ? "triangle-alert" : "save");
+      if (changed) this.hooks.onSaved?.(s.target);
+      if (announce) this.toast("Draft saved.", "save");
       this.validate();
-      return !mismatch;
+      return true;
     } catch (e) {
       s.pending = { ...edits, ...s.pending };
       s.saveState = { state: "failed", message: errorText(e) };

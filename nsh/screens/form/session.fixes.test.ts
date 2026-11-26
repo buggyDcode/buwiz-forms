@@ -338,7 +338,7 @@ test("B14: a boxed birth date shows the long month and asks once to save to the 
   s.dispose();
 });
 
-test("money safety net: a gate zeroing a batched amount is not a shown-amount mismatch", async () => {
+test("money note: a gate zeroing a batched amount raises no note", async () => {
   const key = "frm0619E:txtTax14";
   const s = await opened(at("0619E", 2025, 2));
   s.pickRadio("frm0619E:optWithheld:Y");
@@ -346,54 +346,79 @@ test("money safety net: a gate zeroing a batched amount is not a shown-amount mi
   s.edit(key, "1250.5");
   s.pickRadio("frm0619E:optWithheld:N"); // commits at once, with the staged amount in the same host batch
   await s.idle();
-  expect(s.boxMessageOf(key) ?? "").not.toContain("Correct this amount");
+  expect(s.boxMessageOf(key) ?? "").not.toContain("you typed");
   s.dispose();
 });
 
-test("money safety net: clearing a filled or already-zero amount is not a mismatch", async () => {
+test("money note: clearing a filled or already-zero amount raises no note (0.00 against blank says nothing)", async () => {
   const key = "frm2551Qv2018:txt15";
   const filled = await opened(at("2551Q", 2024, 1));
   filled.edit(key, "100");
   await filled.idle();
   filled.edit(key, "");
   await filled.idle();
-  expect(filled.boxMessageOf(key) ?? "").not.toContain("Correct this amount");
+  expect(filled.boxMessageOf(key) ?? "").not.toContain("you typed");
   expect(filled.shownOf(key)).toBe("0.00");
   filled.dispose();
 
   const zero = await opened(at("2551Q", 2024, 2));
   zero.edit(key, "");
   await zero.idle();
-  expect(zero.boxMessageOf(key) ?? "").not.toContain("Correct this amount");
+  expect(zero.boxMessageOf(key) ?? "").not.toContain("you typed");
   expect(zero.shownOf(key)).toBe("0.00");
   zero.dispose();
 });
 
-test("money safety net: a host-stored amount different from the shown amount is named and never reported saved", async () => {
+test("money note: an amount the host stored as another number shows as stored, with a note naming both; nothing is held and the save is reported", async () => {
   const key = "frm2551Qv2018:txt15";
   const original = bir.screen_form_fill;
   const mutableBir = bir as { screen_form_fill: typeof original };
   mutableBir.screen_form_fill = ((...args: Parameters<typeof original>): ReturnType<typeof original> => {
     const r = original(...args);
     if (args[2][key] === "100") {
-      // The host fault the net exists for: the fill answers as though it stored 99.00 for a shown 100.00.
+      // The case the note is for: the host stores 99.00 for a typed 100 (a long number rounded, a clamp).
       (r.draft as { creditable_tax_withheld?: number }).creditable_tax_withheld = 99;
       r.values[key] = "99.00";
     }
     return r;
   }) as typeof original;
+  const note = "Item 15: you typed 100.00; the return holds 99.00.";
+  const saves = countSaves();
   let reported = 0;
   let s: FormSession | undefined;
   try {
     s = await opened(at("2551Q", 2025, 4), { onSaved: () => reported++ });
     s.edit(key, "100");
+    s.blur(key);
     await s.idle();
+    expect(s.shownOf(key)).toBe("99.00");
+    expect(s.boxMessageOf(key)).toBe(note);
+    // Autosave went through; an explicit save too, and the return is saved, not unsaved.
+    expect(saves.count).toBeGreaterThan(0);
     s.saveNow();
-    expect(s.boxMessageOf(key)).toBe("Item 15: the box shows 100.00, but the draft stored 99.00. Correct this amount; it was not saved.");
-    expect(reported).toBe(0);
-    expect(s.saveState().state).toBe("unsaved");
+    await s.idle();
+    expect(reported).toBeGreaterThan(0);
+    expect(s.saveState().state).toBe("saved");
+    expect(await s.flushNow()).toBe(true);
+    expect(s.boxMessageOf(key)).toBe(note);
+    // Back in the box, the note goes; it does not come back by itself.
+    s.focus(key);
+    expect(s.boxMessageOf(key) ?? "").toBe("");
+    s.blur(key);
+    await s.idle();
+    expect(s.boxMessageOf(key) ?? "").toBe("");
+    // A new edit the host stores as typed raises none; one it stores otherwise raises it again, and an edit takes it away.
+    s.edit(key, "100");
+    s.blur(key);
+    await s.idle();
+    expect(s.boxMessageOf(key)).toBe(note);
+    s.edit(key, "250");
+    expect(s.boxMessageOf(key) ?? "").toBe("");
+    await s.idle();
+    expect(s.boxMessageOf(key) ?? "").toBe("");
   } finally {
     mutableBir.screen_form_fill = original;
+    saves.restore();
     s?.dispose();
   }
 });
@@ -450,10 +475,10 @@ function fillSched3Row(s: FormSession, n: number, agent: string, payment: string
 /** The drawer's Delete row (rows.tsx onClearRow): "" for every open cell of the row. */
 const deleteRow = (s: FormSession, n: number) => s.choose(Object.fromEntries(sched3(n).filter((k) => !s.box(k).locked()).map((k) => [k, ""])));
 
-test("F10: an amount typed in a row that a Delete row in the same batch clears or moves is no mismatch; a real one in that batch still is", async () => {
+test("F10: an amount typed in a row that a Delete row in the same batch clears or moves raises no note; a real one in that batch still does", async () => {
   const other = "frm2550qv2024:vatRefund";
   const restore = hostFault(other, "100", "99.00");
-  const mismatch = (s: FormSession, k: string) => (s.boxMessageOf(k) ?? "").includes("Correct this amount");
+  const mismatch = (s: FormSession, k: string) => (s.boxMessageOf(k) ?? "").includes("you typed");
   const cells = [0, 1, 2].flatMap((n) => sched3(n));
   let s: FormSession | undefined;
   try {
@@ -477,6 +502,28 @@ test("F10: an amount typed in a row that a Delete row in the same batch clears o
     await s.idle();
     expect(cells.filter((k) => mismatch(s!, k))).toEqual([]);
     expect(mismatch(s, other)).toBe(true);
+  } finally {
+    restore();
+    s?.dispose();
+  }
+});
+
+test("money note: a note on a schedule amount goes when deleting the row above moves its row up; the box then shows its row's amount", async () => {
+  const pay1 = "txtIncomePayment31";
+  const restore = hostFault(pay1, "2000", "1,999.00");
+  let s: FormSession | undefined;
+  try {
+    s = await opened(at("2550Q", 2025, 1));
+    fillSched3Row(s, 0, "Agent One", "1000");
+    fillSched3Row(s, 1, "Agent Two", "2000");
+    await s.idle();
+    expect(s.shownOf(pay1)).toBe("1,999.00");
+    expect(s.boxMessageOf(pay1)).toBe("(C) Income Payment: you typed 2,000.00; the return holds 1,999.00.");
+    deleteRow(s, 0);
+    await s.idle();
+    expect(s.shownOf("txtIncomePayment30")).toBe("2,000.00");
+    expect(s.boxMessageOf(pay1) ?? "").toBe("");
+    expect(s.shownOf(pay1)).toBe("");
   } finally {
     restore();
     s?.dispose();
