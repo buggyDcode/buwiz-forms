@@ -4,6 +4,7 @@ import { expect, test } from "nsh/test";
 import { bir } from "../../bir";
 import { DEMO, createDemoTaxpayer, warmForms } from "../../bir/testing";
 import { radioProps } from "./rows";
+import { Print } from "../print/native";
 import { emptyCell } from "./schema";
 import { FormSession, UNDO_WINDOW, type FormTarget, type SessionHooks, type ToastAction } from "./session";
 
@@ -1202,6 +1203,73 @@ test("[B1] 2551Q Schedule 1: after a Delete row with a focused cell holding type
     // reads "0"); the other rows keep theirs.
     expect(Object.entries(t.slot(r)).filter(([, v]) => !zeroOrBlank(v))).toEqual([]);
     for (const n of [0, 1, 2].filter((n) => n !== r)) expect(s.valueOf("txtATCAmt" + (n + 1))).toBe(["1,000.00", "2,000.00", "3,000.00"][n]);
+    s.dispose();
+  }
+});
+
+/** A headless session has no preview window: Print previews "natively" here, so print() goes on to the host's door. */
+function previewHere(): () => void {
+  const native = Print as unknown as { previewsNatively: () => boolean };
+  const real = native.previewsNatively;
+  native.previewsNatively = () => true;
+  return () => void (native.previewsNatively = real);
+}
+
+/** Records `read()` each time the host's `name` door is called (what the save or the paper took), then calls it. */
+function recordAt<K extends "screen_form_save" | "screen_form_print">(name: K, read: () => string): { seen: string[]; restore: () => void } {
+  const door = bir as unknown as Record<K, (...args: unknown[]) => unknown>;
+  const real = door[name];
+  const out = { seen: [] as string[], restore: () => void (door[name] = real) };
+  door[name] = (...args: unknown[]) => {
+    out.seen.push(read());
+    return real(...args);
+  };
+  return out;
+}
+
+for (const [period, door, name] of [[4, "screen_form_save", "Save"], [2, "screen_form_print", "Print"]] as const) {
+  test(`[B2] ${name} with an amount box still focused leaves it first: the ${name === "Save" ? "save" : "paper"} takes the box's amount`, async () => {
+    // The box holds "1500,50": it read as 1500 while typed and reads 1,500.50 only on leaving (a decimal comma).
+    const key = "frm2551Qv2018:txt15";
+    const h = hooks();
+    const s = await opened(at("2551Q", 2019, period), h);
+    s.jumpTo(2);
+    const rec = recordAt(door, () => s.valueOf(key));
+    const unstub = previewHere();
+    try {
+      const box = heldBox(s, key, "1500", "later", "1500.50");
+      if (door === "screen_form_save") s.saveNow();
+      else s.print();
+      await s.idle();
+      expect(rec.seen[0]).toBe("1,500.50");
+      expect(box.asked()).toBe(1);
+      if (door === "screen_form_save") expect(h.said.toasts.map((t) => t.message)).toContain("Draft saved.");
+      expect(h.said.toasts.some((t) => t.message.startsWith("Finish the amount"))).toBe(false);
+    } finally {
+      unstub();
+      rec.restore();
+      s.dispose();
+    }
+  });
+}
+
+test("[B2] no box focused: Save and Print run in the same turn, as before", async () => {
+  const key = "frm2551Qv2018:txt15";
+  const s = await opened(at("2551Q", 2022, 4));
+  const saves = recordAt("screen_form_save", () => s.valueOf(key));
+  const prints = recordAt("screen_form_print", () => s.valueOf(key));
+  const unstub = previewHere();
+  try {
+    s.edit(key, "700");
+    s.saveNow();
+    expect(saves.seen).toEqual(["700.00"]);
+    s.edit(key, "800");
+    s.print();
+    expect(prints.seen).toEqual(["800.00"]);
+  } finally {
+    unstub();
+    saves.restore();
+    prints.restore();
     s.dispose();
   }
 });

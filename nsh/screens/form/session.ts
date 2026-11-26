@@ -3383,6 +3383,9 @@ export class FormSession {
   saveNow() {
     const s = this.st;
     if (!s.draft || !s.editable) return;
+    // B2: an amount box that still has the keys is left first: a decimal-comma text ("1500,50") reads only on leaving, so the save
+    // would store the older amount the box last reported.
+    if (this.settleFocused(() => this.saveNow())) return;
     this.cancelAutosave();
     if (s.sample) return this.saveSample(null);
     this.saveReturn(true);
@@ -3840,6 +3843,8 @@ export class FormSession {
     const s = this.st;
     if (!s.draft) return;
     if (!hasSecondWindow && !hasNativePreview && !Print.previewsNatively()) return void this.toast(NO_PREVIEW, "printer");
+    // B2: an amount box that still has the keys is left first, so the paper shows the amount the box holds, not an older one.
+    if (this.settleFocused(() => this.print())) return;
     if (s.sample) {
       try {
         bir.screen_form_print_sample(s.target.formCode, s.draft, s.pending, this.unlockedFor(s.pending));
