@@ -525,3 +525,103 @@ test("F1: a Form library sample is not saved as a return while a shown amount di
     s?.dispose();
   }
 });
+
+/** 2550Q Schedule 3's row n (a compacting schedule: a deleted row's rows below move up). */
+const sched3 = (n: number) => ["txtDateCovered3" + n, "txtDateCovered3To" + n, "txtNameWithHoldingAgent3" + n, "txtIncomePayment3" + n, "txtTotalTaxWithHeld3" + n];
+
+function fillSched3Row(s: FormSession, n: number, agent: string, payment: string) {
+  s.edit("txtDateCovered3" + n, "01/01/2025");
+  s.edit("txtDateCovered3To" + n, "03/31/2025");
+  s.edit("txtNameWithHoldingAgent3" + n, agent);
+  s.edit("txtIncomePayment3" + n, payment);
+}
+
+/** The drawer's Delete row (rows.tsx onClearRow): "" for every open cell of the row. */
+const deleteRow = (s: FormSession, n: number) => s.choose(Object.fromEntries(sched3(n).filter((k) => !s.box(k).locked()).map((k) => [k, ""])));
+
+test("F9: a mismatch on a schedule row's amount goes when deleting the row above moves its row up; Save then goes ahead", async () => {
+  const pay1 = "txtIncomePayment31";
+  const restore = hostFault(pay1, "2000", "1,999.00");
+  const saves = countSaves();
+  let s: FormSession | undefined;
+  try {
+    s = await opened(at("2550Q", 2025, 1));
+    fillSched3Row(s, 0, "Agent One", "1000");
+    fillSched3Row(s, 1, "Agent Two", "2000");
+    await s.idle();
+    expect(s.boxMessageOf(pay1)).toContain("Correct this amount");
+    deleteRow(s, 0);
+    await s.idle();
+    // Row 1 moved up into row 0: the draft holds its 2,000.00 there, and row 1 is the blank row now.
+    expect(s.shownOf("txtIncomePayment30")).toBe("2,000.00");
+    expect(s.boxMessageOf(pay1) ?? "").not.toContain("Correct this amount");
+    expect(s.shownOf(pay1)).toBe("");
+    const before = saves.count;
+    s.saveNow();
+    await s.idle();
+    expect(saves.count).toBeGreaterThan(before);
+    expect(s.saveState().state).toBe("saved");
+  } finally {
+    restore();
+    saves.restore();
+    s?.dispose();
+  }
+});
+
+test("F9: a mismatch stays while its box can be corrected, and goes when a gate hides the box or the host locks it", async () => {
+  // A gate hides it: 0619E Item 14 is used only when Item 4 is Yes.
+  const tax = "frm0619E:txtTax14";
+  const restoreGate = hostFault(tax, "100", "99.00");
+  let gated: FormSession | undefined;
+  try {
+    gated = await opened(at("0619E", 2025, 1));
+    gated.pickRadio("frm0619E:optWithheld:Y");
+    await gated.idle();
+    gated.edit(tax, "100");
+    await gated.idle();
+    expect(gated.boxMessageOf(tax)).toContain("Correct this amount");
+    gated.pickRadio("frm0619E:optWithheld:N");
+    await gated.idle();
+    expect(gated.boxMessageOf(tax) ?? "").not.toContain("Correct this amount");
+  } finally {
+    restoreGate();
+    gated?.dispose();
+  }
+
+  // The host locks it: a later fill's answer relocks the box (computed now).
+  const key = "frm2551Qv2018:txt15";
+  const other = "txtATCAmt1";
+  const restore = hostFault(key, "100", "99.00");
+  const saves = countSaves();
+  let s: FormSession | undefined;
+  const fill = bir.screen_form_fill;
+  const door = bir as { screen_form_fill: typeof fill };
+  try {
+    s = await opened(at("2551Q", 2023, 2));
+    s.edit(key, "100");
+    await s.idle();
+    expect(s.boxMessageOf(key)).toContain("Correct this amount");
+    // Another box edited: this one is still the filer's to correct, so the save stays held.
+    s.edit(other, "500");
+    await s.idle();
+    expect(s.box(key).locked()).toBe(false);
+    expect(s.boxMessageOf(key)).toContain("Correct this amount");
+    expect(saves.count).toBe(0);
+    door.screen_form_fill = ((...args: Parameters<typeof fill>): ReturnType<typeof fill> => {
+      const r = fill(...args);
+      if (args[2][other] === "600") r.relocks = { ...(r.relocks || {}), [key]: "computed by the form" };
+      return r;
+    }) as typeof fill;
+    s.edit(other, "600");
+    await s.idle();
+    expect(s.box(key).locked()).toBe(true);
+    expect(s.boxMessageOf(key) ?? "").not.toContain("Correct this amount");
+    expect(saves.count).toBeGreaterThan(0);
+    expect(s.saveState().state).toBe("saved");
+  } finally {
+    door.screen_form_fill = fill;
+    restore();
+    saves.restore();
+    s?.dispose();
+  }
+});

@@ -1752,6 +1752,8 @@ export class FormSession {
       }
       // B19: a fixable refusal keeps what was typed; the draft never took it.
     }
+    // F9: this fill's locks and moves may leave an earlier mismatch on a box the filer can no longer correct.
+    this.dropStaleMismatches();
     if (allUnfixable && heldDirty !== null) {
       s.dirty = heldDirty;
       s.saveState = this.restingSaveState();
@@ -1771,6 +1773,24 @@ export class FormSession {
       s.unfixable.delete(k);
       const id = this.keyIndex.get(k);
       if (id) s.messageKeys[id] = (s.messageKeys[id] || []).filter((x) => x !== k);
+    }
+  }
+
+  /**
+   * F9: a shown-amount mismatch lasts only while the filer can correct its box. It goes, and the box shows what the draft holds, when
+   * the box is shut now (locked, computed, off by a gate, a penalty not opened), or when the host moved or cleared what it stored there
+   * since: a deleted schedule row's rows below move up, so the row the mismatch was about is no longer at that box. Left alone it would
+   * hold every save and Queue with its message on a box that cannot be corrected or no longer shows that row.
+   */
+  private dropStaleMismatches() {
+    const s = this.st;
+    for (const k of this.mismatchKeys()) {
+      const stored = s.rejected[k].split("|")[2] ?? "";
+      const moved = !sameNumber(stored === "blank" ? "" : stored, String(s.values[k] ?? ""));
+      if (!moved && !this.isShut(k)) continue;
+      delete s.rejected[k];
+      delete s.boxMessages[k];
+      this.sValue.get(k).set(this.shownText(k));
     }
   }
 
@@ -1912,10 +1932,9 @@ export class FormSession {
         st.options = (r.options || {}) as Record<string, unknown[]>;
         st.off = r.off || {};
         // A gate answer can arrive after the fill that zeroed its amount: the zeroing is the gate's own outside change,
-        // not a shown-against-stored mismatch. Drop only that synthetic refusal; host refusals and real mismatches stay.
-        for (const [k, msg] of Object.entries(st.rejected)) {
-          if (st.off[k] && msg.startsWith(`${AMOUNT_MISMATCH}|`)) delete st.rejected[k];
-        }
+        // not a shown-against-stored mismatch. Drop only the synthetic refusals the filer can no longer correct (F9);
+        // host refusals and real mismatches stay.
+        this.dropStaleMismatches();
         this.liftOpenGates();
         if (Array.isArray(r.penalties)) st.penalties = r.penalties;
         if (r.pools) st.poolTexts = r.pools;
