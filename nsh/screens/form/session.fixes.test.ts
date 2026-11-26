@@ -666,7 +666,7 @@ test("F10: an amount typed in a row that a Delete row in the same batch clears o
 // Text a money box holds that does not read as an amount ("1500,50"): the box calls onInvalid (rows.tsx -> setAmountInvalid). The box
 // side is the money box's own; these tests call the session's door directly.
 
-test("invalid text blocks save: no save, leaving and Queue refused with the box's sentence; a stored edit does not lift it, null does", async () => {
+test("invalid text blocks save: no save and Queue refused with the box's sentence; a stored edit does not lift it, null does", async () => {
   const key = "frm2551Qv2018:txt15";
   const sentence = "Item 15: 1500,50 is not a valid amount. Correct it or clear the box; it was not saved.";
   const saves = countSaves();
@@ -686,9 +686,6 @@ test("invalid text blocks save: no save, leaving and Queue refused with the box'
     expect(saves.count).toBe(0);
     expect(h.said.toasts.map((t) => t.message)).toContain(NOT_SAVED);
     expect(inner(s).saveReturn(false)).toBe(false);
-    expect(inner(s).finish()).toBe(sentence);
-    expect(await s.flushNow()).toBe(false);
-    expect(h.said.toasts.map((t) => t.message)).toContain(sentence);
     s.queue();
     await s.idle();
     expect(s.overlay()?.kind ?? "").not.toBe("queue-confirm");
@@ -854,7 +851,7 @@ test("invalid text blocks save: with a mismatch on another box both hold, each s
   }
 });
 
-test("invalid text blocks save: text still being typed holds save, the sample save, Queue and leaving, with no sentence under the box until it is left", async () => {
+test("invalid text blocks save: text still being typed holds save, the sample save and Queue, with no sentence under the box until it is left", async () => {
   const key = "frm2551Qv2018:txt15";
   const sentence = "Item 15: 1,5 is not a valid amount. Correct it or clear the box; it was not saved.";
   const saves = countSaves();
@@ -882,10 +879,6 @@ test("invalid text blocks save: text still being typed holds save, the sample sa
     expect(s.status()).toBe("Draft");
     expect(saves.count).toBe(0);
     expect(s.boxMessageOf(key)).toBe(sentence);
-    // Leaving while typing: finish() names the sentence.
-    s.setAmountInvalid(key, "1,5", true);
-    expect(inner(s).finish()).toBe(sentence);
-    expect(saves.count).toBe(0);
     // Null clears either form.
     s.setAmountInvalid(key, "1,5", true);
     s.setAmountInvalid(key, null);
@@ -914,9 +907,9 @@ test("invalid text blocks save: text still being typed holds save, the sample sa
   }
 });
 
-test("invalid text blocks save: a move or a quit with a held box toasts the box's sentence and saves nothing; the frame then goes (no Stay is offered)", async () => {
+test("leave with unreadable text: a move saves the draft once and says once that the earlier amount was kept; a quit after it has nothing left to save", async () => {
   const key = "frm2551Qv2018:txt15";
-  const sentence = "Item 15: 9x is not a valid amount. Correct it or clear the box; it was not saved.";
+  const kept = "Item 15: 9x is not a valid amount; the earlier amount was kept.";
   const saves = countSaves();
   const h = hooks();
   // The form view's hook (shell/views.tsx FormView).
@@ -927,20 +920,85 @@ test("invalid text blocks save: a move or a quit with a held box toasts the box'
   try {
     s = await opened(at("2551Q", 2021, 2), h);
     s.edit(key, "9");
-    s.setAmountInvalid(key, "9x", true);
     await s.idle();
+    const before = saves.count;
+    // The box: "9x" does not read, so it says so and puts the amount at focus (9) back.
+    s.setAmountInvalid(key, "9x", true);
+    s.edit(key, "9");
     app.go("settings");
     await app.settled();
-    expect(h.said.toasts.map((t) => t.message)).toContain(sentence);
-    expect(saves.count).toBe(0);
     expect(app.view()).toBe("settings");
+    expect(saves.count).toBe(before + 1);
+    expect(h.said.toasts.filter((t) => t.message === kept).length).toBe(1);
     let ended = false;
     await app.quit(() => void (ended = true));
     expect(ended).toBe(true);
-    expect(saves.count).toBe(0);
+    expect(saves.count).toBe(before + 1);
+    s.dispose();
+    expect(h.said.toasts.filter((t) => t.message === kept).length).toBe(1);
   } finally {
     off();
     saves.restore();
     s?.dispose();
+  }
+});
+
+test("leave with unreadable text: leaving saves the draft as it holds it (A and C as typed, B at its amount from focus) once; a mismatch saves nothing", async () => {
+  const [a, b, c] = ["frm2551Qv2018:txt15", "frm2551Qv2018:txt17", "txtATCAmt1"];
+  const kept = "Item 17: 40,5 is not a valid amount; the earlier amount was kept.";
+  const saves = countSaves();
+  const h = hooks();
+  const reopened = async (period: number) => {
+    const r = new FormSession(at("2551Q", 2020, period));
+    expect(await r.open()).toBe(null);
+    await r.idle();
+    return r;
+  };
+  let s: FormSession | undefined;
+  let back: FormSession | undefined;
+  try {
+    s = await opened(at("2551Q", 2020, 1), h);
+    s.edit(b, "40");
+    await s.idle();
+    const before = saves.count;
+    s.edit(a, "100");
+    // Box B: "40,5" does not read; the box says so and puts its amount at focus back.
+    s.setAmountInvalid(b, "40,5", true);
+    s.edit(b, "40");
+    s.edit(c, "300");
+    expect(await s.flushNow()).toBe(true);
+    s.dispose();
+    expect(saves.count).toBe(before + 1);
+    expect(h.said.toasts.filter((t) => t.message === kept).length).toBe(1);
+    back = await reopened(1);
+    expect([back.valueOf(a), back.valueOf(b), back.valueOf(c)]).toEqual(["100.00", "40.00", "300.00"]);
+    back.dispose();
+    back = undefined;
+
+    // A true mismatch (A stored as 99.00) with the same unreadable B: nothing is saved, and leaving says why.
+    const restore = hostFault(a, "100", "99.00");
+    try {
+      s = await opened(at("2551Q", 2020, 2), h);
+      const start = saves.count;
+      s.edit(a, "100");
+      s.setAmountInvalid(b, "40,5", true);
+      s.edit(c, "300");
+      expect(await s.flushNow()).toBe(false);
+      s.dispose();
+      expect(saves.count).toBe(start);
+      // Both boxes' sentences, the mismatch's among them; the "earlier amount was kept" line is not said: nothing was kept.
+      const said = h.said.toasts.map((t) => t.message).slice(-2);
+      expect(said.some((m) => m.includes("Item 15: the box shows 100.00, but the draft stored 99.00. Correct this amount; it was not saved."))).toBe(true);
+      expect(said.some((m) => m.includes("the earlier amount was kept"))).toBe(false);
+    } finally {
+      restore();
+    }
+    back = await reopened(2);
+    expect(back.valueOf(a)).not.toBe("100.00");
+    expect(back.valueOf(c)).not.toBe("300.00");
+  } finally {
+    saves.restore();
+    s?.dispose();
+    back?.dispose();
   }
 });

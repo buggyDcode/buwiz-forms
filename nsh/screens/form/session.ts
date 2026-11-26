@@ -3338,8 +3338,11 @@ export class FormSession {
     this.publish();
   }
 
-  /** Save a return (old save()). announce: an explicit save toasts. True when saved. */
-  private saveReturn(announce: boolean): boolean {
+  /**
+   * Save a return (old save()). announce: an explicit save toasts. True when saved. leaving: the page is going (finish()): a box whose
+   * text is not an amount no longer holds the save, since the box put its amount at focus back into the draft; a mismatch still does.
+   */
+  private saveReturn(announce: boolean, leaving = false): boolean {
     const s = this.st;
     if (!s.draft) return false;
     this.unquiet();
@@ -3361,7 +3364,7 @@ export class FormSession {
       }
       // F1: a box whose shown amount differs from the one the host stored holds the whole save. Nothing is written until the
       // filer corrects it (its sentence is on the box), so the draft never stores an amount the page did not show.
-      if (this.heldKeys().length) {
+      if (this.heldKeys().some((k) => !leaving || !this.isInvalid(k))) {
         s.dirty = true;
         s.saveState = this.restingSaveState();
         if (announce) {
@@ -3384,7 +3387,7 @@ export class FormSession {
       // A refusal whose text is no longer there (the row was cleared, the drawer discarded it, the
       // agent put the stored value back) must not hold the return dirty: nothing is left unsaved.
       // Only a refusal whose typed text still stands keeps the save line honest.
-      if (Object.keys(s.rejected).some((k) => !s.unfixable.has(k))) s.dirty = true;
+      if (Object.keys(s.rejected).some((k) => !s.unfixable.has(k) && !(leaving && this.isInvalid(k)))) s.dirty = true;
       s.saveState = s.dirty ? this.restingSaveState() : { state: "saved" };
       if (changed) this.hooks.onSaved?.(s.target);
       if (announce) this.toast("Draft saved.", "save");
@@ -4402,7 +4405,13 @@ export class FormSession {
       }
     }
     if (!s.dirty || s.sample || !this.canAutosave()) return null;
-    if (this.saveReturn(false)) return null;
+    // Leaving with only text that is not an amount: the draft holds each such box's amount at focus, so it is saved as it is,
+    // with every other edit, and the filer is told once which text was not taken.
+    const kept = this.heldKeys().every((k) => this.isInvalid(k)) ? this.heldKeys() : [];
+    if (this.saveReturn(false, true)) {
+      if (kept.length) this.toast(kept.map((k) => this.refusalText(k, this.st.rejected[k].replace(/^[^|]*\|/, "amount kept|").replace(/\|typing$/, ""))).join(" "), "triangle-alert");
+      return null;
+    }
     if (s.saveState.state === "failed") return s.saveState.message;
     // F1: a shown amount that differs from the stored one, or text that is not an amount, held the save: the reason is the
     // sentence its box shows (shown now also for text still being typed: the filer tried to go).
