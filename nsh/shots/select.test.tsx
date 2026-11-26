@@ -8,7 +8,8 @@ import { expect, open, test } from "nsh/test";
 import type { App } from "nsh/test";
 import { openKit, readout, SIZES } from "../ui/harness";
 
-const WIDE = { width: 800, height: 600, platform: "macos" as const };
+// Tall enough for every box of the fixture (s-tin and s-kept are its last rows): a box below the window cannot be typed into.
+const WIDE = { width: 800, height: 1000, platform: "macos" as const };
 const KIT = SIZES[1].options;
 const FIXTURE = "../ui/select.fixture.tsx";
 
