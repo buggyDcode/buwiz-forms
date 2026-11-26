@@ -14,6 +14,9 @@ const OPTIONS = [
 
 function App() {
   const money = signal("");
+  const filled = signal("1234.56");
+  const textWrites = signal(0);
+  const caretWrites = signal(0);
   const pct = signal("");
   const int = signal("");
   const tin = signal("");
@@ -21,6 +24,7 @@ function App() {
   const pick = signal<string | null>(null);
   const ticked = signal(false);
   let moneyRef: InputRef | undefined;
+  let filledRef: InputRef | undefined;
   let pctRef: InputRef | undefined;
   let intRef: InputRef | undefined;
   let tinRef: InputRef | undefined;
@@ -31,6 +35,9 @@ function App() {
     <View class="gap-2 p-3">
       <View class="flex-row flex-wrap gap-x-3">
         <Text variant="cap">{`Money: ${money() || "empty"}`}</Text>
+        <Text variant="cap">{`Filled: ${filled() || "empty"}`}</Text>
+        <Text variant="cap">{`Text writes: ${textWrites()}`}</Text>
+        <Text variant="cap">{`Caret writes: ${caretWrites()}`}</Text>
         <Text variant="cap">{`Pct: ${pct() || "empty"}`}</Text>
         <Text variant="cap">{`Int: ${int() || "empty"}`}</Text>
         <Text variant="cap">{`Tin: ${tin() || "empty"}`}</Text>
@@ -40,6 +47,7 @@ function App() {
       </View>
       <View class="flex-row flex-wrap gap-2">
         <AppButton label="Focus money" size="sm" testID="go-money" onPress={() => moneyRef?.focus()} />
+        <AppButton label="Focus filled" size="sm" testID="go-filled" onPress={() => filledRef?.focus()} />
         <AppButton label="Focus pct" size="sm" testID="go-pct" onPress={() => pctRef?.focus()} />
         <AppButton label="Focus int" size="sm" testID="go-int" onPress={() => intRef?.focus()} />
         <AppButton label="Focus tin" size="sm" testID="go-tin" onPress={() => tinRef?.focus()} />
@@ -48,6 +56,14 @@ function App() {
         <AppButton label="Focus checkbox" size="sm" testID="go-box" onPress={() => boxRef?.focus()} />
       </View>
       <MoneyInput label="Money" value={money()} onChange={(v) => money.set(v)} inputRef={(r) => (moneyRef = r)} testID="f-money" />
+      <MoneyInput
+        label="Filled"
+        value={filled()}
+        onChange={(v) => filled.set(v)}
+        inputRef={(r) => (filledRef = r)}
+        writeProbe={(write) => (write === "text" ? textWrites.update((n) => n + 1) : caretWrites.update((n) => n + 1))}
+        testID="f-filled"
+      />
       <PercentInput label="Pct" value={pct()} onChange={(v) => pct.set(v)} inputRef={(r) => (pctRef = r)} testID="f-pct" />
       <IntInput label="Int" value={int()} onChange={(v) => int.set(v)} inputRef={(r) => (intRef = r)} testID="f-int" />
       <TinInput label="TIN" value={tin()} onChange={(v) => tin.set(v)} inputRef={(r) => (tinRef = r)} testID="f-tin" />

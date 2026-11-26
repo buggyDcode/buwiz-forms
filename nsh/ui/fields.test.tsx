@@ -296,6 +296,28 @@ for (const size of SIZES) {
     }
   });
 
+  test(`${size.name}: focus on a filled grouped amount writes no text or caret, and typing keeps separators until blur`, async () => {
+    const app = await open("./masked.fixture.tsx", size.options);
+    expect(app.value("id:m-grouped")).toBe("1,234.56");
+    const textWrites = readout(app, "Text writes:");
+    const caretWrites = readout(app, "Caret writes:");
+    await app.type("id:m-grouped", ""); // focus only
+    await app.wait(100);
+    expect(app.value("id:m-grouped")).toBe("1,234.56");
+    expect(readout(app, "Text writes:")).toBe(textWrites);
+    expect(readout(app, "Caret writes:")).toBe(caretWrites);
+    const beforeTypeText = readout(app, "Text writes:");
+    const beforeTypeCaret = readout(app, "Caret writes:");
+    await app.type("id:m-grouped", "9");
+    expect(app.value("id:m-grouped")).toBe("1,234.569");
+    expect(readout(app, "Grouped:")).toBe("Grouped: 1234.569");
+    expect(readout(app, "Text writes:")).toBe(beforeTypeText);
+    expect(readout(app, "Caret writes:")).toBe(beforeTypeCaret);
+    await app.type("id:m-other", " ");
+    expect(app.value("id:m-grouped")).toBe("1,234.57");
+    expect(readout(app, "Grouped:")).toBe("Grouped: 1234.57");
+  });
+
   test(`${size.name}: a focused zero is empty and, left untouched, shows its zero again without a new report`, async () => {
     const app = await open("./masked.fixture.tsx", size.options);
     expect(app.value("id:m-host")).toBe("0.00");

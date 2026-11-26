@@ -31,3 +31,15 @@ test("desktop: a checkbox and a dropdown take the keyboard from their ref", asyn
   await app.waitFor("text:Bravo");
   expect(app.shows("text:Alpha")).toBe(true);
 });
+
+test("desktop: programmatic focus on a filled amount writes no text or caret", async () => {
+  const app = await open(ENTRY, WIDE);
+  expect(app.value("id:f-filled")).toBe("1,234.56");
+  const textWrites = readout(app, "Text writes:");
+  const caretWrites = readout(app, "Caret writes:");
+  await app.press("id:go-filled");
+  await app.wait(200);
+  expect(app.value("id:f-filled")).toBe("1,234.56");
+  expect(readout(app, "Text writes:")).toBe(textWrites);
+  expect(readout(app, "Caret writes:")).toBe(caretWrites);
+});

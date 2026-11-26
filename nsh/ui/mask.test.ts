@@ -200,8 +200,8 @@ test("money: no 'Infinity.undefined', no '-0.00', every digit of a long amount s
 
 test("money: what a box shows for a stored value (negatives shown, non-amounts verbatim)", () => {
   expect(shownMoney("-250", false)).toBe("-250.00");
-  expect(shownMoney("-250", true)).toBe("-250");
-  expect(shownMoney("1250000.5", true)).toBe("1250000.5");
+  expect(shownMoney("-250", true)).toBe("-250.00");
+  expect(shownMoney("1250000.5", true)).toBe("1,250,000.50");
   expect(shownMoney("1250000.5", false)).toBe("1,250,000.50");
   expect(shownMoney("1234.5", false, true)).toBe("1234.5");
   expect(shownMoney("-0", false)).toBe("0.00");
@@ -456,4 +456,17 @@ test("money entry accepts mid-text digits and Backspace exactly, without reforma
   // An adjacent repeated digit stays exactly where typed; no separator insertion can make the edit ambiguous.
   const repeated = reconcile("9999", "99999", mask, undefined, { start: 4, end: 4 }, true);
   expect(repeated).toEqual({ text: "99999", caret: 5 });
+  // Separators already in a filled amount are insignificant to the amount but valid text while focused.
+  const beforeComma = reconcile("1,234.56", "91,234.56", mask, undefined, { start: 0, end: 0 }, true);
+  expect(beforeComma).toEqual({ text: "91,234.56", caret: 1 });
+  const middle = reconcile("1,234.56", "1,2934.56", mask, undefined, { start: 3, end: 3 }, true);
+  expect(middle).toEqual({ text: "1,2934.56", caret: 4 });
+  const end = reconcile("1,234.56", "1,234.569", mask, undefined, { start: 8, end: 8 }, true);
+  expect(end).toEqual({ text: "1,234.569", caret: 9 });
+  const typedComma = reconcile("1234.56", "1234,.56", mask, undefined, { start: 4, end: 4 }, true);
+  expect(typedComma.text).toBe("1234,.56");
+  const wholeSelection = reconcile("1,234.56", "9", mask, undefined, { start: 0, end: 8 }, true);
+  expect(wholeSelection).toEqual({ text: "9", caret: 1 });
+  const pastedGrouped = reconcile("", "1,234.56", mask, undefined, undefined, false);
+  expect(pastedGrouped).toEqual({ text: "1234.56", caret: 7 }); // a paste is normalized at once
 });

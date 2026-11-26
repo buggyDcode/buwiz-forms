@@ -74,15 +74,15 @@ for (const size of SIZES) {
     expect(edit(app, "email")).toBe("juana@example.test" + "x");
   });
 
-  test(`${size.name}: money groups while typing, reports the plain number, two decimals on leaving`, async () => {
+  test(`${size.name}: money stays plain while typing, reports the plain number, groups with two decimals on leaving`, async () => {
     const app = await gallery(size.options);
     expect(app.value("id:fp-money")).toBe("1,250,000.50");
     await app.clear("id:fp-money");
     await app.type("id:fp-money", "1250000");
-    expect(app.value("id:fp-money")).toBe("1,250,000");
+    expect(app.value("id:fp-money")).toBe("1250000");
     expect(edit(app, "money")).toBe("1250000");
     await app.type("id:fp-money", ".5");
-    expect(app.value("id:fp-money")).toBe("1,250,000.5");
+    expect(app.value("id:fp-money")).toBe("1250000.5");
     expect(edit(app, "money")).toBe("1250000.5");
     await app.type("id:fp-name", " ");
     expect(blurs(app, "money")).toBe(1);

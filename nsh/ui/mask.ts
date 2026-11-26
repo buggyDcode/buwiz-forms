@@ -426,12 +426,14 @@ export function moneyPlain(text: string): string {
 
 /**
  * The money mask's validation while a box has the keys: the same characters and paste rules, but no grouping and no
- * leading-zero rewrite. A valid digit or point leaves the text exactly as typed; formatting is for blur only.
+ * leading-zero rewrite. Commas already in the amount (or typed as separators) stay while focused and are stripped with
+ * the other grouping on blur; digits and one decimal point leave the text exactly as typed.
  */
 export function moneyEntryMask(o?: MoneyMaskOptions): Mask {
   const base = moneyMask(o);
   return {
-    significant: base.significant,
+    // Commas are separators already in a filled amount (or typed as one); the digits and one decimal point are the number.
+    significant: (ch) => base.significant(ch) || ch === ",",
     insert: base.insert,
     format(sig) {
       const keep: boolean[] = new Array(sig.length).fill(false);
@@ -501,15 +503,14 @@ export function formatMoney(text: string, whole = false, round = true): string {
 }
 
 /**
- * What a money box shows for a value, never another number than the value: a plain amount as typed while the box has the
- * keys (the plain stored digits, no separators) and laid out by formatMoney (grouped, two decimals at least, none rounded away) when it does
- * not; anything else (a stored "1e21", text) exactly as it is.
+ * What a money box shows for a value, never another number than the value: grouped by formatMoney (two decimals at least,
+ * none rounded away), except that a zero amount is empty while focused so its first digit starts the amount; anything else
+ * (a stored "1e21", text) exactly as it is.
  */
 export function shownMoney(value: string, focused: boolean, whole = false): string {
   if (!isPlainAmount(value)) return String(value ?? "");
-  if (!focused) return formatMoney(value, whole, false);
-  const plain = moneyPlain(value);
-  return isZeroAmount(plain) ? "" : plain;
+  if (focused && isZeroAmount(moneyPlain(value))) return "";
+  return formatMoney(value, whole, false);
 }
 
 // ---------------------------------------------------------------- percent and integers
