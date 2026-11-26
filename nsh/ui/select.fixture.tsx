@@ -17,6 +17,8 @@ function App() {
   const kept = signal("1250");
   let someRef: InputRef | undefined;
   let zeroRef: InputRef | undefined;
+  let rateRef: InputRef | undefined;
+  let countRef: InputRef | undefined;
   return (
     <View class="gap-2 p-3">
       <View class="flex-row flex-wrap gap-x-3">
@@ -34,12 +36,20 @@ function App() {
           zeroRef?.focus();
           zeroRef?.insertText("15");
         }} />
+        <AppButton label="Rate same-turn 15" size="sm" testID="s-rate-same" onPress={() => {
+          rateRef?.focus();
+          rateRef?.insertText("15");
+        }} />
+        <AppButton label="Count same-turn 15" size="sm" testID="s-count-same" onPress={() => {
+          countRef?.focus();
+          countRef?.insertText("15");
+        }} />
       </View>
       <TextField label="Free" value={free()} onChange={(v) => free.set(v)} testID="s-free" />
       <MoneyInput label="Some" value={some()} onChange={(v) => some.set(v)} inputRef={(r) => (someRef = r)} testID="s-some" />
       <MoneyInput label="Zero" value={zero()} onChange={(v) => zero.set(v)} inputRef={(r) => (zeroRef = r)} testID="s-zero" />
-      <PercentInput label="Rate" value={rate()} onChange={(v) => rate.set(v)} testID="s-rate" />
-      <IntInput label="Count" value={count()} onChange={(v) => count.set(v)} testID="s-count" />
+      <PercentInput label="Rate" value={rate()} onChange={(v) => rate.set(v)} inputRef={(r) => (rateRef = r)} testID="s-rate" />
+      <IntInput label="Count" value={count()} onChange={(v) => count.set(v)} inputRef={(r) => (countRef = r)} testID="s-count" />
       <TinInput label="TIN" value={tin()} onChange={(v) => tin.set(v)} testID="s-tin" />
       {/* A box whose page cannot hold a blank amount: it takes the empty report, then puts the old amount back 350 ms later
           unless something was typed (the form page does, because the host refuses a blank amount). */}

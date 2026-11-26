@@ -56,3 +56,13 @@ test("desktop: a repeated focus without a blur does not rewrite, reselect or ren
   expect(readout(app, "Caret writes:")).toBe("Caret writes: 1");
   expect(readout(app, "Focus events:")).toBe("Focus events: 1");
 });
+
+test("desktop: programmatic focus does not select a plain text box, but selects a money box whole", async () => {
+  const app = await open(ENTRY, WIDE);
+  await app.press("id:go-plain");
+  await app.wait(100);
+  expect(readout(app, "Plain selection:")).not.toBe("Plain selection: 0:15");
+  await app.press("id:go-filled");
+  await app.wait(100);
+  expect(readout(app, "Caret range:")).toBe("Caret range: 0:8");
+});

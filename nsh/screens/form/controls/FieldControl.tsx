@@ -203,6 +203,7 @@ function TypedBox(props: { p: FieldInput }) {
   const p = props.p;
   const kind = () => p.field.t;
   const tin = () => tinKind(p.field);
+  const countOnly = () => kind() === "int" && tin() === null && !tinSegment(p.field) && !/code/i.test(`${p.field.k} ${p.field.l}`);
   return (
     <If
       when={kind() === "money" || kind() === "num"}
@@ -259,6 +260,7 @@ function TypedBox(props: { p: FieldInput }) {
                 align={cellOf(p) ? "center" : undefined}
                 error={p.box.message?.() || p.box.invalid()}
                 maxDigits={p.field.m}
+                zeroEmpty={countOnly()}
                 placeholder={p.placeholder}
                 inputRef={(ref) => giveFocus(p, ref)}
               />

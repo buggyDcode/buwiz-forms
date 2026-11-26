@@ -437,6 +437,75 @@ export function validAmountText(text: string, negative = false): boolean {
   return String(text ?? "").trim() === "" || readAmount(text, negative) !== null;
 }
 
+/** Whose comma a money text holds for this focus: the box's grouping, the filer's own, none yet, or not attributable. */
+export type CommaState = "none" | "ours" | "filer" | "unsure";
+
+/** The comma state of the text a money box has when it takes focus. */
+export function initialCommaState(text: string): CommaState {
+  return String(text ?? "").includes(",") ? "ours" : "none";
+}
+
+function shapedEdit(before: string, after: string): { inserted: string; removed: number } {
+  let p = 0;
+  while (p < before.length && p < after.length && before[p] === after[p]) p++;
+  let s = 0;
+  while (s < before.length - p && s < after.length - p && before[before.length - 1 - s] === after[after.length - 1 - s]) s++;
+  return { inserted: after.slice(p, after.length - s), removed: before.length - p - s };
+}
+
+/**
+ * Whose comma the text holds after an edit, decided only from the edit's shape (no key events). A comma inserted into
+ * text with no comma is the filer's; one inserted into or pasted over text that already has one is unsure. Deleting
+ * keeps the state, except that a text with no comma starts again at none.
+ */
+export function nextCommaState(state: CommaState, before: string, after: string): CommaState {
+  before = String(before ?? "");
+  after = String(after ?? "");
+  if (!after.includes(",")) return "none";
+  const edit = shapedEdit(before, after);
+  if (edit.inserted.length === 0) return state;
+  if (!edit.inserted.includes(",")) return state;
+  const beforeHadComma = before.includes(",");
+  if (edit.inserted.length === 1) return beforeHadComma ? "unsure" : "filer";
+  return before === "" || !beforeHadComma ? "filer" : "unsure";
+}
+
+function unsignedAmountBody(text: string): string | null {
+  let t = String(text ?? "").trim();
+  const prefix = /^(?:₱|PHP)\s*/i.exec(t);
+  if (prefix) t = t.slice(prefix[0].length).trim();
+  const suffix = /(?:₱|PHP)\s*$/i.exec(t);
+  if (suffix && suffix.index > 0) t = t.slice(0, suffix.index).trim();
+  if (t.startsWith("(") && t.endsWith(")")) t = t.slice(1, -1);
+  else if (t.startsWith("-")) t = t.slice(1);
+  return t === "" ? null : t;
+}
+
+/**
+ * Read amount text by comma attribution. The box's own separators (and none yet) are ignored wherever editing moved
+ * them. A filer comma is strict while focused; only on leaving, a single comma with one or two digits after it and no
+ * point is the decimal mark. An unsure comma is strict always.
+ */
+export function readAmountWithCommas(text: string, state: CommaState, negative = false, leaving = false): string | null {
+  const raw = String(text ?? "");
+  if (state === "ours" || state === "none") return readAmount(raw.replace(/,/g, ""), negative);
+  const strict = readAmount(raw, negative);
+  if (strict !== null || state !== "filer" || !leaving) return strict;
+  const body = unsignedAmountBody(raw);
+  if (!body || body.includes(".") || (body.match(/,/g) ?? []).length !== 1) return null;
+  const [whole, frac] = body.split(",");
+  if (!/^\d+$/.test(whole) || !/^\d{1,2}$/.test(frac)) return null;
+  const at = raw.indexOf(",");
+  let converted = `${raw.slice(0, at)}.${raw.slice(at + 1)}`;
+  if (frac.length === 1) converted = `${converted.slice(0, at + 2)}0${converted.slice(at + 2)}`;
+  return readAmount(converted, negative);
+}
+
+/** Whether amount text reads under its comma attribution. Empty is zero and valid. */
+export function validAmountWithCommas(text: string, state: CommaState, negative = false, leaving = false): boolean {
+  return String(text ?? "").trim() === "" || readAmountWithCommas(text, state, negative, leaving) !== null;
+}
+
 /** The money mask with no minus to type. */
 export const MONEY_MASK = moneyMask();
 

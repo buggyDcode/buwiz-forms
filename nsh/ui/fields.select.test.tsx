@@ -89,3 +89,26 @@ test("a percent typed over a zero stays shown after leaving, matching what it re
   expect(readout(app, "Rate:")).toBe("Rate: 42");
   expect(app.value("id:s-rate")).toBe("42");
 });
+
+test("V2: percent and whole-number input in the zero focus's own turn read without the stale zero", async () => {
+  const app = await open("./select.fixture.tsx", { ...WIDE, clock: {} });
+  await app.press("id:s-rate-same");
+  await app.waitUntil(() => readout(app, "Rate:") === "Rate: 15");
+  expect(app.value("id:s-rate")).toBe("015");
+  await app.press("id:s-count-same");
+  await app.waitUntil(() => readout(app, "Count:") === "Count: 15");
+  expect(app.value("id:s-count")).toBe("015");
+});
+
+test("V2: after the first input, genuine zeroes and points are the filer's own text", async () => {
+  const app = await open("./select.fixture.tsx", { ...WIDE, clock: {} });
+  await app.press("id:s-zero-same");
+  await app.waitUntil(() => readout(app, "Zero:") === "Zero: 15");
+  await app.keyboard.press("0");
+  await app.keyboard.press(".");
+  await app.keyboard.press("0");
+  await app.keyboard.press("0");
+  await app.keyboard.press("1");
+  await app.keyboard.press("2");
+  expect(readout(app, "Zero:")).toBe("Zero: 150.0012");
+});

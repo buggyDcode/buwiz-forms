@@ -11,7 +11,7 @@ import type { IconName } from "./icons";
 import { cx, T_H, T_MIN_H, T_MIN_W, T_SIZE, TOUCH } from "./look";
 import {
   DATE_ERROR, digitsOnly, editBase, formatIso, formatLongDate, formatMDY, formatMoney, formatTinDigits, intMask, isZeroAmount, type Mask, moneyEntryMask,
-  parseTypedDate, PERCENT_MASK, readAmount, reconcile, sameAmount, shownMoney, TIN_LENGTH, TIN_MASK, type TextSelection, validAmountText,
+  parseTypedDate, PERCENT_MASK, readAmount, readAmountWithCommas, reconcile, sameAmount, shownMoney, TIN_LENGTH, TIN_MASK, type CommaState, initialCommaState, nextCommaState, validAmountWithCommas, type TextSelection, validAmountText,
 } from "./mask";
 import { Chip } from "./status";
 import { Icon, Text } from "./text";
@@ -81,10 +81,6 @@ export interface TextFieldProps {
 
 /** A text box: 32 tall (44 on touch), radius 8, the strong border, the accent while it has the keys, danger on error. */
 export function TextField(props: TextFieldProps) {
-  let input: InputRef | undefined;
-  let hasFocus = false;
-  // Set only through the wrapped ref a page receives; platform focus never sets it.
-  let programmaticFocus = false;
   const sm = () => props.size === "sm";
   const message = () => (typeof props.error === "string" && props.error ? props.error : "");
   const flat = () => !!props.locked || !!props.disabled;
@@ -118,21 +114,7 @@ export function TextField(props: TextFieldProps) {
           <Text variant="meta" tone="fg3">{props.prefix}</Text>
         </If>
         <Input
-          ref={(r: InputRef) => {
-            input = r;
-            props.inputRef?.({
-              focus: () => {
-                programmaticFocus = !hasFocus;
-                r.focus();
-              },
-              blur: () => r.blur(),
-              measure: () => r.measure(),
-              reveal: (options?: Parameters<typeof r.reveal>[0]) => r.reveal(options),
-              animateLayout: (transition?: Parameters<typeof r.animateLayout>[0]) => r.animateLayout(transition),
-              setSelection: (start: number, end?: number) => r.setSelection(start, end),
-              insertText: (value: string) => r.insertText(value),
-            });
-          }}
+          ref={(r: InputRef) => props.inputRef?.(r)}
           testID={props.testID}
           value={props.value}
           onChange={(e) => props.onChange(e.value)}
@@ -149,21 +131,8 @@ export function TextField(props: TextFieldProps) {
           returnKeyType={props.returnKeyType}
           accessibilityLabel={props.label ?? props.accessibilityLabel}
           accessibilityDescribedBy={props.accessibilityDescribedBy ?? (message() ? messageRef() : null)}
-          onFocus={() => {
-            // One of exactly two deliberate selection writes in typed boxes: the page's own focus(), never platform focus.
-            if (programmaticFocus) {
-              const length = (props.value ?? "").length;
-              if (length > 0) input?.setSelection(0, length);
-            }
-            programmaticFocus = false;
-            hasFocus = true;
-            props.onFocus?.();
-          }}
-          onBlur={() => {
-            hasFocus = false;
-            programmaticFocus = false;
-            props.onBlur?.();
-          }}
+          onFocus={() => props.onFocus?.()}
+          onBlur={() => props.onBlur?.()}
           onSubmit={() => props.onSubmit?.()}
           onSelectionChange={props.onSelectionChange}
           onKeyPress={props.onKeyPress}
@@ -225,11 +194,34 @@ interface MaskedProps {
   noLiveFormat?: boolean;
   /** Whether focused text reads as a value; when false nothing is reported and the error state shows. */
   valid?: (text: string) => boolean;
+  /** Money comma attribution is tracked for this box. */
+  commaStates?: boolean;
+  /** Money comma reading allows a negative. */
+  commaNegative?: boolean;
   /** Defaults where the caller sets none. */
   placeholder?: string;
   prefix?: string;
   suffix?: string;
   align?: "left" | "right" | "center";
+}
+
+function shapedEditAt(prev: string, next: string): { at: number; removed: number; inserted: string } {
+  let p = 0;
+  while (p < prev.length && p < next.length && prev[p] === next[p]) p++;
+  let s = 0;
+  while (s < prev.length - p && s < next.length - p && prev[prev.length - 1 - s] === next[next.length - 1 - s]) s++;
+  return { at: p, removed: prev.length - p - s, inserted: next.slice(p, next.length - s) };
+}
+
+function staleMaskAfterEmptyWrite(zero: string, raw: string): boolean[] {
+  const mask = Array.from({ length: raw.length }, () => false);
+  let p = 0;
+  while (p < zero.length && p < raw.length && zero[p] === raw[p]) p++;
+  let suffix = 0;
+  while (suffix < zero.length - p && suffix < raw.length - p && zero[zero.length - 1 - suffix] === raw[raw.length - 1 - suffix]) suffix++;
+  for (let i = 0; i < p; i++) mask[i] = true;
+  for (let i = 0; i < suffix; i++) mask[raw.length - 1 - i] = true;
+  return mask;
 }
 
 // Windows alone loses the platform select-all when a recompute writes a box just before keyboard focus: the measured
@@ -286,9 +278,20 @@ function MaskedField(props: MaskedProps) {
   let windowsFocusAt = 0;
   // Set only through the wrapped ref the page receives; a platform Tab, click or tap never sets it.
   let programmaticFocus = false;
+  let programmaticFocusToken = 0;
   // The zero text a focus is clearing, while its empty write waits one turn so same-turn input can supersede it.
   let zeroFocusText: string | undefined;
   let zeroWriteTimer: ReturnType<typeof setTimeout> | undefined;
+  // Which visible characters are the stale zero text (true); input that arrives before its empty write is never stale.
+  let zeroMask: boolean[] | undefined;
+  let zeroWriteLanded = false;
+  let zeroWriteGraceTimer: ReturnType<typeof setTimeout> | undefined;
+  // Whose comma the money text holds for this focus: the box's grouping, the filer's, none yet, or not attributable.
+  let commaState: CommaState = initialCommaState(props.shown(props.value ?? "", false));
+  const commaValueOf = (reading: string, leaving: boolean) =>
+    props.commaStates ? (readAmountWithCommas(reading, commaState, props.commaNegative, leaving) ?? "") : props.valueOf(reading);
+  const commaValid = (reading: string, leaving: boolean) =>
+    props.commaStates ? validAmountWithCommas(reading, commaState, props.commaNegative, leaving) : props.valid ? props.valid(reading) : true;
   const writeText = (value: string) => {
     if (untracked(text) !== value) props.field.writeProbe?.("text");
     text.set(value);
@@ -303,7 +306,8 @@ function MaskedField(props: MaskedProps) {
     // Focused text is never rewritten. A change equal to what this box just reported is its own echo; only a different
     // value is outside, and is held for blur until the filer's own edit supersedes it.
     if (untracked(focused)) {
-      // Empty is zero in a form host: its zero answer to this box's own empty report is an echo, not a new outside value.
+      // A zero that only answers this box's own empty report is not a new outside edit; it is read again on leaving,
+      // where a host that truly holds blank still shows blank and a host that holds zero shows zero.
       const ownEmptyEcho = last === "" && isZeroAmount(value);
       if (!same(value, last) && !ownEmptyEcho) {
         outsideValue = value;
@@ -320,6 +324,22 @@ function MaskedField(props: MaskedProps) {
       rollbackReported = false;
     }
   });
+  // Take the stale zero text out of the reported reading wherever its characters sit. zeroWriteLanded lasts only
+  // for the task queue immediately after the empty write, so a key already on its way is stripped while a later,
+  // genuine leading zero is the filer's own.
+  const readWithoutStaleZero = (prev: string, raw: string) => {
+    if (!zeroMask) return raw;
+    if (zeroWriteLanded && zeroFocusText) {
+      zeroMask = staleMaskAfterEmptyWrite(zeroFocusText, raw);
+      zeroWriteLanded = false;
+    } else {
+      const e = shapedEditAt(prev, raw);
+      zeroMask.splice(e.at, e.removed, ...Array.from({ length: e.inserted.length }, () => false));
+    }
+    zeroFocusText = undefined; // the first input ends the zero rule; later zeroes are the filer's own
+    return [...raw].filter((_, i) => zeroMask![i] === false).join("");
+  };
+
   const change = (raw: string) => {
     armWindowsReselect = false;
     const prev = untracked(text);
@@ -331,15 +351,15 @@ function MaskedField(props: MaskedProps) {
       // Focused text is authoritative: strict reading decides the report; no mask rewrite or refusal answer is computed for it.
       boxText = raw;
       text.set(raw);
-      // If the zero text did not leave before the first key, that stale prefix is presentation, not part of the number.
-      const reading = zeroFocusText && raw.startsWith(zeroFocusText) ? raw.slice(zeroFocusText.length) : raw;
-      const valid = props.valid ? props.valid(reading) : true;
+      if (props.commaStates) commaState = nextCommaState(commaState, prev, raw);
+      const reading = readWithoutStaleZero(prev, raw);
+      const valid = commaValid(reading, false);
       if (!valid) {
         invalidActive = true;
         if (!rollbackReported) {
           rollbackReported = true;
           // A newer value held for this focus is the fallback, not the older value the box had when focus began.
-          const fallback = outsideValue ?? focusValue;
+          const fallback = untracked(focused) ? (outsideValue ?? focusValue) : last;
           if (!same(fallback, last)) {
             last = fallback;
             props.onChange(fallback);
@@ -351,7 +371,7 @@ function MaskedField(props: MaskedProps) {
         invalidActive = false;
         rollbackReported = false;
       }
-      const value = props.valueOf(reading);
+      const value = commaValueOf(reading, false);
       // A key and its Backspace are no edit: a value held from outside still wins on leaving.
       edited = !same(value, focusValue);
       if (value === last) return;
@@ -359,6 +379,7 @@ function MaskedField(props: MaskedProps) {
       props.onChange(value);
       return;
     }
+    const staleRead = readWithoutStaleZero(prev, raw);
     const [on, at] = editBase(prev, boxText, raw, from);
     const next = reconcile(on, raw, props.mask, undefined, at, typed);
     // An edit that changes nothing is taken back: what the box holds after it is the text shown.
@@ -371,12 +392,65 @@ function MaskedField(props: MaskedProps) {
     // arrive after the keys typed since this edit and put the next ones inside the number.
     if (next.rejected || (next.text !== raw && next.caret !== next.text.length)) writeCaret(next.caret);
     if (next.rejected) return;
-    const value = props.valueOf(next.text);
+    const value = props.valueOf(zeroMask ? staleRead : next.text);
     edited = !same(value, focusValue);
     if (value === last) return;
     last = value;
     props.onChange(value);
   };
+  // Blur and unmount are the same leave. Unmount cannot write the native box away, but the value, unreadable-note
+  // callback and the box's blur callback are exactly the blur ones.
+  const finishLeave = (write: boolean) => {
+        if (zeroWriteTimer !== undefined) {
+          clearTimeout(zeroWriteTimer);
+          zeroWriteTimer = undefined;
+        }
+        if (zeroWriteGraceTimer !== undefined) {
+          clearTimeout(zeroWriteGraceTimer);
+          zeroWriteGraceTimer = undefined;
+        }
+        armWindowsReselect = false;
+        windowsReselectDone = false;
+        const held = text();
+        const reading = zeroMask ? [...held].filter((_, i) => zeroMask![i] === false).join("") : held;
+        const validBlur = commaValid(reading, true);
+        if (!validBlur) {
+          // The return keeps the fallback amount. A newer outside value held during this focus is that fallback.
+          const fallback = outsideValue ?? focusValue;
+          const shownFallback = props.shown(fallback, false);
+          const kept = shownFallback === "" ? props.shown("0", false) : shownFallback;
+          if (write) writeText(kept);
+          const hint = held.includes(",") ? " Use a point for centavos, and commas only between thousands." : "";
+          if (props.field.onLeftUnreadable) props.field.onLeftUnreadable(held, kept);
+          else leftUnreadable.set(`${held} is not an amount. The box kept ${kept}.${hint}`);
+          invalidActive = false;
+          rollbackReported = false;
+        } else {
+          if (write && !edited && outsideValue !== undefined) writeText(props.shown(outsideValue, false));
+          const heldZero = reading.trim() === "" && isZeroAmount(props.value ?? "") ? (props.value ?? "") : commaValueOf(reading, true);
+          const laidOut = edited ? props.shown(heldZero, false) : props.shown(outsideValue ?? props.value ?? "", false);
+          const semanticShown = edited && props.settle ? props.settle(laidOut) : laidOut;
+          // Blank is what nullable amounts hold; a host that stores zero writes that zero back through the outside value.
+          if (write && semanticShown !== text()) writeText(semanticShown);
+          const value = commaValueOf(semanticShown, true);
+          if (!same(value, last)) {
+            last = value;
+            props.onChange(value);
+          }
+        }
+        outsideValue = undefined;
+        focused.set(false);
+        editFrom = undefined;
+        editTyped = false;
+        edited = false;
+        zeroFocusText = undefined;
+        zeroMask = undefined;
+        zeroWriteLanded = false;
+        programmaticFocus = false;
+        programmaticFocusToken++;
+        props.field.onBlur?.();
+  };
+
   return (
     <TextField
       value={text()}
@@ -388,6 +462,13 @@ function MaskedField(props: MaskedProps) {
           focus: () => {
             programmaticFocus = !untracked(focused);
             r.focus();
+            if (programmaticFocus) {
+              // Native focus gives no "did not land" answer; this bounded request token is the only deterministic age-out.
+              const token = ++programmaticFocusToken;
+              setTimeout(() => {
+                if (token === programmaticFocusToken) programmaticFocus = false;
+              }, 250);
+            }
           },
           blur: () => r.blur(),
           measure: () => r.measure(),
@@ -457,17 +538,23 @@ function MaskedField(props: MaskedProps) {
         }
         outsideWriteAt = 0;
         const before = untracked(text);
+        commaState = initialCommaState(before);
         const focusShown = props.shown(props.value ?? "", true);
         if (focusShown !== before) {
           if (focusShown === "") {
             // Give same-turn input one chance to win over the zero-to-empty write; otherwise that write can land after
             // the key and erase it. When no input arrived, the zero still becomes empty on the next turn.
             zeroFocusText = before;
+            zeroMask = Array.from({ length: before.length }, () => true);
             zeroWriteTimer = setTimeout(() => {
               zeroWriteTimer = undefined;
               if (!edited && untracked(focused) && untracked(text) === before) {
                 writeText("");
-                zeroFocusText = undefined;
+                zeroWriteLanded = true;
+                zeroWriteGraceTimer = setTimeout(() => {
+                  zeroWriteGraceTimer = undefined;
+                  zeroWriteLanded = false;
+                }, 0);
               }
             }, 0);
           } else {
@@ -480,49 +567,11 @@ function MaskedField(props: MaskedProps) {
           if (length > 0) writeCaret(0, length);
         }
         programmaticFocus = false;
+        programmaticFocusToken++;
         props.field.onFocus?.();
       }}
       onBlur={() => {
-        if (zeroWriteTimer !== undefined) {
-          clearTimeout(zeroWriteTimer);
-          zeroWriteTimer = undefined;
-        }
-        armWindowsReselect = false;
-        windowsReselectDone = false;
-        const held = text();
-        const reading = zeroFocusText && held.startsWith(zeroFocusText) ? held.slice(zeroFocusText.length) : held;
-        const validBlur = !props.valid || props.valid(reading);
-        if (!validBlur) {
-          // The return keeps the fallback amount. A newer outside value held during this focus is that fallback.
-          const fallback = outsideValue ?? focusValue;
-          const shownFallback = props.shown(fallback, false);
-          const kept = shownFallback === "" ? props.shown("0", false) : shownFallback;
-          writeText(kept);
-          if (props.field.onLeftUnreadable) props.field.onLeftUnreadable(held, kept);
-          else leftUnreadable.set(`${held} is not an amount. The box kept ${kept}.`);
-          invalidActive = false;
-          rollbackReported = false;
-        } else {
-          if (!edited && outsideValue !== undefined) writeText(props.shown(outsideValue, false));
-          const laidOut = edited ? props.shown(props.valueOf(reading), false) : props.shown(outsideValue ?? props.value ?? "", false);
-          const semanticShown = edited && props.settle ? props.settle(laidOut) : laidOut;
-          // An empty money amount is zero; once the box is left it shows that zero rather than staying blank.
-          const shown = props.noLiveFormat && semanticShown === "" ? props.shown("0", false) : semanticShown;
-          if (shown !== text()) writeText(shown);
-          const value = props.valueOf(semanticShown);
-          if (!same(value, last)) {
-            last = value;
-            props.onChange(value);
-          }
-        }
-        outsideValue = undefined;
-        focused.set(false);
-        editFrom = undefined;
-        editTyped = false;
-        edited = false;
-        zeroFocusText = undefined;
-        programmaticFocus = false;
-        props.field.onBlur?.();
+        if (untracked(focused)) finishLeave(true);
       }}
     />
   );
@@ -591,6 +640,8 @@ export function MoneyInput(props: MoneyInputProps) {
       same={sameAmount}
       keyboardType="decimal-pad"
       noLiveFormat
+      commaStates
+      commaNegative={props.negative}
     />
   );
 }
@@ -619,14 +670,14 @@ export function PercentInput(props: NumberTextProps) {
 }
 
 /** A whole number or a code: digits only (leading zeros kept), at most `maxDigits`, tabular figures. Reports the digits ("0123"). */
-export function IntInput(props: NumberTextProps & { maxDigits?: number }) {
+export function IntInput(props: NumberTextProps & { maxDigits?: number; zeroEmpty?: boolean }) {
   return (
     <MaskedField
       field={props}
       value={props.value}
       onChange={props.onChange}
       mask={intMask(props.maxDigits)}
-      shown={(v, focused) => (focused && isZeroAmount(v) ? "" : v)}
+      shown={(v, focused) => (focused && props.zeroEmpty !== false && isZeroAmount(v) ? "" : v)}
       valueOf={(t) => t}
       keyboardType="number-pad"
     />
@@ -793,6 +844,7 @@ export function DateField(props: DateFieldProps) {
   const edited = signal(false);
   const open = signal(false);
   let box: InputRef | undefined;
+  let programmaticFocus = false;
   const long = (v: string) => {
     const d = parseTypedDate(v);
     return d ? props.numericDisplay ? formatMDY(d) : formatLongDate(d) : v;
@@ -826,7 +878,18 @@ export function DateField(props: DateFieldProps) {
       onSubmit={props.onSubmit}
       inputRef={(r) => {
         box = r;
-        props.inputRef?.(r);
+        props.inputRef?.({
+          focus: () => {
+            programmaticFocus = true;
+            r.focus();
+          },
+          blur: () => r.blur(),
+          measure: () => r.measure(),
+          reveal: (options?: Parameters<typeof r.reveal>[0]) => r.reveal(options),
+          animateLayout: (transition?: Parameters<typeof r.animateLayout>[0]) => r.animateLayout(transition),
+          setSelection: (start: number, end?: number) => r.setSelection(start, end),
+          insertText: (value: string) => r.insertText(value),
+        });
       }}
       tabular
       value={text()}
@@ -850,9 +913,15 @@ export function DateField(props: DateFieldProps) {
         // The long form becomes the numeric date while the box has the keys.
         const d = parseTypedDate(text());
         if (d) text.set(formatMDY(d));
+        if (programmaticFocus) {
+          const length = text().length;
+          if (length > 0) box?.setSelection(0, length);
+        }
+        programmaticFocus = false;
         props.onFocus?.();
       }}
       onBlur={() => {
+        programmaticFocus = false;
         focused.set(false);
         text.set(long(text()));
         props.onBlur?.();

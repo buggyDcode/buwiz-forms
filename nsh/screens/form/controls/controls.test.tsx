@@ -147,6 +147,17 @@ for (const size of SIZES) {
     expect(app.count("id:fp-off")).toBe(1);
   });
 
+  test(`${size.name}: V5: zero TIN parts and branch codes keep their text on focus`, async () => {
+    if (size.name !== "phone") return; // the grid is the TIN-part layout under 600 pt
+    const app = await gallery(size.options);
+    for (const [id, text] of [["fp-gtin1", "000"], ["fp-gbranch", "00000"]] as const) {
+      expect(app.value(`id:${id}`)).toBe(text);
+      await app.type(`id:${id}`, "");
+      await app.wait(150);
+      expect(app.value(`id:${id}`)).toBe(text);
+    }
+  });
+
   test(`${size.name}: a TIN keeps its dashes while typing and reports its digits`, async () => {
     const app = await gallery(size.options);
     expect(app.value("id:fp-tin")).toBe("000-123-453-00000");

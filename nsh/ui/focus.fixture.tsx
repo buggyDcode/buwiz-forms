@@ -4,7 +4,7 @@ import type { InputRef, ViewRef } from "nsh";
 import { mount, signal, View } from "nsh";
 import { AppButton } from "./buttons";
 import { Checkbox, Dropdown } from "./choice";
-import { DateField, IntInput, MoneyInput, PercentInput, TinInput } from "./fields";
+import { DateField, IntInput, MoneyInput, PercentInput, TextField, TinInput } from "./fields";
 import { Text } from "./text";
 
 const OPTIONS = [
@@ -23,6 +23,8 @@ function App() {
   const int = signal("");
   const tin = signal("");
   const date = signal("");
+  const plain = signal("Registered name");
+  const plainSelection = signal("none");
   const pick = signal<string | null>(null);
   const ticked = signal(false);
   let moneyRef: InputRef | undefined;
@@ -31,6 +33,7 @@ function App() {
   let intRef: InputRef | undefined;
   let tinRef: InputRef | undefined;
   let dateRef: InputRef | undefined;
+  let plainRef: InputRef | undefined;
   let dropRef: ViewRef | undefined;
   let boxRef: ViewRef | undefined;
   return (
@@ -46,6 +49,7 @@ function App() {
         <Text variant="cap">{`Int: ${int() || "empty"}`}</Text>
         <Text variant="cap">{`Tin: ${tin() || "empty"}`}</Text>
         <Text variant="cap">{`Date: ${date() || "empty"}`}</Text>
+        <Text variant="cap">{`Plain selection: ${plainSelection()}`}</Text>
         <Text variant="cap">{`Pick: ${pick() ?? "none"}`}</Text>
         <Text variant="cap">{`Ticked: ${ticked()}`}</Text>
       </View>
@@ -61,6 +65,7 @@ function App() {
         <AppButton label="Focus int" size="sm" testID="go-int" onPress={() => intRef?.focus()} />
         <AppButton label="Focus tin" size="sm" testID="go-tin" onPress={() => tinRef?.focus()} />
         <AppButton label="Focus date" size="sm" testID="go-date" onPress={() => dateRef?.focus()} />
+        <AppButton label="Focus plain" size="sm" testID="go-plain" onPress={() => plainRef?.focus()} />
         <AppButton label="Focus dropdown" size="sm" testID="go-drop" onPress={() => dropRef?.focus()} />
         <AppButton label="Focus checkbox" size="sm" testID="go-box" onPress={() => boxRef?.focus()} />
       </View>
@@ -84,6 +89,7 @@ function App() {
       <IntInput label="Int" value={int()} onChange={(v) => int.set(v)} inputRef={(r) => (intRef = r)} testID="f-int" />
       <TinInput label="TIN" value={tin()} onChange={(v) => tin.set(v)} inputRef={(r) => (tinRef = r)} testID="f-tin" />
       <DateField label="Date" value={date()} onChange={(v) => date.set(v)} inputRef={(r) => (dateRef = r)} testID="f-date" />
+      <TextField label="Plain" value={plain()} onChange={(v) => plain.set(v)} inputRef={(r) => (plainRef = r)} onSelectionChange={(e) => plainSelection.set(`${e.start}:${e.end}`)} testID="f-plain" />
       <Dropdown label="Pick" options={OPTIONS} value={pick()} onChange={(v) => pick.set(v)} focusRef={(r) => (dropRef = r)} testID="f-drop" />
       <Checkbox label="Ticked" checked={ticked()} onChange={(on) => ticked.set(on)} focusRef={(r) => (boxRef = r)} testID="f-box" />
     </View>

@@ -2,8 +2,8 @@
 import { expect, test } from "nsh/test";
 import {
   applyMask, DATE_ERROR, digitsOnly, editBase, formatIso, formatLongDate, formatMDY, formatMoney, formatTin, formatTinDigits, intMask,
-  isPlainAmount, isZeroAmount, MONEY_MASK, moneyEntryMask, moneyMask, moneyPlain, parseTypedDate, PERCENT_MASK, readAmount, reconcile, sameAmount, shownDate, shownMoney, validAmountText,
-  TIN_MASK,
+  isPlainAmount, isZeroAmount, MONEY_MASK, moneyEntryMask, moneyMask, moneyPlain, parseTypedDate, PERCENT_MASK, readAmount, readAmountWithCommas, reconcile, sameAmount, shownDate, shownMoney, validAmountText,
+  TIN_MASK, initialCommaState, nextCommaState,
 } from "./mask";
 
 test("TIN: partial input groups as it goes, no trailing dash", () => {
@@ -469,6 +469,49 @@ test("money entry accepts mid-text digits and Backspace exactly, without reforma
   expect(wholeSelection).toEqual({ text: "9", caret: 1 });
   const pastedGrouped = reconcile("", "1,234.56", mask, undefined, undefined, false);
   expect(pastedGrouped).toEqual({ text: "1234.56", caret: 7 }); // a paste is normalized at once
+});
+
+
+test("comma state machine: whose comma each edit made", () => {
+  expect(initialCommaState("1,234.56")).toBe("ours");
+  expect(initialCommaState("1234.56")).toBe("none");
+  for (const [name, state, before, after, wanted] of [
+    ["a digit inserted in our grouping keeps it ours", "ours", "1,234.56", "1,2934.56", "ours"],
+    ["deleting digits but not the comma keeps it ours", "ours", "1,234.56", "1,23", "ours"],
+    ["a whole-peso deletion keeps it ours", "ours", "12,345", "12,34", "ours"],
+    ["losing every comma starts again at none", "ours", "1,234", "1234", "none"],
+    ["one typed comma in comma-free text is the filer's", "none", "1500", "1500,", "filer"],
+    ["one typed comma where one already is is unsure", "ours", "1,234.56", "1,23,4.56", "unsure"],
+    ["a paste without a comma keeps ours", "ours", "1,234.56", "1,27234.56", "ours"],
+    ["a pasted comma into an empty box is the filer's", "none", "", "1500,50", "filer"],
+    ["a pasted comma into comma-free text is the filer's", "none", "1500", "1500,50", "filer"],
+    ["a pasted comma over text with a comma is unsure", "ours", "1,234.56", "1500,50", "unsure"],
+    // Backspacing our comma away resets NONE by the no-comma rule; typing it back is therefore FILER by the literal
+    // one-comma rule, although the review example called for UNSURE. The amount itself reads strictly either way.
+    ["typing our comma back after deleting it is filer by the literal rules", "none", "1234.56", "1,234.56", "filer"],
+    // KNOWN LIMIT of the prefix/suffix cut: replacing all of 1,234 with 1,5 looks like inserting 5 after the shared
+    // prefix 1,, so the comma stays ours and reads as 15. Shown as 15.00, the invariant holds; no machinery for it.
+    ["known limit: replacement sharing the comma prefix stays ours", "ours", "1,234", "1,5", "ours"],
+  ] as const) {
+    expect(nextCommaState(state, before, after)).toBe(wanted);
+  }
+  expect(readAmountWithCommas("1,5", "ours", false, true)).toBe("15");
+});
+
+test("comma reading: ours are ignored, a filer decimal comma reads only on leaving, unsure is strict", () => {
+  expect(readAmountWithCommas("1,2934.56", "ours")).toBe("12934.56");
+  expect(readAmountWithCommas("1,23", "ours")).toBe("123");
+  expect(readAmountWithCommas("12,34", "ours")).toBe("1234");
+  for (const [text, plain] of [["1500,50", "1500.50"], ["1500,5", "1500.50"], ["1,50", "1.50"], ["0,5", "0.50"]]) {
+    expect(readAmountWithCommas(text, "filer", false, false)).toBeNull();
+    expect(readAmountWithCommas(text, "filer", false, true)).toBe(plain);
+    expect(readAmountWithCommas(text, "unsure", false, true)).toBeNull();
+  }
+  expect(readAmountWithCommas("1,500", "filer", false, false)).toBe("1500");
+  expect(readAmountWithCommas("12,500", "filer", false, true)).toBe("12500");
+  expect(readAmountWithCommas("-1500,50", "filer", true, true)).toBe("-1500.50");
+  expect(readAmountWithCommas("-1500,50", "filer", false, true)).toBeNull();
+  expect(readAmountWithCommas("₱ 1500,50", "filer", false, true)).toBe("1500.50");
 });
 
 test("strict focused amount reading accepts only unambiguous grouped amounts", () => {

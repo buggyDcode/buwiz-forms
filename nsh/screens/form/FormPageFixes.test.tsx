@@ -168,3 +168,109 @@ test("F7-1 desktop: emptying an amount box shows the host's zero, not the old am
   await app.waitFor("text:✓ Saved", { timeout: 5000 });
   expect(app.texts().some((t) => /must be an amount/.test(t))).toBe(false);
 });
+
+
+test("V1 desktop: a nullable schedule-row amount left empty shows blank, not zero", async () => {
+  const table = "fp-table-frm1600VT:txtAtcCd1";
+  const base = "id:fp-frm1600VT:txtPg1P2TaxBase1";
+  const row = "id:fp-row-frm1600VT:txtAtcCd1-0";
+  const app = await open(ENTRY, { ...DESKTOP, host: { params: { formCode: "1600VT", year: 2026, period: 1, probeKey: "frm1600VT:txtPg1P2TaxBase1" } } });
+  await app.waitFor("text:BIR Form 1600VT");
+  for (let i = 0; i < 30 && !app.shows("id:fp-part-1-toggle"); i++) await app.scroll("id:form-scroll", 600).catch(() => {});
+  await app.press("id:fp-part-1-toggle");
+  for (let i = 0; i < 30 && !app.shows("id:fp-frm1600VT:rdoPg1I3TaxWithheldYes"); i++) await app.scroll("id:form-scroll", 600).catch(() => {});
+  await app.press("id:fp-frm1600VT:rdoPg1I3TaxWithheldYes");
+  await app.press("id:fp-frm1600VT:rdoPg1I10CategoryofWthholdAgentPriv");
+  for (let i = 0; i < 30 && !app.shows("id:fp-part-2-toggle"); i++) await app.scroll("id:form-scroll", 600).catch(() => {});
+  await app.press("id:fp-part-2-toggle");
+  for (let i = 0; i < 30 && !app.shows(`id:${table}-add`); i++) await app.scroll("id:form-scroll", 600).catch(() => {});
+  await app.press(`id:${table}-add`);
+  await app.waitFor("text:Row 13");
+  await app.press("id:fp-frm1600VT:txtAtcCd1-trigger");
+  await app.waitFor("text:/^WV012/", { timeout: 10_000 });
+  await app.press("text:/^WV012/");
+  await app.type(base, "1000");
+  await app.waitUntil(() => app.enabled(`id:${table}-done`) === true, { timeout: 15_000 });
+  await app.press(`id:${table}-done`);
+  await app.waitFor("text:✓ Saved", { timeout: 15_000 });
+
+  await app.press(row);
+  await app.waitFor(base);
+  expect(app.value(base)).toBe("1,000.00");
+  await app.clear(base);
+  await app.keyboard.press("tab");
+  await app.wait(500);
+  expect(app.value(base)).toBe("");
+  await app.waitUntil(() => app.enabled(`id:${table}-done`) === true, { timeout: 15_000 });
+  await app.press(`id:${table}-done`);
+  await app.waitFor("text:✓ Saved", { timeout: 15_000 });
+  await app.press(row);
+  await app.waitFor(base);
+  expect(app.value(base)).toBe("");
+}, 60_000);
+
+test("group 5 desktop: a decimal comma typed into a zero amount saves as a point amount", async () => {
+  const box = "id:fp-frm2551Qv2018:txt15";
+  const app = await open(ENTRY, { ...DESKTOP, host: { params: { formCode: "2551Q", year: 2025, period: 1, probeKey: "frm2551Qv2018:txt15" } } });
+  await app.waitFor("text:BIR Form 2551Q");
+  await app.press("id:fp-nav-2");
+  await app.waitFor(box);
+  await app.type(box, "");
+  await app.waitUntil(() => app.value(box) === "", { timeout: 3000 });
+  await app.type(box, "1500,50");
+  expect(app.value(box)).toBe("1500,50");
+  await app.submit(box);
+  await app.waitUntil(() => app.value(box) === "1,500.50", { timeout: 5000 });
+  await app.waitUntil(() => app.texts().includes("probe 1,500.50"), { timeout: 5000 });
+  await app.waitFor("text:✓ Saved", { timeout: 8000 });
+}, 30_000);
+
+test("group 5 desktop: decimal-comma shapes read on leaving, while a three-digit comma group stays thousands", async () => {
+  const box = "id:fp-frm2551Qv2018:txt15";
+  for (const [period, typed, shown] of [[3, "1500,5", "1,500.50"], [4, "1,50", "1.50"], [1, "1,500", "1,500.00"]] as const) {
+    const app = await open(ENTRY, { ...DESKTOP, host: { params: { formCode: "2551Q", year: 2026, period, probeKey: "frm2551Qv2018:txt15" } } });
+    await app.waitFor("text:BIR Form 2551Q");
+    await app.press("id:fp-nav-2");
+    await app.waitFor(box);
+    await app.type(box, "");
+    await app.waitUntil(() => app.value(box) === "", { timeout: 3000 });
+    await app.type(box, typed);
+    expect(app.value(box)).toBe(typed);
+    await app.submit(box);
+    await app.waitUntil(() => app.value(box) === shown, { timeout: 5000 });
+    await app.waitUntil(() => app.texts().includes(`probe ${shown}`), { timeout: 5000 });
+  }
+}, 60_000);
+
+test("group 5 desktop: End and Backspaces inside our grouping still read as digits", async () => {
+  const box = "id:fp-frm2551Qv2018:txt15";
+  const app = await open(ENTRY, {
+    ...DESKTOP,
+    host: { params: { formCode: "2551Q", year: 2026, period: 2, probeKey: "frm2551Qv2018:txt15", edits: { "frm2551Qv2018:txt15": "1234.56" } } },
+  });
+  await app.waitFor("text:BIR Form 2551Q");
+  await app.press("id:fp-nav-2");
+  await app.waitFor(box);
+  await app.waitUntil(() => app.value(box) === "1,234.56", { timeout: 5000 });
+  await app.type(box, "");
+  await app.keyboard.press("end");
+  for (let i = 0; i < 4; i++) await app.keyboard.press("backspace");
+  expect(app.value(box)).toBe("1,23");
+  await app.submit(box);
+  await app.waitUntil(() => app.value(box) === "123.00", { timeout: 5000 });
+  await app.waitUntil(() => app.texts().includes("probe 123.00"), { timeout: 5000 });
+}, 30_000);
+
+test("group 5 desktop: an unreadable comma amount is kept with the comma hint", async () => {
+  const box = "id:fp-frm2551Qv2018:txt15";
+  const app = await open(ENTRY, { ...DESKTOP, host: { params: { formCode: "2551Q", year: 2025, period: 2, probeKey: "frm2551Qv2018:txt15", edits: { "frm2551Qv2018:txt15": "100" } } } });
+  await app.waitFor("text:BIR Form 2551Q");
+  await app.press("id:fp-nav-2");
+  await app.waitFor(box);
+  await app.waitUntil(() => app.value(box) === "100.00", { timeout: 5000 });
+  await app.clear(box);
+  await app.type(box, "1500,500");
+  await app.submit(box);
+  await app.waitUntil(() => app.value(box) === "100.00", { timeout: 5000 });
+  expect(app.texts()).toContain("Item 15: 1500,500 is not an amount. The box kept 100.00. Use a point for centavos, and commas only between thousands.");
+}, 30_000);
