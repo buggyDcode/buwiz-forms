@@ -1711,7 +1711,7 @@ export class FormSession {
       const stored = String(s.values[k] ?? "");
       if (!typedEdit) continue;
       // A gate that zeroes the amount in the same batch is an outside change of identity, not a mistyped save.
-      if ((r.off || {})[k] || this.isShut(k)) continue;
+      if (this.isShut(k)) continue;
       if (sameNumber(typed, stored)) continue;
       const whole = kind === "money" && this.wholeKeys.has(k);
       const shownAmount = formatMoney(typed, whole);
