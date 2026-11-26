@@ -404,6 +404,35 @@ export function moneyMask(o?: MoneyMaskOptions): Mask {
   };
 }
 
+
+/** Strictly read an amount as typed, or null when it is not one. Group commas must be valid thousands groups. */
+export function readAmount(text: string, negative = false): string | null {
+  let t = String(text ?? "").trim();
+  // Currency marks and spaces around the amount are presentation, never digits; spaces inside it are not.
+  const prefix = /^(?:₱|PHP)\s*/i.exec(t);
+  if (prefix) t = t.slice(prefix[0].length).trim();
+  const suffix = /(?:₱|PHP)\s*$/i.exec(t);
+  if (suffix && suffix.index > 0) t = t.slice(0, suffix.index).trim();
+  if (t === "") return null;
+  let neg = false;
+  if (t.startsWith("-")) {
+    if (!negative) return null;
+    neg = true;
+    t = t.slice(1);
+  }
+  if (!/^[\d,]*(?:\.\d*)?$/.test(t) || !/\d/.test(t)) return null;
+  const [whole, frac] = t.split(".");
+  if (whole.includes(",") && !/^\d{1,3}(?:,\d{3})+$/.test(whole)) return null;
+  const plainWhole = whole.replace(/,/g, "");
+  if (plainWhole !== "" && !/^\d+$/.test(plainWhole)) return null;
+  return `${neg ? "-" : ""}${plainWhole}${frac !== undefined ? `.${frac}` : ""}`;
+}
+
+/** Whether focused money text reads as an amount. Empty is zero and valid. */
+export function validAmountText(text: string, negative = false): boolean {
+  return String(text ?? "") === "" || readAmount(text, negative) !== null;
+}
+
 /** The money mask with no minus to type. */
 export const MONEY_MASK = moneyMask();
 

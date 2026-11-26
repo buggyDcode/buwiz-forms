@@ -10,8 +10,8 @@ import { AppButton } from "./buttons";
 import type { IconName } from "./icons";
 import { cx, TOUCH } from "./look";
 import {
-  DATE_ERROR, digitsOnly, editBase, formatIso, formatLongDate, formatMDY, formatMoney, formatTinDigits, intMask, type Mask, moneyEntryMask, moneyPlain,
-  parseTypedDate, PERCENT_MASK, reconcile, sameAmount, shownMoney, TIN_LENGTH, TIN_MASK, type TextSelection,
+  DATE_ERROR, digitsOnly, editBase, formatIso, formatLongDate, formatMDY, formatMoney, formatTinDigits, intMask, type Mask, moneyEntryMask,
+  parseTypedDate, PERCENT_MASK, readAmount, reconcile, sameAmount, shownMoney, TIN_LENGTH, TIN_MASK, type TextSelection, validAmountText,
 } from "./mask";
 import { Chip } from "./status";
 import { Icon, Text } from "./text";
@@ -171,6 +171,8 @@ export function TextField(props: TextFieldProps) {
 export type MaskedFieldProps = Omit<TextFieldProps, "value" | "onChange" | "keyboardType" | "masked" | "maxLength"> & {
   /** Test hook: each text or caret operation this field sends to its native box. */
   writeProbe?: (write: "text" | "caret", start?: number, end?: number) => void;
+  /** Money text stopped reading as an amount (`typing` while focused, false when left), or reads again / is replaced (null). */
+  onInvalid?: (text: string | null, typing?: boolean) => void;
 };
 
 interface MaskedProps {
@@ -188,8 +190,10 @@ interface MaskedProps {
   /** The text a box the filer edited settles on when left (the amount rounded to centavos); unset: the shown one. */
   settle?: (text: string) => string;
   keyboardType: KeyboardType;
-  /** No live formatting: a valid focused edit is left exactly as typed; a zero amount becomes empty on focus. */
+  /** No live formatting: focused text is left exactly as the box holds it; a zero amount becomes empty on focus. */
   noLiveFormat?: boolean;
+  /** Whether focused text reads as a value; when false nothing is reported and the error state shows. */
+  valid?: (text: string) => boolean;
   /** Defaults where the caller sets none. */
   placeholder?: string;
   prefix?: string;
@@ -233,6 +237,11 @@ function MaskedField(props: MaskedProps) {
   let boxText: string | undefined;
   // A value that arrives while the box has the keys: applied on blur only when the filer made no edit of their own.
   let outsideValue: string | undefined;
+  const invalidError = signal(false);
+  // The value shown when this focus began: an unreadable edit rolls the report back to it once.
+  let focusValue = props.value ?? "";
+  let invalidActive = false;
+  let rollbackReported = false;
   const writeText = (value: string) => {
     if (untracked(text) !== value) props.field.writeProbe?.("text");
     text.set(value);
@@ -251,7 +260,13 @@ function MaskedField(props: MaskedProps) {
       return;
     }
     const now = untracked(text);
-    if (!same(props.valueOf(now), value)) writeText(props.shown(value, false));
+    if (invalidActive || untracked(invalidError) || !same(props.valueOf(now), value)) {
+      writeText(props.shown(value, false));
+      invalidActive = false;
+      rollbackReported = false;
+      invalidError.set(false);
+      props.field.onInvalid?.(null);
+    }
   });
   const change = (raw: string) => {
     const prev = untracked(text);
@@ -262,18 +277,35 @@ function MaskedField(props: MaskedProps) {
     const [on, at] = editBase(prev, boxText, raw, from);
     let next = reconcile(on, raw, props.mask, undefined, at, typed);
     if (props.noLiveFormat) {
-      if (next.rejected || (typed && next.text !== raw)) next = { ...next, text: prev, rejected: true };
-      if (!next.rejected && next.text === raw) {
-        // A valid focused amount edit stays exactly as typed: no text or caret answer goes back to the box.
-        boxText = raw;
-        text.set(raw); // exactly the edit the native box already holds: NSH sends no value op for it
-        const value = props.valueOf(raw);
-        if (value === last) return;
-        last = value;
-        edited = true;
-        props.onChange(value);
+      // Focused text is authoritative: even a refused or invalid edit is never written back out of the box.
+      boxText = raw;
+      text.set(raw);
+      const valid = props.valid ? props.valid(raw) : !next.rejected && next.text === raw;
+      edited = true;
+      if (!valid) {
+        invalidActive = true;
+        props.field.onInvalid?.(raw, true);
+        if (!rollbackReported) {
+          rollbackReported = true;
+          if (focusValue !== last) {
+            last = focusValue;
+            props.onChange(focusValue);
+          }
+        }
         return;
       }
+      if (invalidActive) {
+        invalidActive = false;
+        rollbackReported = false;
+        props.field.onInvalid?.(null);
+      } else if (raw === "") {
+        props.field.onInvalid?.(null);
+      }
+      const value = props.valueOf(raw);
+      if (value === last) return;
+      last = value;
+      props.onChange(value);
+      return;
     }
     // An edit that changes nothing is taken back: what the box holds after it is the text shown.
     boxText = next.rejected || next.text === prev ? next.text : raw;
@@ -304,7 +336,7 @@ function MaskedField(props: MaskedProps) {
       label={props.field.label}
       accessibilityLabel={props.field.accessibilityLabel}
       hint={props.field.hint}
-      error={props.field.error}
+      error={invalidError() ? "Not a valid amount. Correct it or clear the box; it was not saved." : props.field.error}
       placeholder={props.field.placeholder ?? props.placeholder}
       disabled={props.field.disabled}
       locked={props.field.locked}
@@ -332,6 +364,9 @@ function MaskedField(props: MaskedProps) {
         focused.set(true);
         boxText = undefined;
         edited = false;
+        focusValue = props.value ?? "";
+        rollbackReported = false;
+        invalidError.set(false);
         if (props.noLiveFormat) {
           const before = untracked(text);
           const plain = props.shown(props.value ?? "", true);
@@ -347,14 +382,19 @@ function MaskedField(props: MaskedProps) {
         focused.set(false);
         editFrom = undefined;
         editTyped = false;
-        const laidOut = edited ? props.shown(props.valueOf(text()), false) : props.shown(props.value ?? "", false);
-        const shown = edited && props.settle ? props.settle(laidOut) : laidOut;
+        const validBlur = !props.valid || props.valid(text());
+        invalidError.set(!validBlur);
+        if (!validBlur) props.field.onInvalid?.(text(), false);
+        const laidOut = edited && validBlur ? props.shown(props.valueOf(text()), false) : edited ? text() : props.shown(props.value ?? "", false);
+        const shown = edited && validBlur && props.settle ? props.settle(laidOut) : laidOut;
         edited = false;
         if (shown !== text()) writeText(shown);
-        const value = props.valueOf(shown);
-        if (!same(value, last)) {
-          last = value;
-          props.onChange(value);
+        if (validBlur) {
+          const value = props.valueOf(shown);
+          if (!same(value, last)) {
+            last = value;
+            props.onChange(value);
+          }
         }
         props.field.onBlur?.();
       }}
@@ -420,7 +460,8 @@ export function MoneyInput(props: MoneyInputProps) {
       mask={moneyEntryMask({ negative: props.negative })}
       shown={(v, focused) => shownMoney(v, focused, props.whole)}
       settle={(t) => formatMoney(t, props.whole)}
-      valueOf={(t) => moneyPlain(t)}
+      valueOf={(t) => readAmount(t, props.negative) ?? ""}
+      valid={(t) => validAmountText(t, props.negative)}
       same={sameAmount}
       keyboardType="decimal-pad"
       noLiveFormat

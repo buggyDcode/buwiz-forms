@@ -2,7 +2,7 @@
 import { expect, test } from "nsh/test";
 import {
   applyMask, DATE_ERROR, digitsOnly, editBase, formatIso, formatLongDate, formatMDY, formatMoney, formatTin, formatTinDigits, intMask,
-  isPlainAmount, isZeroAmount, MONEY_MASK, moneyEntryMask, moneyMask, moneyPlain, parseTypedDate, PERCENT_MASK, reconcile, sameAmount, shownDate, shownMoney,
+  isPlainAmount, isZeroAmount, MONEY_MASK, moneyEntryMask, moneyMask, moneyPlain, parseTypedDate, PERCENT_MASK, readAmount, reconcile, sameAmount, shownDate, shownMoney, validAmountText,
   TIN_MASK,
 } from "./mask";
 
@@ -469,4 +469,35 @@ test("money entry accepts mid-text digits and Backspace exactly, without reforma
   expect(wholeSelection).toEqual({ text: "9", caret: 1 });
   const pastedGrouped = reconcile("", "1,234.56", mask, undefined, undefined, false);
   expect(pastedGrouped).toEqual({ text: "1234.56", caret: 7 }); // a paste is normalized at once
+});
+
+test("strict focused amount reading accepts only unambiguous grouped amounts", () => {
+  expect(readAmount("15,000.50")).toBe("15000.50");
+  expect(readAmount("₱ 15,000.50")).toBe("15000.50");
+  expect(readAmount("PHP 15000.50")).toBe("15000.50");
+  expect(readAmount(" 15000.50 ")).toBe("15000.50");
+  expect(readAmount("₱15000.50")).toBe("15000.50");
+  expect(readAmount("15000.50 PHP")).toBe("15000.50");
+  expect(readAmount(".5")).toBe(".5");
+  for (const bad of ["1500,50", "1.234,56", "1,2,3", "1e5", "0x10", "1 234,50", "15000..50", "15000.50.25", "₱ 15,000.50x", "."]) {
+    expect(readAmount(bad)).toBeNull();
+    expect(validAmountText(bad)).toBe(false);
+  }
+});
+
+for (const [name, pasted, expected] of [
+  ["peso-prefixed paste", "₱ 15,000.50", "15000.50"],
+  ["space-padded paste", " 15000.50 ", "15000.50"],
+  ["grouped paste", "15,000.50", "15000.50"],
+  ["PHP-prefixed paste", "PHP 15000.50", "15000.50"],
+] as const) {
+  test(`money paste reading: ${name} reads as 15000.50`, () => {
+    expect(readAmount(pasted)).toBe(expected);
+    expect(validAmountText(pasted)).toBe(true);
+  });
+}
+
+test("money paste reading: a second point is not an amount", () => {
+  expect(readAmount("15000.50.25")).toBeNull();
+  expect(validAmountText("15000.50.25")).toBe(false);
 });
