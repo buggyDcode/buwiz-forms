@@ -1710,9 +1710,14 @@ export class FormSession {
       const typed = String(edits[k] ?? "");
       const stored = String(s.values[k] ?? "");
       if (!typedEdit) continue;
+      // A gate that zeroes the amount in the same batch is an outside change of identity, not a mistyped save.
+      if ((r.off || {})[k] || this.isShut(k)) continue;
       if (sameNumber(typed, stored)) continue;
       const whole = kind === "money" && this.wholeKeys.has(k);
-      shownRejected[k] = `${AMOUNT_MISMATCH}|${formatMoney(typed, whole)}|${stored === "" ? "blank" : formatMoney(stored, whole)}`;
+      const shownAmount = formatMoney(typed, whole);
+      const storedAmount = stored === "" ? "blank" : formatMoney(stored, whole);
+      if (shownAmount === storedAmount) continue;
+      shownRejected[k] = `${AMOUNT_MISMATCH}|${shownAmount}|${storedAmount}`;
       s.rejected[k] = shownRejected[k];
       const id = this.keyIndex.get(k);
       if (id) s.touched.add(id);
@@ -1904,6 +1909,11 @@ export class FormSession {
         st.values = this.shown({ ...st.values, ...r.values });
         st.options = (r.options || {}) as Record<string, unknown[]>;
         st.off = r.off || {};
+        // A gate answer can arrive after the fill that zeroed its amount: the zeroing is the gate's own outside change,
+        // not a shown-against-stored mismatch. Drop only that synthetic refusal; host refusals and real mismatches stay.
+        for (const [k, msg] of Object.entries(st.rejected)) {
+          if (st.off[k] && msg.startsWith(`${AMOUNT_MISMATCH}|`)) delete st.rejected[k];
+        }
         this.liftOpenGates();
         if (Array.isArray(r.penalties)) st.penalties = r.penalties;
         if (r.pools) st.poolTexts = r.pools;

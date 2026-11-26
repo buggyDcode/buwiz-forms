@@ -338,6 +338,37 @@ test("B14: a boxed birth date shows the long month and asks once to save to the 
   s.dispose();
 });
 
+test("money safety net: a gate zeroing a batched amount is not a shown-amount mismatch", async () => {
+  const key = "frm0619E:txtTax14";
+  const s = await opened(at("0619E", 2025, 2));
+  s.pickRadio("frm0619E:optWithheld:Y");
+  await s.idle();
+  s.edit(key, "1250.5");
+  s.pickRadio("frm0619E:optWithheld:N"); // commits at once, with the staged amount in the same host batch
+  await s.idle();
+  expect(s.boxMessageOf(key) ?? "").not.toContain("Correct this amount");
+  s.dispose();
+});
+
+test("money safety net: clearing a filled or already-zero amount is not a mismatch", async () => {
+  const key = "frm2551Qv2018:txt15";
+  const filled = await opened(at("2551Q", 2024, 1));
+  filled.edit(key, "100");
+  await filled.idle();
+  filled.edit(key, "");
+  await filled.idle();
+  expect(filled.boxMessageOf(key) ?? "").not.toContain("Correct this amount");
+  expect(filled.shownOf(key)).toBe("0.00");
+  filled.dispose();
+
+  const zero = await opened(at("2551Q", 2024, 2));
+  zero.edit(key, "");
+  await zero.idle();
+  expect(zero.boxMessageOf(key) ?? "").not.toContain("Correct this amount");
+  expect(zero.shownOf(key)).toBe("0.00");
+  zero.dispose();
+});
+
 test("money safety net: a host-stored amount different from the shown amount is named and never reported saved", async () => {
   const key = "frm2551Qv2018:txt15";
   const original = bir.screen_form_fill;
