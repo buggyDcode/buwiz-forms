@@ -937,3 +937,39 @@ test("note rules: a note raised by a box leaving as its part folds is kept, and 
     s?.dispose();
   }
 });
+
+test("note in a row drawer: Queue asks the schedule to open the cell's row drawer, and the note counts as shown only once it opened", async () => {
+  const pay0 = "txtIncomePayment30";
+  const restore = hostFault(pay0, "1000", "999.00");
+  const checks = countQueueChecks();
+  const h = hooks();
+  let s: FormSession | undefined;
+  try {
+    s = await opened(at("2550Q", 2023, 3), h);
+    fillSched3Row(s, 0, "Agent One", "1000");
+    await s.idle();
+    expect(s.boxMessageOf(pay0)).toBe("(C) Income Payment: you typed 1,000.00; the return holds 999.00.");
+    const pi = Number(s.itemIdForKey(pay0)!.split(":")[0]);
+    if (s.part(pi)().open) s.togglePart(pi);
+    s.queue();
+    await s.idle();
+    expect(checks.count).toBe(0);
+    expect(s.part(pi)().open).toBe(true);
+    expect(s.drawerAsk()).toBe(pay0);
+    // No schedule opened the drawer (none is drawn here): the note was not shown, so Queue stops on it again.
+    s.queue();
+    await s.idle();
+    expect(checks.count).toBe(0);
+    // The schedule opened the row: shown; the next press goes on.
+    s.drawerOpened(pay0);
+    expect(s.drawerAsk()).toBe(null);
+    s.queue();
+    await s.idle();
+    expect(checks.count).toBeGreaterThan(0);
+    expect(s.boxMessageOf(pay0)).toBe("(C) Income Payment: you typed 1,000.00; the return holds 999.00.");
+  } finally {
+    restore();
+    checks.restore();
+    s?.dispose();
+  }
+});

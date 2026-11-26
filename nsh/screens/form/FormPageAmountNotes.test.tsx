@@ -206,3 +206,26 @@ for (const [period, typed, shown] of [[1, "12345678901234567890", "12,345,678,90
     expect(app.texts().some((t) => t.startsWith(said))).toBe(true);
   }, 40_000);
 }
+
+test("note in a row drawer: with the drawer closed and its part folded, Queue opens both, the cell and its sentence are on screen, and the next press goes on", async () => {
+  const app = await scheduleCell(2022, 3);
+  await typeAndTab(app, "12345678901234567890");
+  const said = "Taxable Amount: you typed 12,345,678,901,234,567,890.00; the return holds 1,234.56.";
+  const saying = () => app.texts().filter((t) => t.startsWith(said)).length;
+  await app.press(`id:${TABLE}-done`);
+  await app.waitUntil(() => !app.shows(CELL), { timeout: 3000 });
+  await app.press("id:fp-part-4-toggle");
+  await app.waitUntil(() => !app.shows(ROW), { timeout: 3000 });
+  await app.press("id:fp-queue");
+  await app.waitFor(CELL, { timeout: 5000 });
+  await app.wait(400);
+  // Under the cell, and the toast.
+  expect(saying()).toBeGreaterThanOrEqual(2);
+  expect(app.value(CELL)).toBe("1,234.56");
+  const before = saying();
+  await app.press("id:fp-queue");
+  await app.wait(1200);
+  // Shown once: no second toast of it; Queue went on to the host's checks.
+  expect(saying()).toBe(before);
+  expect(checked(app)).toBe(true);
+}, 40_000);
