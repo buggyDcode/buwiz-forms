@@ -104,10 +104,8 @@ test("Queue with the amount box still focused leaves it first and stops on its n
   expect(app.shows("text:Queue this return?")).toBe(false);
 }, 40_000);
 
-// Unreadable text needs the money box's own change (it puts the return's amount back on leaving and calls onLeftUnreadable);
-// until that is in this tree these stay off. Turn BOX_LEAVES_UNREADABLE on to run them: today they fail.
-const BOX_LEAVES_UNREADABLE = false;
-const unreadable = BOX_LEAVES_UNREADABLE ? test : test.skip;
+// Unreadable text: on leaving, the money box puts the return's amount back and calls onLeftUnreadable; the session draws the note.
+const unreadable = test;
 
 for (const typed of ["1500x", "1500,50"]) {
   unreadable(`unreadable ${typed}: after leaving, the box shows the old amount, a note names both, the draft holds the old amount, Save works`, async () => {

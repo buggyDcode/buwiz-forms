@@ -143,7 +143,8 @@ test("money unreadable desktop: leaving 1500x keeps the old amount, says so, and
   expect(app.value(box)).toBe("1500x");
   await app.submit(box);
   await app.waitUntil(() => app.value(box) === "100.00", { timeout: 5000 });
-  expect(app.texts()).toContain("1500x is not an amount. The box kept 100.00.");
+  // In a form the session draws the sentence under the box, with the item it belongs to.
+  expect(app.texts()).toContain("Item 15: 1500x is not an amount. The box kept 100.00.");
   await app.waitUntil(() => app.texts().includes("probe 100.00"), { timeout: 5000 });
   await app.waitFor("text:✓ Saved", { timeout: 8000 });
 }, 30_000);

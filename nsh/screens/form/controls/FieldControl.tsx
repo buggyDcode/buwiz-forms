@@ -287,6 +287,7 @@ function TypedBox(props: { p: FieldInput }) {
         onChange={(plain) => p.onEdit(plain)}
         onFocus={() => p.onFocus()}
         onBlur={() => p.onBlur()}
+        onLeftUnreadable={(typed, kept) => p.onLeftUnreadable?.(typed, kept)}
         width={widthOf(p)}
         error={p.box.message?.() || p.box.invalid()}
         whole={!!p.field.w}
