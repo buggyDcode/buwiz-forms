@@ -42,7 +42,7 @@ import { effectiveStops, nextRow, stopCall, todoRows, type TodoPart, type TodoRo
 import { formatMoney, wholePesosOf } from "../../lib/money";
 import { DATE_ERROR, formatIso, formatLongDate, formatMDY, isTwoDigitDate, oneDateText, parseTypedDate, shortIsoDate, shownDate } from "../../lib/dates";
 import { dateRange } from "./dateRules";
-import { sameAmount } from "../../ui/mask";
+import { formatMoney as exactMoney, sameAmount } from "../../ui/mask";
 import type { BoxState, ChoiceOption, FormSchema, SchemaField, SchemaItem } from "./contract";
 import { choiceLabel, dateParts, dateRanges, isPageNotice, isTinItem, keysOf, listedFields, oneDates, onePeriods, optionOf, plainRefusal, RESOLVE_ASK, ACCOUNT_FIX_CODES, sendWords, sentWords, withoutHidden, type DateParts, type DateRange, type OneDate, type OnePeriod } from "./schema";
 import { parsePeriod, periodLong, periodText, PERIOD_ERROR, PERIOD_TWO_DIGIT, periodYear4 } from "./periodRules";
@@ -384,9 +384,9 @@ interface St {
   /** Boxes the host refused at the last fill, with its message (kept until the box is edited again). */
   rejected: Record<string, string>;
   /**
-   * Notes under amount boxes: the box shows what the return holds, and this says what the filer typed instead. "amount typed|<typed>|
-   * <stored>" (the host stored another number) or "amount unreadable|<typed>|<kept>" (the box's text was not an amount). A note holds
-   * no save; it goes when its box is focused or edited, or the amount under it moves.
+   * Notes under amount boxes: the box shows what the return holds, and this says what the filer typed instead: "<kind>|<held>|<typed>"
+   * with kind "amount typed" (the host stored another number) or "amount unreadable" (the box's text was not an amount). `held` is
+   * what the box shows. A note holds no save; it goes when its box is focused or edited, or the amount under it moves.
    */
   amountNotes: Record<string, string>;
   /** Refused keys whose refusal retyping cannot fix (shut/locked): they restore the stored value and do not hold Save or Queue. */
@@ -447,6 +447,9 @@ function freshState(target: FormTarget): St {
     electionReady: undefined, moreOpen: new Set(),
   };
 }
+
+/** The longest Queue waits for a focused amount box to let go before it takes the keys out itself. */
+const QUEUE_SETTLE_MS = 500;
 
 const sameJson = <T,>(a: T, b: T) => a === b || JSON.stringify(a) === JSON.stringify(b);
 
@@ -783,7 +786,7 @@ export class FormSession {
   async idle(): Promise<void> {
     for (let i = 0; i < 600; i++) {
       const s = this.st;
-      if (!s.loading && !s.checking && !this.flushTimer && !this.saveTimer && s.saveState.state !== "saving" && !s.periodInFlight && !this.periodWaiting) return;
+      if (!s.loading && !s.checking && !this.flushTimer && !this.saveTimer && s.saveState.state !== "saving" && !s.periodInFlight && !this.periodWaiting && !this.settling) return;
       await new Promise((r) => setTimeout(r, 25));
     }
   }
@@ -794,6 +797,34 @@ export class FormSession {
   /** A control registers how to put the keyboard in its box (a pill step uses it). Radio groups: "radio:<row id>". */
   registerFocus(k: string, focus: () => void) {
     this.focusers.set(k, focus);
+  }
+
+  /** How to take the keyboard out of box k (Queue leaves a focused amount box first). */
+  registerBlur(k: string, blur: () => void) {
+    this.blurers.set(k, blur);
+  }
+  private blurers = new Map<string, () => void>();
+  /** Queue is waiting for a focused amount box to let go. */
+  private settling = false;
+
+  /** Amount box k was left with text that is not an amount and shows `kept`, the return's amount, again: a note under it says so. */
+  leftUnreadable(k: string, typed: string, kept: string) {
+    const s = this.st;
+    if (!s.draft || !s.editable || this.isShut(k)) return;
+    s.amountNotes[k] = `amount unreadable|${kept}|${typed}`;
+    const id = this.keyIndex.get(k);
+    if (id) s.touched.add(id);
+    this.setErrors(s.errors);
+    this.publish();
+  }
+
+  /** The notes Queue stops on: those whose part is open, so each can be shown (a folded part's note waits until it is opened). */
+  private queueNotes(): string[] {
+    const s = this.st;
+    return Object.keys(s.amountNotes).filter((k) => {
+      const id = this.keyIndex.get(k);
+      return id !== undefined && s.openParts.has(Number(id.split(":")[0]));
+    });
   }
 
   // ---------------------------------------------------------------- open
@@ -1736,12 +1767,12 @@ export class FormSession {
       if (this.isShut(k)) continue;
       if (sameNumber(typed, stored)) continue;
       const whole = kind === "money" && this.wholeKeys.has(k);
-      const shownAmount = formatMoney(typed, whole);
-      const storedAmount = stored === "" ? "no amount" : formatMoney(stored, whole);
+      const shownAmount = exactMoney(typed, whole);
+      const storedAmount = stored === "" ? "no amount" : exactMoney(stored, whole);
       if (shownAmount === storedAmount || sameNumber(shownAmount, stored)) continue;
       // The host stored another number than the one typed (a long number rounded, a clamp): the box shows what the return holds
       // (syncShown: the host changed it) and a note under it says what was typed. It holds no save.
-      s.amountNotes[k] = `amount typed|${shownAmount}|${storedAmount}`;
+      s.amountNotes[k] = `amount typed|${storedAmount}|${shownAmount}`;
       const sentence = this.refusalText(k, s.amountNotes[k]);
       s.boxMessages[k] = s.boxMessages[k] ? `${s.boxMessages[k]} ${sentence}` : sentence;
       const id = this.keyIndex.get(k);
@@ -1802,8 +1833,9 @@ export class FormSession {
     const s = this.st;
     let dropped = false;
     for (const [k, note] of Object.entries(s.amountNotes)) {
-      const named = note.slice(note.lastIndexOf("|") + 1);
-      if (!this.isShut(k) && sameNumber(named === "no amount" ? "" : named, String(s.values[k] ?? ""))) continue;
+      const named = note.split("|")[1] ?? "";
+      // A box whose own edit is still pending (an unreadable box's put-back) is judged once that edit is in.
+      if (k in s.pending || (!this.isShut(k) && sameNumber(named === "no amount" ? "" : named, String(s.values[k] ?? "")))) continue;
       delete s.amountNotes[k];
       dropped = true;
     }
@@ -3390,10 +3422,32 @@ export class FormSession {
    */
   queue() {
     const s = this.st;
+    // Queue cannot be taken back: an amount box that still has the keys is left first, so the amount it puts back and the note it
+    // raises exist before anything is judged. Its blur may come on a later turn: Queue waits until the session has seen the box let
+    // go (blur() clears focusKey), blurs it itself after QUEUE_SETTLE_MS, and goes on one turn after that.
+    const held = s.focusKey;
+    const heldKind = held ? this.kindOf.get(held) : undefined;
+    if (held && (heldKind === "money" || heldKind === "num") && !this.settling) {
+      this.settling = true;
+      this.blurers.get(held)?.();
+      const token = this.token;
+      const started = Date.now();
+      const go = () => {
+        if (token !== this.token) return void (this.settling = false);
+        if (this.st.focusKey === held && Date.now() - started < QUEUE_SETTLE_MS) return void this.later(25, go);
+        if (this.st.focusKey === held) this.blur(held);
+        this.later(0, () => {
+          this.settling = false;
+          if (token === this.token) this.queue();
+        });
+      };
+      return void this.later(0, go);
+    }
     if (s.sample) return this.saveSample(() => this.queue());
     // B19: a refused edit is still unsaved work; Queue waits for it to be fixed or cleared. An
     // unfixable one (shut/locked) put the stored value back, so it does not hold Queue (R7).
-    if (Object.keys(s.rejected).some((k) => !s.unfixable.has(k))) {
+    // A note under an amount box (it holds no save) stops Queue the same way while its part is open.
+    if (Object.keys(s.rejected).some((k) => !s.unfixable.has(k)) || this.queueNotes().length) {
       s.showAll = true;
       this.publish();
       // R6: Queue refuses like a failed Check — the count of refused boxes and messages, not one sentence.

@@ -38,6 +38,8 @@ export function fieldProps(s: FormSession, f: SchemaField, narrow: Accessor<bool
     onFocus: () => s.focus(f.k),
     onBlur: () => s.blur(f.k),
     focusRef: (focus) => s.registerFocus(f.k, focus),
+    blurRef: (blur) => s.registerBlur(f.k, blur),
+    onLeftUnreadable: (typed, kept) => s.leftUnreadable(f.k, typed, kept),
   };
 }
 

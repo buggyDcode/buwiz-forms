@@ -580,3 +580,189 @@ test("one leave toast: a save refused on the way out is said once, by flushNow, 
   expect(h.said.toasts.filter((t) => /already stored/.test(t.message)).length).toBe(1);
   first.dispose();
 });
+
+/** A sample's Save, its period answered (year, quarter) when the dialog asks. */
+async function saveSampleAs(session: FormSession, year: number, quarter: number) {
+  session.saveNow();
+  const o = session.overlay();
+  if (o?.kind === "sample-period") {
+    const answer: Record<string, string> = {};
+    for (const p of o.parts) answer[p.key] = p.part === "year" ? String(year) : p.part === "year_end_month" ? "12" : p.part === "quarter" ? String(p.quarter === quarter) : p.value;
+    session.takeSamplePeriod(answer);
+  }
+  await session.idle();
+  await session.idle();
+}
+
+/** Counts the host's queue checks: Queue reached them only when nothing on the page stopped it first. */
+function countQueueChecks(): { count: number; restore: () => void } {
+  const check = bir.screen_form_queue_check;
+  const door = bir as { screen_form_queue_check: typeof check };
+  const out = { count: 0, restore: () => void (door.screen_form_queue_check = check) };
+  door.screen_form_queue_check = ((...args: Parameters<typeof check>): ReturnType<typeof check> => {
+    out.count++;
+    return check(...args);
+  }) as typeof check;
+  return out;
+}
+
+test("queue settles the box: with an amount box focused, Queue leaves it first (its blur on a later turn), then stops on the note it raised", async () => {
+  const key = "frm2551Qv2018:txt15";
+  const restore = hostFault(key, "100", "99.00");
+  const checks = countQueueChecks();
+  const h = hooks();
+  let s: FormSession | undefined;
+  try {
+    s = await opened(at("2551Q", 2021, 3), h);
+    s.jumpTo(2);
+    // The box's blur reaches the session on a later turn, as a real input's may.
+    let blurred = 0;
+    s.registerBlur(key, () => void setTimeout(() => (blurred++, s!.blur(key)), 60));
+    s.focus(key);
+    s.edit(key, "100");
+    s.queue();
+    expect(s.boxMessageOf(key) ?? "").toBe("");
+    await s.idle();
+    expect(blurred).toBe(1);
+    expect(s.shownOf(key)).toBe("99.00");
+    expect(s.boxMessageOf(key)).toBe("Item 15: you typed 100.00; the return holds 99.00.");
+    expect(checks.count).toBe(0);
+    expect(s.overlay()?.kind ?? "").not.toBe("queue-confirm");
+    // A second press while the note shows stops the same way.
+    s.queue();
+    await s.idle();
+    expect(checks.count).toBe(0);
+    // Back in the box the note goes, and Queue goes on to the host's check.
+    s.focus(key);
+    s.blur(key);
+    s.queue();
+    await s.idle();
+    expect(checks.count).toBeGreaterThan(0);
+  } finally {
+    restore();
+    checks.restore();
+    s?.dispose();
+  }
+});
+
+test("queue settles the box: a box that never reports its blur is left by Queue itself after a moment", async () => {
+  const key = "frm2551Qv2018:txt15";
+  const restore = hostFault(key, "100", "99.00");
+  const checks = countQueueChecks();
+  let s: FormSession | undefined;
+  try {
+    s = await opened(at("2551Q", 2021, 4));
+    s.jumpTo(2);
+    s.focus(key);
+    s.edit(key, "100");
+    s.queue();
+    await s.idle();
+    expect(s.boxMessageOf(key)).toBe("Item 15: you typed 100.00; the return holds 99.00.");
+    expect(checks.count).toBe(0);
+  } finally {
+    restore();
+    checks.restore();
+    s?.dispose();
+  }
+});
+
+test("unreadable note: the box's report of text that is not an amount shows under it, stops Queue on an open part only, and stops nothing else", async () => {
+  const key = "frm2551Qv2018:txt15";
+  const sentence = "Item 15: 1500x is not an amount. The box kept 1,000.00.";
+  const checks = countQueueChecks();
+  const saves = countSaves();
+  const h = hooks();
+  let s: FormSession | undefined;
+  try {
+    s = await opened(at("2551Q", 2020, 3), h);
+    s.jumpTo(2);
+    s.edit(key, "1000");
+    await s.idle();
+    // The box put 1,000.00 back and says what it was left with.
+    s.leftUnreadable(key, "1500x", "1,000.00");
+    expect(s.boxMessageOf(key)).toBe(sentence);
+    expect(s.isDirty()).toBe(false);
+    // Queue stops on it, like any message under a box.
+    s.queue();
+    await s.idle();
+    expect(checks.count).toBe(0);
+    // Save and leaving go through.
+    const before = saves.count;
+    s.edit("frm2551Qv2018:txt17", "5");
+    expect(await s.flushNow()).toBe(true);
+    expect(saves.count).toBeGreaterThan(before);
+    expect(s.boxMessageOf(key)).toBe(sentence);
+    // Its part folded: the note is not shown, so Queue does not count it (it shows again when the part opens).
+    s.togglePart(2);
+    s.queue();
+    await s.idle();
+    expect(checks.count).toBeGreaterThan(0);
+    s.togglePart(2);
+    expect(s.boxMessageOf(key)).toBe(sentence);
+    // A box drawn again (a remount registers its focus again) keeps the note: it is still true.
+    s.registerFocus(key, () => {});
+    expect(s.boxMessageOf(key)).toBe(sentence);
+    // Focused, it goes.
+    s.focus(key);
+    expect(s.boxMessageOf(key) ?? "").toBe("");
+  } finally {
+    checks.restore();
+    saves.restore();
+    s?.dispose();
+  }
+});
+
+test("unreadable note: a Delete row of its row takes it away; a sample with one saves as a return", async () => {
+  const pay1 = "txtIncomePayment31";
+  let s: FormSession | undefined;
+  let sample: FormSession | undefined;
+  const saves = countSaves();
+  try {
+    s = await opened(at("2550Q", 2023, 1));
+    fillSched3Row(s, 0, "Agent One", "1000");
+    fillSched3Row(s, 1, "Agent Two", "2000");
+    await s.idle();
+    s.leftUnreadable(pay1, "2000,5", "2,000.00");
+    expect(s.boxMessageOf(pay1)).toContain("is not an amount");
+    deleteRow(s, 1);
+    await s.idle();
+    expect(s.boxMessageOf(pay1) ?? "").toBe("");
+
+    sample = await opened(at("2551Q", 0, 0, "sample"), hooks());
+    sample.edit("frm2551Qv2018:txt15", "15");
+    await sample.idle();
+    sample.leftUnreadable("frm2551Qv2018:txt15", "15..0", "15.00");
+    const before = saves.count;
+    await saveSampleAs(sample, 2020, 4);
+    expect(saves.count).toBeGreaterThan(before);
+    expect(sample.target().mode).toBe("return");
+  } finally {
+    saves.restore();
+    s?.dispose();
+    sample?.dispose();
+  }
+});
+
+test("money note: leaving with a note and other valid edits saves them all; a second session reads them from the database", async () => {
+  const key = "frm2551Qv2018:txt15";
+  const restore = hostFault(key, "100", "99.00");
+  let s: FormSession | undefined;
+  let back: FormSession | undefined;
+  try {
+    s = await opened(at("2551Q", 2021, 2));
+    s.edit(key, "100");
+    s.blur(key);
+    s.edit("frm2551Qv2018:txt17", "250");
+    s.edit("txtATCAmt1", "300");
+    expect(await s.flushNow()).toBe(true);
+    s.dispose();
+    back = new FormSession(at("2551Q", 2021, 2));
+    expect(await back.open()).toBe(null);
+    await back.idle();
+    expect([back.valueOf("frm2551Qv2018:txt17"), back.valueOf("txtATCAmt1")]).toEqual(["250.00", "300.00"]);
+  } finally {
+    restore();
+    s?.dispose();
+    back?.dispose();
+  }
+});

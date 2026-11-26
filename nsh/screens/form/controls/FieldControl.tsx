@@ -204,6 +204,7 @@ function DateBox(props: { p: FieldInput }) {
 /** The ref a box gives the page (an input's, a select trigger's, a checkbox's), so a pill step can put the keys in it. */
 function giveFocus(p: FieldInput, ref: ViewRef) {
   p.focusRef?.(() => ref.focus());
+  p.blurRef?.(() => ref.blur());
 }
 
 /** The typing boxes: an amount, a percent, a whole number, a TIN, an email, a phone, plain text. */
