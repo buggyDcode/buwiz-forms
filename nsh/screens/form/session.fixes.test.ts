@@ -645,22 +645,32 @@ test("queue settles the box: with an amount box focused, Queue leaves it first (
   }
 });
 
-test("queue settles the box: a box that never reports its blur is left by Queue itself after a moment", async () => {
+test("Q2: a box that never reports its blur stops Queue: nothing is checked or queued, the box is left as it is, and the filer is told once", async () => {
   const key = "frm2551Qv2018:txt15";
-  const restore = hostFault(key, "100", "99.00");
+  const told = "Finish the amount in Item 15 first.";
   const checks = countQueueChecks();
+  const h = hooks();
   let s: FormSession | undefined;
   try {
-    s = await opened(at("2551Q", 2021, 4));
+    s = await opened(at("2551Q", 2021, 4), h);
     s.jumpTo(2);
     s.focus(key);
     s.edit(key, "100");
     s.queue();
     await s.idle();
-    expect(s.boxMessageOf(key)).toBe("Item 15: you typed 100.00; the return holds 99.00.");
     expect(checks.count).toBe(0);
+    expect(h.said.toasts.filter((t) => t.message === told).length).toBe(1);
+    // The session did not take the keys out of the box itself: it still has them as far as the session knows.
+    expect(s.focusedPart()).toBe(2);
+    expect(s.overlay()?.kind ?? "").not.toBe("queue-confirm");
+    // The box really was left: a later Queue goes on to the host's check.
+    s.blur(key);
+    await s.idle();
+    s.queue();
+    await s.idle();
+    expect(checks.count).toBeGreaterThan(0);
+    expect(h.said.toasts.filter((t) => t.message === told).length).toBe(1);
   } finally {
-    restore();
     checks.restore();
     s?.dispose();
   }

@@ -449,7 +449,7 @@ function freshState(target: FormTarget): St {
   };
 }
 
-/** The longest Queue waits for a focused amount box to let go before it takes the keys out itself. */
+/** The longest Queue waits for a focused amount box to let go; then it stops and asks the filer to finish the amount. */
 const QUEUE_SETTLE_MS = 500;
 
 const sameJson = <T,>(a: T, b: T) => a === b || JSON.stringify(a) === JSON.stringify(b);
@@ -3445,7 +3445,8 @@ export class FormSession {
     if (this.settling) return;
     // Queue cannot be taken back: an amount box that still has the keys is left first, so the amount it puts back and the note it
     // raises exist before anything is judged. Its blur may come on a later turn: Queue waits until the session has seen the box let
-    // go (blur() clears focusKey), blurs it itself after QUEUE_SETTLE_MS, and goes on one turn after that.
+    // go (blur() clears focusKey) and goes on one turn after that. Q2: a box that has not let go after QUEUE_SETTLE_MS stops Queue:
+    // the session does not know what it holds, so nothing is queued and the box is left exactly as it is.
     const held = s.focusKey;
     const heldKind = held ? this.kindOf.get(held) : undefined;
     if (held && (heldKind === "money" || heldKind === "num")) {
@@ -3456,7 +3457,11 @@ export class FormSession {
       const go = () => {
         if (token !== this.token) return void (this.settling = false);
         if (this.st.focusKey === held && Date.now() - started < QUEUE_SETTLE_MS) return void this.later(25, go);
-        if (this.st.focusKey === held) this.blur(held);
+        if (this.st.focusKey === held) {
+          this.settling = false;
+          const ctx = this.refusalCtx(held, "");
+          return void this.toast(`Finish the amount in ${ctx.item ? `Item ${ctx.item}` : ctx.label} first.`, "triangle-alert");
+        }
         this.later(0, () => {
           this.settling = false;
           if (token === this.token) this.queue();
