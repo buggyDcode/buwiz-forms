@@ -566,3 +566,17 @@ test("pending edits before row moves: an amount typed in a row is filled on its 
   expect(errors(s)).toEqual([]);
   s.dispose();
 });
+
+test("one leave toast: a save refused on the way out is said once, by flushNow, not again when the page goes", async () => {
+  const first = await opened(at("2551Q", 2024, 4));
+  const h = hooks();
+  const second = await opened(at("2551Q", 2024, 4), h);
+  first.edit("txtATCAmt1", "1");
+  await first.idle();
+  expect(first.isSaved()).toBe(true);
+  second.edit("txtATCAmt1", "2");
+  expect(await second.flushNow()).toBe(false);
+  second.dispose();
+  expect(h.said.toasts.filter((t) => /already stored/.test(t.message)).length).toBe(1);
+  first.dispose();
+});

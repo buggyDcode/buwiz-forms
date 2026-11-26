@@ -4291,6 +4291,9 @@ export class FormSession {
     return s.saveState.state === "failed" ? s.saveState.message : null;
   }
 
+  /** What the last flushNow toasted on the way out, so the page's going does not say it again. */
+  private leaveSaid: string | null = null;
+
   /** Typing flushed and saved now where autosave may (the frame awaits it before quit or navigation). False when a save was refused (toasted). */
   async flushNow(): Promise<boolean> {
     if (this.disposed) return true;
@@ -4299,6 +4302,7 @@ export class FormSession {
     const failed = this.finish();
     this.publish();
     if (failed) this.toast(failed, "triangle-alert");
+    this.leaveSaid = failed;
     return !failed;
   }
 
@@ -4307,7 +4311,8 @@ export class FormSession {
     if (this.disposed) return;
     this.retireRemovalUndo();
     const failed = this.finish();
-    if (failed) this.toast(failed, "triangle-alert");
+    // The frame's flushNow just said the same on the way out: once is enough.
+    if (failed && failed !== this.leaveSaid) this.toast(failed, "triangle-alert");
     live.delete(this);
     this.disposed = true;
     for (const id of this.timers) clearTimeout(id);
