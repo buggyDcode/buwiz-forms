@@ -516,16 +516,36 @@ pub fn continuation_pages_html_after(
                 sched.printed_capacity,
             ));
 
-            out.push_str(
-                "<table style=\"width:100%;border-collapse:collapse;table-layout:auto;font-size:7.5pt\"><thead><tr>",
-            );
-            out.push_str(
-                "<th style=\"width:22pt;border:0.75pt solid #000;background:#f2f2f2;padding:3pt 3pt;text-align:center;font-weight:700;vertical-align:bottom\">#</th>",
-            );
+            let is_wide = sched.columns.len() >= 10;
+            let (table_layout, table_font, num_w, cell_pad, amt_wrap, text_wrap) = if is_wide {
+                (
+                    "fixed",
+                    "6pt",
+                    "16pt",
+                    "2pt 2pt",
+                    "overflow-wrap:anywhere",
+                    "overflow-wrap:anywhere",
+                )
+            } else {
+                (
+                    "auto",
+                    "7.5pt",
+                    "22pt",
+                    "3pt 4pt",
+                    "white-space:nowrap",
+                    "overflow-wrap:break-word",
+                )
+            };
+            out.push_str(&format!(
+                "<table style=\"width:100%;border-collapse:collapse;table-layout:{table_layout};font-size:{table_font}\"><thead><tr>"
+            ));
+            out.push_str(&format!(
+                "<th style=\"width:{num_w};border:0.75pt solid #000;background:#f2f2f2;padding:3pt 2pt;text-align:center;font-weight:700;vertical-align:bottom\">#</th>"
+            ));
             for col in &sched.columns {
                 let align = if col.is_amount { "right" } else { "left" };
                 out.push_str(&format!(
-                    "<th style=\"border:0.75pt solid #000;background:#f2f2f2;padding:3pt 4pt;text-align:{align};font-weight:700;vertical-align:bottom;overflow-wrap:break-word\">{}</th>",
+                    "<th style=\"border:0.75pt solid #000;background:#f2f2f2;padding:{cell_pad};text-align:{align};font-weight:700;vertical-align:bottom;{text_wrap}\">{}</th>",
                     escape_html(&col.heading),
                 ));
             }
@@ -534,15 +554,15 @@ pub fn continuation_pages_html_after(
             for row in rows {
                 out.push_str("<tr>");
                 out.push_str(&format!(
-                    "<td style=\"border:0.75pt solid #000;padding:3pt 3pt;text-align:center;vertical-align:top;color:#333\">{}</td>",
+                    "<td style=\"border:0.75pt solid #000;padding:{cell_pad};text-align:center;vertical-align:top;color:#333\">{}</td>",
                     escape_html(&sched.format_row_label(row.row_number)),
                 ));
                 for (col, val) in sched.columns.iter().zip(row.values.iter()) {
                     let display = format_plain_cell_value(col, val);
                     let style = if col.is_amount {
-                        "border:0.75pt solid #000;padding:3pt 4pt;text-align:right;vertical-align:top;white-space:nowrap;font-variant-numeric:tabular-nums"
+                        format!("border:0.75pt solid #000;padding:{cell_pad};text-align:right;vertical-align:top;{amt_wrap};font-variant-numeric:tabular-nums")
                     } else {
-                        "border:0.75pt solid #000;padding:3pt 4pt;text-align:left;vertical-align:top;overflow-wrap:break-word"
+                        format!("border:0.75pt solid #000;padding:{cell_pad};text-align:left;vertical-align:top;{text_wrap}")
                     };
                     out.push_str(&format!(
                         "<td style=\"{style}\">{}</td>",
@@ -567,31 +587,31 @@ pub fn continuation_pages_html_after(
                 );
                 if first_sub_idx > 0 {
                     out.push_str(&format!(
-                        "<td colspan=\"{first_sub_idx}\" style=\"border:0.75pt solid #000;padding:3.5pt 4pt;text-align:left\">Subtotal (additional rows)</td>"
+                        "<td colspan=\"{first_sub_idx}\" style=\"border:0.75pt solid #000;padding:{cell_pad};text-align:left\">Subtotal (additional rows)</td>"
                     ));
                     for col in &sched.columns[first_sub_idx..] {
                         if let Some(sub) = &col.subtotal {
                             out.push_str(&format!(
-                                "<td style=\"border:0.75pt solid #000;padding:3.5pt 4pt;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums\">{}</td>",
+                                "<td style=\"border:0.75pt solid #000;padding:{cell_pad};text-align:right;{amt_wrap};font-variant-numeric:tabular-nums\">{}</td>",
                                 escape_html(sub),
                             ));
                         } else {
-                            out.push_str(
-                                "<td style=\"border:0.75pt solid #000;padding:3.5pt 4pt\"></td>",
-                            );
+                            out.push_str(&format!(
+                                "<td style=\"border:0.75pt solid #000;padding:{cell_pad}\"></td>"
+                            ));
                         }
                     }
                 } else {
                     for col in &sched.columns {
                         if let Some(sub) = &col.subtotal {
                             out.push_str(&format!(
-                                "<td style=\"border:0.75pt solid #000;padding:3.5pt 4pt;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums\">{}</td>",
+                                "<td style=\"border:0.75pt solid #000;padding:{cell_pad};text-align:right;{amt_wrap};font-variant-numeric:tabular-nums\">{}</td>",
                                 escape_html(sub),
                             ));
                         } else {
-                            out.push_str(
-                                "<td style=\"border:0.75pt solid #000;padding:3.5pt 4pt\"></td>",
-                            );
+                            out.push_str(&format!(
+                                "<td style=\"border:0.75pt solid #000;padding:{cell_pad}\"></td>"
+                            ));
                         }
                     }
                 }
@@ -607,37 +627,37 @@ pub fn continuation_pages_html_after(
                             .position(|v| v.is_some())
                             .unwrap_or(0);
                         out.push_str("<tr style=\"background:#ececec;font-weight:700\">");
-                        out.push_str(
-                            "<td style=\"border:0.75pt solid #000;padding:3.5pt 3pt;text-align:center\"></td>",
-                        );
+                        out.push_str(&format!(
+                            "<td style=\"border:0.75pt solid #000;padding:{cell_pad};text-align:center\"></td>"
+                        ));
                         if first_tot_idx > 0 {
                             out.push_str(&format!(
-                                "<td colspan=\"{first_tot_idx}\" style=\"border:0.75pt solid #000;padding:3.5pt 4pt;text-align:left\">{}</td>",
+                                "<td colspan=\"{first_tot_idx}\" style=\"border:0.75pt solid #000;padding:{cell_pad};text-align:left\">{}</td>",
                                 escape_html(total_label),
                             ));
                             for val in &sched.official_total_values[first_tot_idx..] {
                                 if let Some(tot) = val {
                                     out.push_str(&format!(
-                                        "<td style=\"border:0.75pt solid #000;padding:3.5pt 4pt;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums\">{}</td>",
+                                        "<td style=\"border:0.75pt solid #000;padding:{cell_pad};text-align:right;{amt_wrap};font-variant-numeric:tabular-nums\">{}</td>",
                                         escape_html(tot),
                                     ));
                                 } else {
-                                    out.push_str(
-                                        "<td style=\"border:0.75pt solid #000;padding:3.5pt 4pt\"></td>",
-                                    );
+                                    out.push_str(&format!(
+                                        "<td style=\"border:0.75pt solid #000;padding:{cell_pad}\"></td>"
+                                    ));
                                 }
                             }
                         } else {
                             for val in &sched.official_total_values {
                                 if let Some(tot) = val {
                                     out.push_str(&format!(
-                                        "<td style=\"border:0.75pt solid #000;padding:3.5pt 4pt;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums\">{}</td>",
+                                        "<td style=\"border:0.75pt solid #000;padding:{cell_pad};text-align:right;{amt_wrap};font-variant-numeric:tabular-nums\">{}</td>",
                                         escape_html(tot),
                                     ));
                                 } else {
-                                    out.push_str(
-                                        "<td style=\"border:0.75pt solid #000;padding:3.5pt 4pt\"></td>",
-                                    );
+                                    out.push_str(&format!(
+                                        "<td style=\"border:0.75pt solid #000;padding:{cell_pad}\"></td>"
+                                    ));
                                 }
                             }
                         }
@@ -727,6 +747,7 @@ fn discover_schedules(parsed: &Value) -> Vec<ScheduleSpec> {
     let mut raw_joins = Vec::new();
     for (section, is_money) in [
         ("joins", false),
+        ("date_joins", false),
         ("money_joins", true),
         ("peso_joins", true),
     ] {
@@ -1163,7 +1184,7 @@ const POPUP_SCHEDULES: &[PopupScheduleDef] = &[
             PopupColDef {
                 key_template: "frm2200Av2020:txtSched1_xa_others{n}_Rate",
                 heading: "Applicable Tax Rate",
-                is_amount: true,
+                is_amount: false,
             },
             PopupColDef {
                 key_template: "frm2200Av2020:txtSched1_xa_others{n}_Export",
@@ -1207,7 +1228,7 @@ const POPUP_SCHEDULES: &[PopupScheduleDef] = &[
             PopupColDef {
                 key_template: "frm2200P:txtSched1ApplicableRate{n}",
                 heading: "Applicable Rate",
-                is_amount: true,
+                is_amount: false,
             },
             PopupColDef {
                 key_template: "frm2200P:txtSched1PlaceOfRemoval{n}",
@@ -3313,6 +3334,7 @@ mod tests {
         // 1. All <input ... value="..."> concatenated (comb chars join seamlessly!)
         //    plus space-separated copies so full tokens also match cleanly.
         let mut comb_buf = String::new();
+        let mut comb_stream = String::new();
         let mut last_name = String::new();
         let mut pos = 0;
         while let Some(rel) = html[pos..].find("<input ") {
@@ -3333,6 +3355,8 @@ mod tests {
                 if !comb_buf.is_empty() {
                     out.push(' ');
                     out.push_str(&comb_buf);
+                    comb_stream.push(' ');
+                    comb_stream.push_str(&comb_buf);
                     comb_buf.clear();
                 }
                 last_name = name;
@@ -3344,7 +3368,10 @@ mod tests {
         if !comb_buf.is_empty() {
             out.push(' ');
             out.push_str(&comb_buf);
+            comb_stream.push(' ');
+            comb_stream.push_str(&comb_buf);
         }
+        out.push_str(&comb_stream);
         // 2. Plain continuation table cells <td>...</td>
         pos = 0;
         while let Some(rel) = html[pos..].find("<td") {
@@ -3387,6 +3414,16 @@ mod tests {
             let stripped = up.replace(',', "");
             let whole = stripped.split('.').next().unwrap_or(&stripped);
             if !whole.is_empty() && corpus_no_commas.contains(whole) {
+                return true;
+            }
+        }
+        if up.contains('/') {
+            let spaced = up.replace('/', " ");
+            if corpus.contains(&spaced) {
+                return true;
+            }
+            let digits: String = up.chars().filter(|c| c.is_ascii_digit()).collect();
+            if digits.len() >= 6 && corpus_no_commas.contains(&digits) {
                 return true;
             }
         }
@@ -3462,9 +3499,13 @@ mod tests {
                             continue;
                         }
                         let key = format!("{}{}{}", col.stem, raw_idx, col.suffix);
-                        let is_date = col.heading.to_ascii_lowercase().contains("date");
+                        let h_low = col.heading.to_ascii_lowercase();
+                        let is_month_year = h_low.contains("mm/yyyy");
+                        let is_date = h_low.contains("date") || is_month_year;
                         let val = if col.is_amount {
                             format!("{}.00", 10_000 + si * 1000 + row_num * 17 + ci)
+                        } else if is_month_year {
+                            format!("{:02}/2026", ((row_num + ci) % 12) + 1)
                         } else if is_date {
                             format!("01/{:02}/2026", ((row_num + ci) % 28) + 1)
                         } else {

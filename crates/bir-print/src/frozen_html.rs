@@ -3745,6 +3745,7 @@ pub(crate) fn fill_continuation_fragment(
     extra_joins: &BTreeMap<String, Vec<String>>,
     extra_money_joins: &[(String, String, Option<String>)],
     extra_peso_joins: &[(String, String)],
+    extra_date_joins: &[(String, String, Option<String>, String)],
     caption_aliases: &BTreeMap<String, String>,
 ) -> Result<String, String> {
     let mut cells = writer_cells(slug)?;
@@ -3776,6 +3777,14 @@ pub(crate) fn fill_continuation_fragment(
             writer_key: k.clone(),
             html_ids: vec![html_id.clone()],
             negative_style,
+        });
+    }
+    for (k, mm_id, dd_id, yyyy_id) in extra_date_joins {
+        cells.date_joins.push(DateJoin {
+            writer_key: k.clone(),
+            mm_html_id: mm_id.clone(),
+            dd_html_id: dd_id.clone(),
+            yyyy_html_id: yyyy_id.clone(),
         });
     }
     let fields = &with_donor_estate_values(slug, fields);

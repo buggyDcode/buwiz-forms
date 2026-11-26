@@ -378,6 +378,45 @@ fn invariant_2200p_schedule1() {
             row_markers: &markers,
             total_text: &expected_total,
         });
+        if count > cap {
+            // (a) Applicable Rate must never be summed into the subtotal row.
+            let sub_start = html
+                .find("Subtotal (additional rows)")
+                .expect("2200P continuation must have Subtotal row");
+            let sub_end = html[sub_start..]
+                .find("</tr>")
+                .map(|i| sub_start + i)
+                .unwrap_or(html.len());
+            let sub_row = &html[sub_start..sub_end];
+            let wrong_rate_sum = format!("{:.2}", (count - cap) as f64 * 10.0);
+            assert!(
+                !sub_row.contains(&wrong_rate_sum),
+                "2200P ({count} rows): Applicable Rate must not be summed in Subtotal row (got {wrong_rate_sum}): {sub_row}"
+            );
+            // (b) Wide 15-column 2200P continuation table must use fixed layout
+            // so Basic Excise Tax Due and TOTAL TAX DUE are never clipped off A4.
+            assert!(
+                html.contains("table-layout:fixed"),
+                "2200P ({count} rows): wide 15-column continuation table must use table-layout:fixed so Basic Excise Tax Due fits on A4"
+            );
+            assert!(
+                html.contains("Basic Excise Tax Due"),
+                "2200P ({count} rows): Basic Excise Tax Due column must be present"
+            );
+            let tot_start = html
+                .find("TOTAL TAX DUE")
+                .expect("2200P continuation must have TOTAL TAX DUE row");
+            let tot_end = html[tot_start..]
+                .find("</tr>")
+                .map(|i| tot_start + i)
+                .unwrap_or(html.len());
+            let tot_row = &html[tot_start..tot_end];
+            assert!(
+                tot_row.contains(&expected_total)
+                    || tot_row.replace(',', "").contains(&expected_total.replace(',', "")),
+                "2200P ({count} rows): TOTAL TAX DUE row must carry the official total {expected_total}: {tot_row}"
+            );
+        }
     }
 }
 
@@ -401,7 +440,7 @@ fn invariant_2200a_others() {
                 atc_digits: format!("{:03}", 100 + i),
                 description: desc,
                 bracket: "PROOF".into(),
-                rate: "50.00".into(),
+                rate: "37.50".into(),
                 amounts: Form2200AAmounts {
                     export_exempt: 0.0,
                     taxable: (i as f64) * 10.0,
@@ -419,6 +458,22 @@ fn invariant_2200a_others() {
             row_markers: &markers,
             total_text: &format!("{sum_due:.2}"),
         });
+        if count > cap {
+            // (a) Applicable Tax Rate must never be summed into the subtotal row.
+            let sub_start = html
+                .find("Subtotal (additional rows)")
+                .expect("2200A continuation must have Subtotal row");
+            let sub_end = html[sub_start..]
+                .find("</tr>")
+                .map(|i| sub_start + i)
+                .unwrap_or(html.len());
+            let sub_row = &html[sub_start..sub_end];
+            let wrong_rate_sum = format!("{:.2}", (count - cap) as f64 * 37.5);
+            assert!(
+                !sub_row.contains(&wrong_rate_sum),
+                "2200A ({count} rows): Applicable Tax Rate must not be summed in Subtotal row (got {wrong_rate_sum}): {sub_row}"
+            );
+        }
     }
 }
 
@@ -522,6 +577,22 @@ fn invariant_1601c_schedule1() {
             row_markers: &markers,
             total_text: &format!("{expected_sum}.00"),
         });
+        if count == cap + 3 {
+            // (c) Continued rows 3a..3c must print their Date Paid and Previous Month/s combs.
+            let rt = rendered_text(&html);
+            for i in 4..=6usize {
+                let date_digits = format!("{i:02}102024");
+                assert!(
+                    rt.contains(&date_digits),
+                    "1601C ({count} rows): continued row {i} Date Paid ({date_digits}) must print"
+                );
+                let month_digits = format!("{i:02}2024");
+                assert!(
+                    rt.contains(&month_digits),
+                    "1601C ({count} rows): continued row {i} Previous Month/s ({month_digits}) must print"
+                );
+            }
+        }
     }
 }
 
@@ -829,7 +900,11 @@ fn invariant_2551q_schedule1() {
         let mut markers = Vec::new();
         let mut sum_due = 0.0f64;
         for k in 1..=count {
-            let mut row = Schedule1Row::default_pt010();
+            let mut row = if k == 7 {
+                Schedule1Row::new("PT103").expect("PT103 is 7% ATC")
+            } else {
+                Schedule1Row::default_pt010()
+            };
             let amt = 10_000.0 + (k as f64) * 113.0;
             row.taxable_amount = amt;
             row.recompute();
@@ -839,6 +914,25 @@ fn invariant_2551q_schedule1() {
         }
         d.recompute(None);
         let fields = d.to_print_field_map();
+        if count > cap {
+            // (d) Continued rows 6a+ must format Tax Rate identically to paper rows 1..6
+            // (no IEEE-754 float noise like `7.000000000000001` for 0.07 * 100.0).
+            assert_eq!(
+                fields.get("derived:sched1_rate1").map(String::as_str),
+                Some("3"),
+                "2551Q paper row 1 rate must be '3'"
+            );
+            assert_eq!(
+                fields.get("derived:sched1_rate8").map(String::as_str),
+                Some("3"),
+                "2551Q continued row 8 rate must match paper row 1 ('3')"
+            );
+            assert_eq!(
+                fields.get("derived:sched1_rate7").map(String::as_str),
+                Some("7"),
+                "2551Q continued row 7 (PT040 7%) rate must be '7' without float noise"
+            );
+        }
         let html = fill("2551q-2018", &fields);
         check_invariant(&InvariantCase {
             label: &format!("2551Q Schedule 1 ({count} rows)"),

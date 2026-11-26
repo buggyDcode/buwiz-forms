@@ -31,8 +31,8 @@ use serde_json::Value;
 use crate::band_continuation::{
     clone_cell_div, escape_html, extract_attr, extract_style_pt, find_matching_div_end, fmt_pt,
     match_schedule_to_bands, parse_formgen_bands, push_band_rect, replace_inner_text,
-    shift_top_in_tag, strip_html_tags, strip_templates, BandRect, CellJoinKind, FormgenBand,
-    MatchedBand,
+    shift_top_in_tag, strip_html_tags, strip_templates, BandRect, CellJoinKind, DateJoinPart,
+    FormgenBand, MatchedBand,
 };
 use crate::continuation::{OverflowReport, OverflowSchedule};
 use crate::frozen_html;
@@ -1646,6 +1646,7 @@ fn render_extra_rows_for_band(
     let mut extra_joins: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut extra_money_joins: Vec<(String, String, Option<String>)> = Vec::new();
     let mut extra_peso_joins: Vec<(String, String)> = Vec::new();
+    let mut extra_date_joins: Vec<(String, String, Option<String>, String)> = Vec::new();
     let mut batch_aliases: BTreeMap<String, String> = BTreeMap::new();
     let mut row_cell_ids: Vec<Vec<String>> = Vec::with_capacity(sched.rows.len());
 
@@ -1809,9 +1810,14 @@ fn render_extra_rows_for_band(
 
         // Clone cells relative to `trow_y0` (top = orig_top - trow_y0).
         let mut ids_for_row = Vec::new();
-        // Track money pairs `(peso_id, cents_id_opt, orig_writer_key)` per `col_idx` in this row.
+        // Track money pairs `(peso_id, cents_id_opt, orig_writer_key)` and
+        // date parts `(mm_id, dd_id, yyyy_id, orig_writer_key)` per `col_idx` in this row.
         let mut money_pairs: BTreeMap<usize, (Option<String>, Option<String>, String)> =
             BTreeMap::new();
+        let mut date_parts: BTreeMap<
+            usize,
+            (Option<String>, Option<String>, Option<String>, String),
+        > = BTreeMap::new();
 
         for bc in &trow.cells {
             let Some(orig_c) = raw_cells_by_id.get(bc.id.as_str()) else {
@@ -1872,6 +1878,20 @@ fn render_extra_rows_for_band(
                             }
                         }
                     }
+                    CellJoinKind::DatePart {
+                        col_idx,
+                        orig_writer_key,
+                        part,
+                    } => {
+                        let entry = date_parts
+                            .entry(*col_idx)
+                            .or_insert_with(|| (None, None, None, orig_writer_key.clone()));
+                        match part {
+                            DateJoinPart::Mm => entry.0 = Some(new_id),
+                            DateJoinPart::Dd => entry.1 = Some(new_id),
+                            DateJoinPart::Yyyy => entry.2 = Some(new_id),
+                        }
+                    }
                     CellJoinKind::Ordinal { orig_writer_key } => {
                         let syn_key = format!("__bf_o_{r_idx}_{new_id}:{orig_writer_key}");
                         batch_values.insert(syn_key.clone(), ov_row.row_number.to_string());
@@ -1887,6 +1907,17 @@ fn render_extra_rows_for_band(
                         let syn_key = format!("__bf_m_{r_idx}_{col_idx}:{orig_writer_key}");
                         batch_values.insert(syn_key.clone(), val.clone());
                         extra_money_joins.push((syn_key, peso_id, cents_opt));
+                    }
+                }
+            }
+        }
+        for (col_idx, (mm_opt, dd_opt, yyyy_opt, orig_writer_key)) in date_parts {
+            if let (Some(mm_id), Some(yyyy_id)) = (mm_opt, yyyy_opt) {
+                if let Some(val) = ov_row.values.get(col_idx) {
+                    if !val.trim().is_empty() {
+                        let syn_key = format!("__bf_d_{r_idx}_{col_idx}:{orig_writer_key}");
+                        batch_values.insert(syn_key.clone(), val.clone());
+                        extra_date_joins.push((syn_key, mm_id, dd_opt, yyyy_id));
                     }
                 }
             }
@@ -1910,6 +1941,7 @@ fn render_extra_rows_for_band(
         &extra_joins,
         &extra_money_joins,
         &extra_peso_joins,
+        &extra_date_joins,
         &batch_aliases,
     )?;
 
