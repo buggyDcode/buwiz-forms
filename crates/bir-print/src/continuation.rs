@@ -2472,6 +2472,11 @@ fn extract_return_period(fields: &BTreeMap<String, String>) -> String {
     {
         return format_mmddyyyy(d);
     }
+    if let Some(d) = first_matching_field(fields, &["txtTransactionDate"]) {
+        if !d.is_empty() {
+            return format_mmddyyyy(&d);
+        }
+    }
     let m = first_matching_field(
         fields,
         &[
@@ -2480,6 +2485,8 @@ fn extract_return_period(fields: &BTreeMap<String, String>) -> String {
             "DateWithholdingMonth",
             "txtPg1I1Month",
             "txtPg1I2MonthEnded",
+            "ddlPg1I2Date",
+            "rbYrEndMonth",
             "txtI1YearEndMonth",
             "txtMonth",
             "rtnMonth",
@@ -2505,6 +2512,8 @@ fn extract_return_period(fields: &BTreeMap<String, String>) -> String {
             "DateWithholdingYear",
             "txtPg1I1Year",
             "txtPg1I2YearEnded",
+            "txtPg1I2YearEnd",
+            "txtYrEndYear",
             "txtPg1I1YearEnded",
             "txtI1YearEndYear",
             "txtI1Year",

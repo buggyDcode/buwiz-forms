@@ -171,11 +171,23 @@ fn check_invariant(case: &InvariantCase) {
     // contiguous strings a reader sees.
     for (idx, frag) in frags.iter().enumerate().skip(1) {
         let lower = frag.to_ascii_lowercase();
-        let is_cont = frag.starts_with(" page-continuation") || lower.contains("(continued)");
+        let is_fallback_cont = frag.starts_with("continuation");
+        let is_cont = is_fallback_cont || lower.contains("(continued)");
         if !is_cont {
             continue;
         }
+        if is_fallback_cont {
+            let open_tag = &frag[..frag.find('>').unwrap_or(0)];
+            assert!(
+                !open_tag.contains(";height:") && !open_tag.contains("style=\"height:"),
+                "{label} ({slug}): continuation page fragment {idx} carries fixed full-page height (spills blank page): {open_tag}"
+            );
+        }
         let rt = rendered_text(frag).to_uppercase();
+        assert!(
+            !rt.contains("RETURNPERIOD:—"),
+            "{label} ({slug}): continuation page fragment {idx} prints placeholder 'Return Period: —'"
+        );
         assert!(
             rt.contains("SANTOS"),
             "{label} ({slug}): continuation page fragment {idx} carries no taxpayer name"
@@ -721,6 +733,7 @@ fn invariant_2000ot_schedules() {
     let cap = 3usize;
     for &count in &[cap, cap + 3, cap + 40] {
         let mut d = Form2000OTDraft::new_from_profile(&profile, 2025);
+        d.transaction_date = "03/15/2025".into();
         d.properties.clear();
         d.shares.clear();
         let mut markers = Vec::new();
@@ -858,12 +871,12 @@ fn invariant_2200m_schedule1() {
         }
         for r in (cap + 1)..=count {
             let mut row = Form2200MRow::default();
-            let place = format!("MSITE-{r:02}");
-            row.description = format!("MINERAL-{r:02}");
-            row.place_of_removal = place.clone();
+            let desc = format!("MINERAL-{r:02}");
+            row.description = desc.clone();
+            row.place_of_removal = format!("MSITE-{r:02}");
             row.local_value_taxable = Some(10_000.0);
             row.local_rate = Some(4.0);
-            markers.push(place);
+            markers.push(desc);
             d.schedule.push(row);
         }
         d.recompute();
