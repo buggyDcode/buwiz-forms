@@ -808,3 +808,69 @@ test("Q1: Queue pressed twice while it settles a focused amount box runs the hos
     s?.dispose();
   }
 });
+
+test("V8: an amount still pending when a removal's Undo is pressed is stored on its own row, and Undo then says it is no longer available", async () => {
+  const K = (n: string) => "frm1601EQ:" + n;
+  const h = hooks();
+  const s = await opened(at("1601EQ", 2024, 2), h);
+  s.choose({ [K("optWithheld:Y")]: "true", [K("optCategory:P")]: "true" });
+  s.choose({ [K("txtAtcCd1")]: "WI010" });
+  s.edit(K("txtTaxBase1"), "100");
+  s.flush();
+  s.choose({ [K("txtAtcCd2")]: "WI011" });
+  s.edit(K("txtTaxBase2"), "200");
+  s.flush();
+  await s.idle();
+  // Row 1 removed: WI011's row moves up into row 1, and Undo is offered.
+  s.choose({ [K("txtAtcCd1")]: "" });
+  s.confirmRemoval();
+  await s.idle();
+  expect([s.valueOf(K("txtAtcCd1")), s.valueOf(K("txtTaxBase1"))]).toEqual(["WI011", "200.00"]);
+  // 888 typed for WI011's row, still pending, then Undo.
+  s.edit(K("txtTaxBase1"), "888");
+  s.undoLastRemoval();
+  await s.idle();
+  const rows = [1, 2].map((n) => [s.valueOf(K("txtAtcCd" + n)), s.valueOf(K("txtTaxBase" + n))]);
+  expect(rows).toEqual([["WI011", "888.00"], ["", ""]]);
+  expect(h.said.toasts.map((t) => t.message)).toContain("Undo is no longer available: you typed since.");
+  s.dispose();
+});
+
+test("V8: an amount pending in a row when a choice removes that row or a row above: Continue puts it on no other row and raises no note", async () => {
+  const s = await opened(at("1601FQ", 2024, 2));
+  s.choose({ "frm1601FQ:SpecialTax_1": "true", "frm1601FQ:SpecialTax_2": "false" });
+  await s.idle();
+  s.choose({ drpATCCode0: s.box("drpATCCode0").options().map((o) => o.value).find((v) => v) ?? "" });
+  s.edit("txtAmtIncomePay0", "1000");
+  s.flush();
+  await s.idle();
+  expect(s.valueOf("txtAmtIncomePay0")).toBe("1,000.00");
+  // 5555 typed, still pending, then No: Schedule 1's rows go (the page asks first).
+  s.edit("txtAmtIncomePay0", "5555");
+  s.choose({ "frm1601FQ:SpecialTax_2": "true", "frm1601FQ:SpecialTax_1": "false" });
+  expect(s.overlay()?.kind).toBe("removal");
+  s.confirmRemoval();
+  await s.idle();
+  expect([s.valueOf("txtAmtIncomePay0"), s.valueOf("txtAmtIncomePay1")].map((v) => v.replace(/^0\.00$/, ""))).toEqual(["", ""]);
+  expect(s.boxMessageOf("txtAmtIncomePay0") ?? "").toBe("");
+  s.dispose();
+
+  // A row above removed (1601EQ: row 1's ATC cleared), 777 pending for row 2: it stays with WI011's row as that row moves up.
+  const K = (n: string) => "frm1601EQ:" + n;
+  const e = await opened(at("1601EQ", 2024, 3));
+  e.choose({ [K("optWithheld:Y")]: "true", [K("optCategory:P")]: "true" });
+  e.choose({ [K("txtAtcCd1")]: "WI010" });
+  e.edit(K("txtTaxBase1"), "100");
+  e.flush();
+  e.choose({ [K("txtAtcCd2")]: "WI011" });
+  e.edit(K("txtTaxBase2"), "200");
+  e.flush();
+  await e.idle();
+  e.edit(K("txtTaxBase2"), "777");
+  e.choose({ [K("txtAtcCd1")]: "" });
+  e.confirmRemoval();
+  await e.idle();
+  expect([1, 2].map((n) => [e.valueOf(K("txtAtcCd" + n)), e.valueOf(K("txtTaxBase" + n))])).toEqual([["WI011", "777.00"], ["", ""]]);
+  expect(e.boxMessageOf(K("txtTaxBase1")) ?? "").toBe("");
+  e.dispose();
+});

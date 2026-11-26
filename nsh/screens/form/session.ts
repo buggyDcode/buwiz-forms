@@ -1685,11 +1685,39 @@ export class FormSession {
     let filled = false;
     if (Object.keys(edits).length || s.forget.length) {
       this.retireRemovalUndo();
+      const forget = s.forget;
       try {
         const r = this.fill(s.draft, edits);
-        if (r.removes) return this.holdRemoval(r, edits);
-        this.applyFill(r, edits);
-        filled = true;
+        // V8: typing that rides with a choice that removes rows is stored first, on its own keys, in a fill of its own; then the
+        // choice is asked about on the draft that holds it, so Continue never puts a typed amount on another row (or a removed one).
+        const chosen = s.chosenFrom || {};
+        const typed = Object.fromEntries(Object.entries(edits).filter(([k]) => !(k in chosen)));
+        const picked = Object.fromEntries(Object.entries(edits).filter(([k]) => k in chosen));
+        if (r.removes && Object.keys(typed).length && Object.keys(picked).length) {
+          s.forget = [];
+          const t = this.fill(s.draft, typed);
+          if (t.removes || Object.keys(t.rejected || {}).length) {
+            // The typing itself asks or is refused: the choice stops, its boxes show what they held, and the typing is judged alone.
+            s.chosenFrom = {};
+            for (const k of Object.keys(picked)) {
+              s.values[k] = chosen[k] ?? "";
+              this.sValue.get(k).set(this.shownText(k));
+            }
+            if (t.removes) return this.holdRemoval(t, typed);
+            this.applyFill(t, typed);
+          } else {
+            this.applyFill(t, typed);
+            s.forget = forget;
+            const c = this.fill(s.draft, picked);
+            if (c.removes) return this.holdRemoval(c, picked);
+            this.applyFill(c, picked);
+          }
+          filled = true;
+        } else if (r.removes) return this.holdRemoval(r, edits);
+        else {
+          this.applyFill(r, edits);
+          filled = true;
+        }
       } catch (e) {
         s.pending = { ...edits, ...s.pending };
         s.saveState = { state: "failed", message: errorText(e) };
@@ -1962,6 +1990,13 @@ export class FormSession {
   private undoRemoval(draft: object, state: St, undo: () => void) {
     const s = this.st;
     if (s !== state || this.removalUndo !== undo || !s.editable) return;
+    // V8: typing still pending is stored first, on its own keys. An edit retires Undo (Undo brings back a whole earlier draft, which
+    // would drop what was typed or put it on another row), so the filer is told and the rows stay as they are.
+    if (Object.keys(s.pending).length) {
+      this.flush();
+      this.retireRemovalUndo();
+      return void this.toast("Undo is no longer available: you typed since.", "triangle-alert");
+    }
     this.removalUndo = null;
     this.undoToast = null;
     // Never a draft older than the stored one (a save retires Undo; this guards the rest).
