@@ -101,9 +101,6 @@ export function refusalSentence(ctx: RefusalContext): string {
   // error is enough, so no sentence shows under it.
   const invalid = /^amount not valid\|([\s\S]*?)(\|typing)?$/.exec(raw);
   if (invalid) return invalid[2] ? "" : `${at} ${invalid[1]} is not a valid amount. Correct it or clear the box; it was not saved.`;
-  // The same text when the page was left: the draft kept the box's amount from before it.
-  const kept = /^amount kept\|([\s\S]*)$/.exec(raw);
-  if (kept) return `${at} ${kept[1]} is not a valid amount; the earlier amount was kept.`;
 
 
   // A gate: the box is shut by another answer ("Needs item 4 = Yes", the off tag).
