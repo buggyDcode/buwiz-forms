@@ -4,7 +4,7 @@
 // the selection the input reported before each edit goes to the mask so the edit is read exactly (NSH: onKeyPress comes
 // before the text changes, onSelectionChange has the selection; nsh/.nsh/types/nsh/types.d.ts InputHostProps).
 import type { InputRef, JSX, ViewRef } from "nsh";
-import { effect, signal, Text as NText, untracked, View } from "nsh";
+import { effect, platform, signal, Text as NText, untracked, View } from "nsh";
 import { Calendar, type CalendarEntry, DatePicker, Input, OtpInput, type OtpInputRef } from "nsh/base";
 import { AppButton } from "./buttons";
 import type { IconName } from "./icons";
@@ -232,6 +232,12 @@ interface MaskedProps {
   align?: "left" | "right" | "center";
 }
 
+// Windows alone loses the platform select-all when a recompute writes a box just before keyboard focus: the measured
+// end-collapse arrives 41-43 ms after focus for a write about 20 ms before it, and does not arrive at 85-110 ms.
+const WINDOWS_RESELECT_COLLAPSE_MS = 150;
+const WINDOWS_RESELECT_WRITE_MS = 300;
+const WINDOWS_RESELECT = platform.os === "windows";
+
 /**
  * A TextField whose text goes through a mask on every edit, the caret kept beside the same digit. The box always shows
  * what was reported: an edit the mask refuses is taken back out of the native box, and leaving a box the filer edited
@@ -274,6 +280,11 @@ function MaskedField(props: MaskedProps) {
   let focusValue = props.value ?? "";
   let invalidActive = false;
   let rollbackReported = false;
+  // Windows F6: an outside write into the unfocused box, followed closely by keyboard focus, can collapse select-all.
+  let outsideWriteAt = 0;
+  let armWindowsReselect = false;
+  let windowsReselectDone = false;
+  let windowsFocusAt = 0;
   // Set only through the wrapped ref the page receives; a platform Tab, click or tap never sets it.
   let programmaticFocus = false;
   // The zero text a focus is clearing, while its empty write waits one turn so same-turn input can supersede it.
@@ -304,12 +315,14 @@ function MaskedField(props: MaskedProps) {
     last = value;
     const now = untracked(text);
     if (!same(props.valueOf(now), value)) {
+      if (WINDOWS_RESELECT) outsideWriteAt = Date.now();
       writeText(props.shown(value, false));
       invalidActive = false;
       rollbackReported = false;
     }
   });
   const change = (raw: string) => {
+    armWindowsReselect = false;
     const prev = untracked(text);
     const from = editFrom;
     const typed = editTyped;
@@ -405,6 +418,18 @@ function MaskedField(props: MaskedProps) {
       onSubmit={props.field.onSubmit}
       testID={props.field.testID}
       onSelectionChange={(e) => {
+        if (WINDOWS_RESELECT && armWindowsReselect && !windowsReselectDone) {
+          const len = untracked(text).length;
+          const now = Date.now();
+          if (len > 0 && e.start === len && e.end === len && now - windowsFocusAt <= WINDOWS_RESELECT_COLLAPSE_MS) {
+            // The second and only other deliberate selection write: Windows' proven recompute collapse repair.
+            windowsReselectDone = true;
+            armWindowsReselect = false;
+            writeCaret(0, len);
+          } else if (now - windowsFocusAt > WINDOWS_RESELECT_COLLAPSE_MS) {
+            armWindowsReselect = false;
+          }
+        }
         selected = { start: e.start, end: e.end };
         props.field.onSelectionChange?.(e);
       }}
@@ -427,6 +452,11 @@ function MaskedField(props: MaskedProps) {
         invalidActive = false;
         leftUnreadable.set(null);
         zeroFocusText = undefined;
+        if (WINDOWS_RESELECT && outsideWriteAt > 0 && Date.now() - outsideWriteAt <= WINDOWS_RESELECT_WRITE_MS && !windowsReselectDone) {
+          armWindowsReselect = true;
+          windowsFocusAt = Date.now();
+        }
+        outsideWriteAt = 0;
         const before = untracked(text);
         const focusShown = props.shown(props.value ?? "", true);
         if (focusShown !== before) {
@@ -458,6 +488,8 @@ function MaskedField(props: MaskedProps) {
           clearTimeout(zeroWriteTimer);
           zeroWriteTimer = undefined;
         }
+        armWindowsReselect = false;
+        windowsReselectDone = false;
         const held = text();
         const reading = zeroFocusText && held.startsWith(zeroFocusText) ? held.slice(zeroFocusText.length) : held;
         const validBlur = !props.valid || props.valid(reading);
