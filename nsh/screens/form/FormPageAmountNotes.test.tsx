@@ -163,3 +163,46 @@ for (const typed of ["1500x", "1500,50"]) {
     await app.waitFor("text:✓ Saved", { timeout: 8000 });
   }, 30_000);
 }
+
+// 2551Q Schedule 1, row 1's Taxable Amount: a cell edited in its row's drawer.
+const CELL = "id:fp-txtATCAmt1";
+const ROW = "id:fp-row-drpATC1-0";
+const TABLE = "fp-table-drpATC1";
+
+/** The page on 2551Q (year, quarter) with Schedule 1's row 1 holding 1,234.56, its drawer open on the Taxable Amount. */
+async function scheduleCell(year: number, period: number) {
+  const app = await open(ENTRY, { ...DESKTOP, host: { params: { formCode: "2551Q", year, period, probeKey: "txtATCAmt1", openParts: [4], edits: { txtATCAmt1: "1234.56" } } } });
+  await app.waitFor("text:BIR Form 2551Q");
+  await app.waitFor(ROW, { timeout: 8000 });
+  await app.press(ROW);
+  await app.waitFor(CELL);
+  return app;
+}
+
+/** Types `text` key by key, as a filer does, so the host answers (and refuses) on the way, then Tab leaves the cell. */
+async function typeAndTab(app: Awaited<ReturnType<typeof scheduleCell>>, text: string) {
+  await app.clear(CELL);
+  for (const ch of text) {
+    await app.type(CELL, ch);
+    await app.wait(40);
+  }
+  await app.wait(400);
+  await app.keyboard.press("tab");
+  await app.wait(800);
+}
+
+for (const [period, typed, shown] of [[1, "12345678901234567890", "12,345,678,901,234,567,890.00"], [2, "1234567890123", "1,234,567,890,123.00"]] as const) {
+  test(`refused amount in a schedule cell: ${typed.length} digits, Tab: the cell shows what the return holds and the sentence names what was typed, also after focus comes back`, async () => {
+    const app = await scheduleCell(2022, period);
+    await typeAndTab(app, typed);
+    const said = `Taxable Amount: you typed ${shown}; the return holds 1,234.56.`;
+    expect(app.value(CELL)).toBe("1,234.56");
+    expect(probe(app)).toBe("1,234.56");
+    expect(app.texts().some((t) => t.startsWith(said))).toBe(true);
+    // Focus coming back to the cell (the window's or the drawer's own) does not erase the sentence.
+    await app.type(CELL, "");
+    await app.keyboard.press("tab");
+    await app.wait(400);
+    expect(app.texts().some((t) => t.startsWith(said))).toBe(true);
+  }, 40_000);
+}
