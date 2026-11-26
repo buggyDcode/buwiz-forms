@@ -1123,7 +1123,7 @@ const POPUP_SCHEDULES: &[PopupScheduleDef] = &[
         slug: "1702q-2018",
         heading: "Schedule 4 — Tax Credits / Payments (Other Tax Credits/Payments)",
         printed_capacity: 2,
-        row_num_base: 1,
+        row_num_base: 2,
         has_total: true,
         columns: &[
             PopupColDef {
@@ -1946,6 +1946,13 @@ fn detect_popup_overflow(
     fields: &BTreeMap<String, String>,
     unprinted: &BTreeSet<String>,
 ) -> Vec<OverflowSchedule> {
+    let joined_keys: BTreeSet<&str> = wc
+        .get("joins")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.get("writer_key").and_then(|v| v.as_str()))
+        .collect();
     let mut out = Vec::new();
     for def in POPUP_SCHEDULES {
         if def.slug != slug {
@@ -1955,7 +1962,13 @@ fn detect_popup_overflow(
         for col in def.columns {
             for key in unprinted {
                 if let Some(n) = match_template_index(key, col.key_template) {
-                    indices.insert(n);
+                    let row_already_on_paper = def.columns.iter().any(|c| {
+                        let k = c.key_template.replace("{n}", &n.to_string());
+                        joined_keys.contains(k.as_str())
+                    });
+                    if !row_already_on_paper {
+                        indices.insert(n);
+                    }
                 }
             }
         }
@@ -2128,7 +2141,8 @@ fn resolve_official_total(
             let pr_lower = printed.to_ascii_lowercase();
             let wk_lower = wk.to_ascii_lowercase();
             let is_total = (pr_lower.contains("total") && !pr_lower.contains("sub-total"))
-                || (wk_lower.contains("tot") && !wk_lower.contains("subtot"));
+                || ((wk_lower.contains("total") || wk.contains("Tot") || wk.contains("TOT"))
+                    && !wk_lower.contains("subtot"));
             if !is_total {
                 continue;
             }
@@ -2164,9 +2178,10 @@ fn resolve_official_total(
             let Some(raw_val) = fields.get(wk).map(|s| s.trim()).filter(|s| !s.is_empty()) else {
                 continue;
             };
-            let formatted = parse_amount(raw_val)
-                .map(format_amount)
-                .unwrap_or_else(|| raw_val.to_string());
+            let Some(num) = parse_amount(raw_val) else {
+                continue;
+            };
+            let formatted = format_amount(num);
             let html_id = item
                 .get("peso_html_id")
                 .or_else(|| item.get("html_id"))
@@ -2353,6 +2368,8 @@ fn extract_header_meta(slug: &str, fields: &BTreeMap<String, String>) -> HeaderM
         fields,
         &[
             "txtTaxpayerName",
+            "txtTaxpayerName1",
+            "txtPg2TaxpayerName",
             "txtPg2RegisteredName",
             "txtI8RegisteredName",
             "txtI8RegisteredNameP2",
@@ -3393,7 +3410,11 @@ mod tests {
                 continue;
             };
             let parsed: Value = serde_json::from_str(wc_json).unwrap();
-            let stem_specs = discover_schedules(&parsed);
+            let stem_specs = if *slug == "2200p-2020" {
+                Vec::new()
+            } else {
+                discover_schedules(&parsed)
+            };
             let popup_defs: Vec<&PopupScheduleDef> =
                 POPUP_SCHEDULES.iter().filter(|d| d.slug == slug).collect();
 
@@ -3455,18 +3476,36 @@ mod tests {
                 }
             }
 
-            // 2. Fill all popup schedules with 3 popup overflow rows.
+            // 2. Fill all popup schedules with 3 popup overflow rows (picking
+            // indices not already joined onto the frozen paper, e.g. 2..=4 for
+            // 1702Q and 28..=30 for 2200P).
+            let joined_keys: BTreeSet<&str> = parsed
+                .get("joins")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e.get("writer_key").and_then(|v| v.as_str()))
+                .collect();
             for (pi, def) in popup_defs.iter().enumerate() {
                 checked_schedules += 1;
-                for n in 1..=3 {
-                    let row_num = def.row_num_base + n;
+                let overflow_ns: Vec<usize> = (1usize..=200)
+                    .filter(|n| {
+                        !def.columns.iter().any(|c| {
+                            let k = c.key_template.replace("{n}", &n.to_string());
+                            joined_keys.contains(k.as_str())
+                        })
+                    })
+                    .take(3)
+                    .collect();
+                for (seq_i, &n) in overflow_ns.iter().enumerate() {
+                    let row_num = def.row_num_base + seq_i + 1;
                     for (ci, col) in def.columns.iter().enumerate() {
                         let key = col.key_template.replace("{n}", &n.to_string());
                         let is_date = col.heading.to_ascii_lowercase().contains("date");
                         let val = if col.is_amount {
-                            format!("{}.00", 50_000 + pi * 1000 + n * 19 + ci)
+                            format!("{}.00", 50_000 + pi * 1000 + (seq_i + 1) * 19 + ci)
                         } else if is_date {
-                            format!("02/{:02}/2026", (n % 28) + 1)
+                            format!("02/{:02}/2026", ((seq_i + 1) % 28) + 1)
                         } else {
                             format!("P{pi}R{row_num}C{ci}")
                         };

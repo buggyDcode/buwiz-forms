@@ -118,8 +118,9 @@ fn check_invariant(case: &InvariantCase) {
             .chars()
             .filter(|c| c.is_ascii_digit() || *c == '.')
             .collect();
+        let text_no_commas = text.replace(',', "");
         assert!(
-            text.contains(&digits.replace('.', "")) || text.contains(&digits),
+            text_no_commas.contains(&digits.replace('.', "")) || text_no_commas.contains(&digits),
             "{label}: printed total {} missing from the rendered pages",
             case.total_text
         );
@@ -335,11 +336,6 @@ fn invariant_1601c_schedule1() {
     });
 }
 
-/// KNOWN FAULT (found by this harness, unfixed at time of writing): 1702Q
-/// Schedule 4 rows 1-2 print twice — comb-split on the paper AND as rows of
-/// the fallback continuation table, which carries all 6 rows instead of only
-/// the overflow rows 3-6. The popup keys of paper rows count as unprinted.
-#[ignore = "1702Q double-prints paper rows 1-2 on the continuation table"]
 #[test]
 fn invariant_1702q_schedule4() {
     use bir_core::forms::form_1702q::{Form1702qDraft, Form1702qOtherCredit};
@@ -372,6 +368,18 @@ fn invariant_1702q_schedule4() {
         row_markers: &markers,
         total_text: "21,000.00",
     });
+    // Continuation page must carry only rows 3-6, numbered 3..=6 (never 1-2).
+    let frags: Vec<&str> = html.split("class=\"page page-").collect();
+    assert!(frags.len() >= 4, "1702Q at 6 rows must spawn a continuation page");
+    let cont = frags[3..].concat();
+    assert!(!cont.contains("OTHER CREDIT 01") && !cont.contains("OTHER CREDIT 02"));
+    for n in 3..=6 {
+        assert!(
+            cont.contains(&format!("<td class=\"num\">{n}</td>"))
+                || cont.contains(&format!(">{n}</td>")),
+            "1702Q continuation must number overflow row {n}"
+        );
+    }
 }
 
 #[test]
