@@ -1518,12 +1518,10 @@ fn build_single_band_continuation_page(
             }
 
             // Collect peso/cents and date-part synthetic ids per column in this row
+            type RowDatePartsEntry = (Option<String>, Option<String>, Option<String>, String);
             let mut row_money_peso: BTreeMap<usize, (String, String)> = BTreeMap::new();
             let mut row_money_cents: BTreeMap<usize, String> = BTreeMap::new();
-            let mut row_date_parts: BTreeMap<
-                usize,
-                (Option<String>, Option<String>, Option<String>, String),
-            > = BTreeMap::new();
+            let mut row_date_parts: BTreeMap<usize, RowDatePartsEntry> = BTreeMap::new();
 
             for cell in &trow.cells {
                 let Some(src_cell) = page.cells.get(&cell.id) else {

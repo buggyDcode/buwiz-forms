@@ -3738,6 +3738,7 @@ fn validate_writer_cells(html: &str, slug: &str, cells: &WriterCells) -> Result<
 /// path (`line_group_plan`, `fill_by_name_set`, `fill_money_joins`,
 /// `fill_peso_joins`, `fill_date_joins`, `split_single_character_cells`,
 /// `fill_xbox_joins`) used for official pages.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn fill_continuation_fragment(
     html: &str,
     fields: &BTreeMap<String, String>,

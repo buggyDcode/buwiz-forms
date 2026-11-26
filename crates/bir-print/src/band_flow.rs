@@ -1812,12 +1812,10 @@ fn render_extra_rows_for_band(
         let mut ids_for_row = Vec::new();
         // Track money pairs `(peso_id, cents_id_opt, orig_writer_key)` and
         // date parts `(mm_id, dd_id, yyyy_id, orig_writer_key)` per `col_idx` in this row.
+        type RowDatePartsEntry = (Option<String>, Option<String>, Option<String>, String);
         let mut money_pairs: BTreeMap<usize, (Option<String>, Option<String>, String)> =
             BTreeMap::new();
-        let mut date_parts: BTreeMap<
-            usize,
-            (Option<String>, Option<String>, Option<String>, String),
-        > = BTreeMap::new();
+        let mut date_parts: BTreeMap<usize, RowDatePartsEntry> = BTreeMap::new();
 
         for bc in &trow.cells {
             let Some(orig_c) = raw_cells_by_id.get(bc.id.as_str()) else {

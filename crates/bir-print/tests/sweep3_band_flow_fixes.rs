@@ -229,6 +229,15 @@ fn every_growable_table_prints_all_rows_once_in_order_with_continuation_headers(
             let mut row_markers: Vec<String> = Vec::new();
             let mut sum_first_amount_col = 0.0_f64;
 
+            let is_date_col = |heading: &str, stem: &str| {
+                let h = heading.to_ascii_lowercase();
+                let s = stem.to_ascii_lowercase();
+                h.contains("date")
+                    || h.contains("mm/yyyy")
+                    || h.contains("mm/dd")
+                    || s.contains("date")
+            };
+
             for r in 0..target_rows {
                 let marker = format!("INVROW{:02}", r + 1);
                 row_markers.push(marker.clone());
@@ -236,9 +245,12 @@ fn every_growable_table_prints_all_rows_once_in_order_with_continuation_headers(
                 for (ci, col) in sched.columns.iter().enumerate() {
                     let idx = col.start_idx + r;
                     let key = format!("{}{idx}{}", col.stem, col.suffix);
-                    if !col.is_amount && !placed_marker {
+                    let date_col = is_date_col(&col.heading, &col.stem);
+                    if !col.is_amount && !date_col && !placed_marker {
                         fields.insert(key, marker.clone());
                         placed_marker = true;
+                    } else if date_col {
+                        fields.insert(key, format!("{:02}/15/2025", (r % 12) + 1));
                     } else if col.is_amount {
                         let amt = 1000.0 + ((r + 1) as f64) * 10.25;
                         if ci
@@ -263,7 +275,10 @@ fn every_growable_table_prints_all_rows_once_in_order_with_continuation_headers(
             checked_tables += 1;
 
             // 1. Every held row marker (when the table has a text column) must appear exactly once, in order.
-            let has_text_col = sched.columns.iter().any(|c| !c.is_amount);
+            let has_text_col = sched
+                .columns
+                .iter()
+                .any(|c| !c.is_amount && !is_date_col(&c.heading, &c.stem));
             if has_text_col {
                 let mut prev = 0usize;
                 for (r, marker) in row_markers.iter().enumerate() {
