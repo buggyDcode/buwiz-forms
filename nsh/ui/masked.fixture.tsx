@@ -2,6 +2,7 @@
 // count of how often it reported, and a plain box to leave the others for. Tests only; nothing imports it. The readouts are
 // first so a phone-sized window shows them all.
 import { mount, signal, View } from "nsh";
+import { AppButton } from "./buttons";
 import { IntInput, MoneyInput, PercentInput, TextField, TinInput } from "./fields";
 import { Text } from "./text";
 
@@ -21,6 +22,8 @@ function App() {
   const code = signal("0123");
   const other = signal("");
   const host = signal("0.00");
+  const two = signal("2000");
+  const invalid = signal("none");
   return (
     <View class="gap-2 p-3">
       <View class="flex-row flex-wrap gap-x-3">
@@ -38,6 +41,8 @@ function App() {
         <Text variant="cap">{`Rate: ${rate() || "empty"}`}</Text>
         <Text variant="cap">{`Code: ${code() || "empty"}`}</Text>
         <Text variant="cap">{`Host: ${host() || "empty"}`}</Text>
+        <Text variant="cap">{`Two: ${two() || "empty"}`}</Text>
+        <Text variant="cap">{`Invalid: ${invalid()}`}</Text>
       </View>
       <View class="flex-row flex-wrap gap-2">
       <TextField width={100} label="Other" value={other()} onChange={(v) => other.set(v)} testID="m-other" />
@@ -68,6 +73,15 @@ function App() {
       <TinInput width={100} label="TIN" value={tin()} onChange={(v) => tin.set(v)} testID="m-tin" />
       <PercentInput width={100} label="Rate" value={rate()} onChange={(v) => rate.set(v)} testID="m-rate" />
       <IntInput width={100} label="Code" maxDigits={4} value={code()} onChange={(v) => code.set(v)} testID="m-code" />
+      <AppButton label="Set two outside" size="sm" testID="m-set-two" onPress={() => two.set("3000")} />
+      <MoneyInput
+        width={100}
+        label="Two"
+        value={two()}
+        onChange={(v) => two.set(v === "" ? "0" : v)}
+        onInvalid={(value, typing) => invalid.set(value === null ? "null" : `${value}|${typing}`)}
+        testID="m-two"
+      />
       <MoneyInput
         width={100}
         label="Host"
