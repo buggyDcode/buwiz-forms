@@ -387,9 +387,11 @@ interface St {
    * Notes under amount boxes: the box shows what the return holds, and this says what the filer typed instead: "<kind>|<held>|<typed>"
    * with kind "amount typed" (the host stored another number), "amount unreadable" (the box's text was not an amount) or "amount
    * refused" (the host refused the amount; its reason follows, "|<reason>"). `held` is what the box shows. A note holds no save; it
-   * goes when its box is focused or edited, or the amount under it moves.
+   * goes when its box is edited, its box is shut, or the amount under it moves (its row moved or was removed); focus keeps it.
    */
   amountNotes: Record<string, string>;
+  /** The note Queue last brought into view for each box: a note stops Queue once, then it stays under its box and stops it no more. */
+  notesShown: Record<string, string>;
   /** Refused keys whose refusal retyping cannot fix (shut/locked): they restore the stored value and do not hold Save or Queue. */
   unfixable: Set<string>;
   /** `dirty` as it was before the pending batch opened, so an all-unfixable batch can give it back. */
@@ -441,7 +443,7 @@ function freshState(target: FormTarget): St {
     stepFromTop: false, asks: [], askAt: new Map(), askPick: {}, askText: {}, askSavedAt: new Map(), factErrors: [],
     profileSave: {}, profileEdited: new Set(), profileAsked: new Set(), profileAskUnknown: false, guessed: new Set(), profileAskSeen: {}, profileAskMsg: {},
     askDone: new Set(), askDoneRaw: new Map(), profileChanged: [], errors: [], messages: {},
-    messageKeys: {}, messageCounts: {}, rejected: {}, amountNotes: {}, unfixable: new Set(), dirtyBatch: null, boxMessages: {}, formErrors: [], checkable: {}, electionAt: null, electionPick: null, electionSavedAt: null,
+    messageKeys: {}, messageCounts: {}, rejected: {}, amountNotes: {}, notesShown: {}, unfixable: new Set(), dirtyBatch: null, boxMessages: {}, formErrors: [], checkable: {}, electionAt: null, electionPick: null, electionSavedAt: null,
     profileRefreshed: false, dateErrors: {}, datesEdited: new Set(), pending: {}, rangeHeld: {}, forget: [], chosenFrom: {}, dirty: false,
     editSeq: 0, validateSeq: 0, checking: false, removal: null, queueWarn: null, openParts: new Set([0]), current: 0,
     touched: new Set(), showAll: false, previewOpen: false, overlay: null, saveState: { state: "idle" },
@@ -801,8 +803,10 @@ export class FormSession {
   }
 
   /** How to take the keyboard out of box k (Queue leaves a focused amount box first). */
-  registerBlur(k: string, blur: () => void) {
-    this.blurers.set(k, blur);
+  registerBlur(k: string, blur: (() => void) | null) {
+    // A box going away unregisters (null): a blur function that is gone is never called.
+    if (blur) this.blurers.set(k, blur);
+    else this.blurers.delete(k);
   }
   private blurers = new Map<string, () => void>();
   /** Queue is waiting for a focused amount box to let go. */
@@ -819,13 +823,13 @@ export class FormSession {
     this.publish();
   }
 
-  /** The notes Queue stops on: those whose part is open, so each can be shown (a folded part's note waits until it is opened). */
+  /** The notes Queue stops on: every note it has not brought into view yet, in page order (a folded part's too: Queue opens it). */
   private queueNotes(): string[] {
     const s = this.st;
-    return Object.keys(s.amountNotes).filter((k) => {
-      const id = this.keyIndex.get(k);
-      return id !== undefined && s.openParts.has(Number(id.split(":")[0]));
-    });
+    const at = (k: string) => this.rowIds.indexOf(this.keyIndex.get(k) ?? "");
+    return Object.keys(s.amountNotes)
+      .filter((k) => s.notesShown[k] !== s.amountNotes[k] && at(k) >= 0)
+      .sort((a, b) => at(a) - at(b));
   }
 
   // ---------------------------------------------------------------- open
@@ -1570,12 +1574,7 @@ export class FormSession {
   focus(k: string) {
     const s = this.st;
     s.focusKey = k;
-    // A note under the box goes once the filer is back in it.
-    if (this.anchorKey(k) in s.amountNotes) {
-      delete s.amountNotes[this.anchorKey(k)];
-      this.setErrors(s.errors);
-      this.publish();
-    }
+    // A note under the box stays when focus arrives (the filer's or the page's): only an edit of the box, a shut box or a moved row ends it.
     const here = this.keyIndex.get(this.anchorKey(k));
     if (here) this.sFocusedRow.set({ row: here, seq: ++this.revealSeq });
     if (this.endProfileEdit([...s.editing].filter((key) => this.keyIndex.get(key) !== here))) this.publish();
@@ -3484,9 +3483,12 @@ export class FormSession {
     // the session does not know what it holds, so nothing is queued and the box is left exactly as it is.
     const held = s.focusKey;
     const heldKind = held ? this.kindOf.get(held) : undefined;
-    if (held && (heldKind === "money" || heldKind === "num")) {
+    const blurHeld = held ? this.blurers.get(held) : undefined;
+    // A focused key whose box is gone (it unregistered its blur): the box ran its own leave logic as it went; Queue treats it as left.
+    if (held && (heldKind === "money" || heldKind === "num") && !blurHeld) this.blur(held);
+    else if (held && (heldKind === "money" || heldKind === "num")) {
       this.settling = true;
-      this.blurers.get(held)?.();
+      blurHeld!();
       const token = this.token;
       const started = Date.now();
       const go = () => {
@@ -3505,10 +3507,20 @@ export class FormSession {
       return void this.later(0, go);
     }
     if (s.sample) return this.saveSample(() => this.queue());
+    // A note Queue has not shown yet stops it once, wherever it is: its part opens (the others fold, as the navigator does), its row
+    // is brought into view, and the toast says the note itself, which names the item. Shown, it stops Queue no more.
+    const unshown = this.queueNotes();
+    if (unshown.length) {
+      const k = unshown[0];
+      const id = this.keyIndex.get(k)!;
+      s.notesShown[k] = s.amountNotes[k];
+      s.touched.add(id);
+      this.jumpTo(Number(id.split(":")[0]), id);
+      return this.toast(this.refusalText(k, s.amountNotes[k]), "triangle-alert");
+    }
     // B19: a refused edit is still unsaved work; Queue waits for it to be fixed or cleared. An
     // unfixable one (shut/locked) put the stored value back, so it does not hold Queue (R7).
-    // A note under an amount box (it holds no save) stops Queue the same way while its part is open.
-    if (Object.keys(s.rejected).some((k) => !s.unfixable.has(k)) || this.queueNotes().length) {
+    if (Object.keys(s.rejected).some((k) => !s.unfixable.has(k))) {
       s.showAll = true;
       this.publish();
       // R6: Queue refuses like a failed Check — the count of refused boxes and messages, not one sentence.
