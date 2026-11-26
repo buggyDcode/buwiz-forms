@@ -207,11 +207,15 @@ interface MaskedProps {
   align?: "left" | "right" | "center";
 }
 
-// Windows alone loses the platform select-all when a recompute writes a box just before keyboard focus: the measured
-// end-collapse arrives 41-43 ms after focus for a write about 20 ms before it, and does not arrive at 85-110 ms.
-const WINDOWS_RESELECT_COLLAPSE_MS = 150;
-const WINDOWS_RESELECT_WRITE_MS = 300;
-const WINDOWS_RESELECT = platform.os === "windows";
+// Windows and Linux lose the platform select-all when a recompute writes a box just before keyboard focus: the caret
+// collapses to the end after focus, so the first key is appended to the recomputed amount (old on main on both).
+// Measured: Windows, the collapse 41-43 ms after focus for a write about 20 ms before it, none at 85-110 ms; Linux, the
+// write 17-18 ms before focus and the collapse 34-35 ms after it. macOS replaces as it should and is left alone. The
+// bounds are in time because End and the arrow keys do not reach the page as key events; under heavy CPU load the gaps
+// can pass them, and then the old append is what happens (the kit's own cause is #405).
+const RESELECT_COLLAPSE_MS = 150;
+const RESELECT_WRITE_MS = 300;
+const RECOMPUTE_RESELECT = platform.os === "windows" || platform.os === "linux";
 
 /**
  * A TextField whose text goes through a mask on every edit, the caret kept beside the same digit. The box always shows
@@ -226,7 +230,7 @@ const WINDOWS_RESELECT = platform.os === "windows";
  *
  * An untouched zero number is empty text with its zero rendering as the placeholder, focused or not, so focus writes
  * nothing and the first digit starts the amount. Platform focus keeps the platform's own selection or click caret; the page's own focus() selects
- * the whole text after focus has landed. Besides that deliberate selection write, Windows has exactly one more: the narrowly
+ * the whole text after focus has landed. Besides that deliberate selection write, Windows and Linux have exactly one more: the narrowly
  * guarded recompute-collapse repair below. No other caret or text is written while the box has the keys.
  */
 function MaskedField(props: MaskedProps) {
@@ -265,7 +269,7 @@ function MaskedField(props: MaskedProps) {
   let focusValue = props.value ?? "";
   let invalidActive = false;
   let rollbackReported = false;
-  // Windows F6: an outside write into the unfocused box, followed closely by keyboard focus, can collapse select-all.
+  // F6 (Windows and Linux): an outside write into the unfocused box, followed closely by keyboard focus, can collapse select-all.
   let outsideWriteAt = 0;
   let armWindowsReselect = false;
   let windowsReselectDone = false;
@@ -312,7 +316,7 @@ function MaskedField(props: MaskedProps) {
     const now = untracked(text);
     const emptyIsZero = now === "" && zeroAmount(value);
     if (!same(props.valueOf(now), value) && !emptyIsZero) {
-      if (WINDOWS_RESELECT) outsideWriteAt = Date.now();
+      if (RECOMPUTE_RESELECT) outsideWriteAt = Date.now();
       writeText(shownUnfocused(value));
       invalidActive = false;
       rollbackReported = false;
@@ -470,15 +474,15 @@ function MaskedField(props: MaskedProps) {
       onSubmit={props.field.onSubmit}
       testID={props.field.testID}
       onSelectionChange={(e) => {
-        if (WINDOWS_RESELECT && armWindowsReselect && !windowsReselectDone) {
+        if (RECOMPUTE_RESELECT && armWindowsReselect && !windowsReselectDone) {
           const len = untracked(text).length;
           const now = Date.now();
-          if (len > 0 && e.start === len && e.end === len && now - windowsFocusAt <= WINDOWS_RESELECT_COLLAPSE_MS) {
-            // The second and only other deliberate selection write: Windows' proven recompute collapse repair.
+          if (len > 0 && e.start === len && e.end === len && now - windowsFocusAt <= RESELECT_COLLAPSE_MS) {
+            // The second and only other deliberate selection write: the measured recompute collapse repair (Windows, Linux).
             windowsReselectDone = true;
             armWindowsReselect = false;
             writeCaret(0, len);
-          } else if (now - windowsFocusAt > WINDOWS_RESELECT_COLLAPSE_MS) {
+          } else if (now - windowsFocusAt > RESELECT_COLLAPSE_MS) {
             armWindowsReselect = false;
           }
         }
@@ -506,7 +510,7 @@ function MaskedField(props: MaskedProps) {
         leftUnreadable.set(null);
         lastReportEmpty = false;
         outsideAfterEmpty = false;
-        if (WINDOWS_RESELECT && outsideWriteAt > 0 && Date.now() - outsideWriteAt <= WINDOWS_RESELECT_WRITE_MS && !windowsReselectDone) {
+        if (RECOMPUTE_RESELECT && outsideWriteAt > 0 && Date.now() - outsideWriteAt <= RESELECT_WRITE_MS && !windowsReselectDone) {
           armWindowsReselect = true;
           windowsFocusAt = Date.now();
         }
