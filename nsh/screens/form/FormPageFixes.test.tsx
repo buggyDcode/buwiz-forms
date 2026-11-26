@@ -9,6 +9,7 @@ test("F3-4 desktop: an autosave drops the frame's cached reads (the saved return
   await app.waitFor("text:BIR Form 2551Q");
   await app.waitFor("text:saved returns 0");
   await app.press("id:fp-parts-toggle");
+  await app.clear("id:fp-frm2551Qv2018:txt15");
   await app.type("id:fp-frm2551Qv2018:txt15", "100");
   await app.waitFor("text:✓ Saved", { timeout: 5000 });
   await app.waitFor("text:saved returns 1", { timeout: 3000 });
@@ -39,6 +40,34 @@ test("F3-11 desktop: Cmd+Right inside a text box stays in the box; outside one i
   await app.waitFor("text:/^Item 20 · /");
 });
 
+test("money round trip desktop: a focused zero amount is never rewritten while 15000.50 or 99999.99 is typed", async () => {
+  const box = "id:fp-frm2551Qv2018:txt15";
+  for (const [period, amount] of [[4, "15000.50"], [1, "99999.99"]] as const) {
+    const app = await open(ENTRY, {
+      ...DESKTOP,
+      host: { params: { formCode: "2551Q", year: 2025, period, probeKey: "frm2551Qv2018:txt15" } },
+    });
+    await app.waitFor("text:BIR Form 2551Q");
+    await app.press("id:fp-nav-2");
+    await app.waitFor(box);
+    expect(app.value(box)).toBe("0.00");
+    await app.type(box, ""); // focus: a zero amount becomes empty once, before the first key
+    await app.waitUntil(() => app.value(box) === "", { timeout: 3000 });
+    let expected = "";
+    for (const ch of amount) {
+      expected += ch;
+      await app.type(box, ch);
+      await app.wait(300); // let the host round trip answer between real separate keys
+      expect(app.value(box)).toBe(expected);
+    }
+    await app.submit(box);
+    await app.waitFor("text:✓ Saved", { timeout: 8000 });
+    await app.waitUntil(() => app.texts().includes(`probe ${amount === "15000.50" ? "15,000.50" : "99,999.99"}`), { timeout: 5000 });
+    expect(app.value(box)).toBe(amount === "15000.50" ? "15,000.50" : "99,999.99");
+  }
+}, 60_000);
+
+
 test("F7-1 desktop: emptying an amount box shows the host's zero, not the old amount, and the save line says Saved", async () => {
   // The amount is typed through the fixture (app.type lands beside a box's prefilled 0.00).
   const box = "id:fp-frm2551Qv2018:txt15";
@@ -50,6 +79,10 @@ test("F7-1 desktop: emptying an amount box shows the host's zero, not the old am
   expect(app.value(box)).toContain("100");
   // Select-all and Backspace: the box reports "". The old amount does not come back, the zero does.
   await app.clear(box);
+  // While the box has the keys its emptied text is never rewritten; the host-held zero returns when it is left.
+  await app.wait(300);
+  expect(app.value(box)).toBe("");
+  await app.submit(box);
   await app.waitUntil(() => app.value(box) === "0.00", { timeout: 5000 });
   await app.waitFor("text:✓ Saved", { timeout: 5000 });
   expect(app.texts().some((t) => /must be an amount/.test(t))).toBe(false);

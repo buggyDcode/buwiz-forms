@@ -296,6 +296,29 @@ for (const size of SIZES) {
     }
   });
 
+  test(`${size.name}: a focused zero is empty and, left untouched, shows its zero again without a new report`, async () => {
+    const app = await open("./masked.fixture.tsx", size.options);
+    expect(app.value("id:m-host")).toBe("0.00");
+    await app.type("id:m-host", "");
+    await app.waitUntil(() => app.value("id:m-host") === "", { timeout: 2000 });
+    await app.type("id:m-other", " ");
+    expect(app.value("id:m-host")).toBe("0.00");
+    expect(readout(app, "Host:")).toBe("Host: 0.00");
+  });
+
+  test(`${size.name}: select-all, Backspace, then 15000.50 is not rewritten by the host's zero`, async () => {
+    const app = await open("./masked.fixture.tsx", size.options);
+    await app.clear("id:m-host"); // the harness's select-all and Backspace gesture
+    await app.wait(100);
+    expect(app.value("id:m-host")).toBe("");
+    await app.type("id:m-host", "15000.50");
+    expect(app.value("id:m-host")).toBe("15000.50");
+    expect(readout(app, "Host:")).toBe("Host: 15000.50");
+    await app.type("id:m-other", " ");
+    expect(app.value("id:m-host")).toBe("15,000.50");
+    expect(readout(app, "Host:")).toBe("Host: 15000.50");
+  });
+
   test(`${size.name}: a plain paste, a third decimal and a refused key send no focused write`, async () => {
     const app = await open("./masked.fixture.tsx", size.options);
     await app.clear("id:m-amount");

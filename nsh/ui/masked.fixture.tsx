@@ -19,6 +19,7 @@ function App() {
   const rate = signal("12.5");
   const code = signal("0123");
   const other = signal("");
+  const host = signal("0.00");
   return (
     <View class="gap-2 p-3">
       <View class="flex-row flex-wrap gap-x-3">
@@ -34,6 +35,7 @@ function App() {
         <Text variant="cap">{`Tin: ${tin() || "empty"}`}</Text>
         <Text variant="cap">{`Rate: ${rate() || "empty"}`}</Text>
         <Text variant="cap">{`Code: ${code() || "empty"}`}</Text>
+        <Text variant="cap">{`Host: ${host() || "empty"}`}</Text>
       </View>
       <MoneyInput
         label="Amount"
@@ -53,6 +55,15 @@ function App() {
       <TinInput label="TIN" value={tin()} onChange={(v) => tin.set(v)} testID="m-tin" />
       <PercentInput label="Rate" value={rate()} onChange={(v) => rate.set(v)} testID="m-rate" />
       <IntInput label="Code" maxDigits={4} value={code()} onChange={(v) => code.set(v)} testID="m-code" />
+      <MoneyInput
+        label="Host"
+        value={host()}
+        onChange={(v) => {
+          // A form that cannot hold a blank amount answers "" with its stored zero, as the host does.
+          host.set(v === "" ? "0.00" : v);
+        }}
+        testID="m-host"
+      />
       <TextField label="Other" value={other()} onChange={(v) => other.set(v)} testID="m-other" />
     </View>
   );

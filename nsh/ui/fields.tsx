@@ -250,6 +250,8 @@ function MaskedField(props: MaskedProps) {
   let clickUntil = 0;
   // The page's focus() was called: the box is selected whole, there is no click to wait for.
   let byFocus = false;
+  // A value that arrives while the box has the keys: applied on blur only when the filer made no edit of their own.
+  let outsideValue: string | undefined;
   // The one focus rewrite of a no-live-format box: the selection that arrives with the click is mapped from its old laid-out text.
   let focusMap: { from: string; to: string } | undefined;
   let focusCaret: number | undefined;
@@ -293,15 +295,13 @@ function MaskedField(props: MaskedProps) {
   effect(() => {
     const value = props.value ?? "";
     last = value;
-    const now = untracked(text);
-    if (!same(props.valueOf(now), value)) {
-      // The filer emptied this box, and an amount comes back in it (a form that cannot hold a blank amount shows the draft's
-      // again): selected whole, so the digits typed next replace it instead of being appended to it.
-      const refilled = props.numeric && now === "" && edited && untracked(focused);
-      const shown = props.shown(value, untracked(focused));
-      writeText(shown);
-      if (refilled && shown !== "") writeCaret(0, shown.length);
+    // Focused text is never rewritten. An outside value is held for blur until the filer's own edit supersedes it.
+    if (untracked(focused)) {
+      outsideValue = value;
+      return;
     }
+    const now = untracked(text);
+    if (!same(props.valueOf(now), value)) writeText(props.shown(value, false));
   });
   const change = (raw: string) => {
     const prev = untracked(text);
@@ -431,6 +431,8 @@ function MaskedField(props: MaskedProps) {
         }
       }}
       onBlur={() => {
+        if (!edited && outsideValue !== undefined) writeText(props.shown(outsideValue, false));
+        outsideValue = undefined;
         focused.set(false);
         clickUntil = 0;
         focusMap = undefined;
@@ -438,7 +440,7 @@ function MaskedField(props: MaskedProps) {
         byFocus = false;
         editFrom = undefined;
         editTyped = false;
-        const laidOut = props.shown(props.valueOf(text()), false);
+        const laidOut = edited ? props.shown(props.valueOf(text()), false) : props.shown(props.value ?? "", false);
         const shown = edited && props.settle ? props.settle(laidOut) : laidOut;
         edited = false;
         if (shown !== text()) writeText(shown);

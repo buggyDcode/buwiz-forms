@@ -49,6 +49,7 @@ test("phone: open, Check shows the to-dos on the pill, step to one, type, autosa
   await app.waitFor("id:fp-section-2", { timeout: 15_000 });
   await app.press("id:fp-section-2");
   await app.wait(800);
+  await app.clear("id:fp-frm2551Qv2018:txt15");
   await app.type("id:fp-frm2551Qv2018:txt15", "100");
   await app.waitFor("text:✓ Saved", { timeout: 5000 });
 });

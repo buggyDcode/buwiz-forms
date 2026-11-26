@@ -26,6 +26,8 @@ interface Params {
   compact?: boolean;
   /** Parts to open once the page opened (the rest stay folded, as a fresh return leaves them); "all" opens every part. */
   openParts?: number[] | "all";
+  /** A form key whose host-held value the fixture republishes as `probe <value>`. */
+  probeKey?: string;
 }
 
 async function seedParity(tin: string) {
@@ -41,6 +43,7 @@ async function seedParity(tin: string) {
 
 const toasts = signal<string[]>([]);
 const sessionFields = signal("");
+const probeValue = signal("");
 let count = 0;
 
 function Fixture() {
@@ -75,6 +78,7 @@ function Fixture() {
               }
               for (const [k, v] of Object.entries(p.edits || {})) s.edit(k, v);
               if (p.stepRow) s.jumpTo(Number(p.stepRow.split(":")[0]), p.stepRow);
+              if (p.probeKey) setInterval(() => probeValue.set(s.valueOf(p.probeKey!) || ""), 100);
             })
           }
         />
@@ -82,6 +86,7 @@ function Fixture() {
       <View testID="fx-toasts" class="absolute top-0 left-0" style={{ pointerEvents: "none", opacity: 0 }}>
         <Text>{`saved returns ${store.savedReturns().length}`}</Text>
         <Text testID="fx-session-fields">{`session fields ${sessionFields()}`}</Text>
+        <Text>{`probe ${probeValue()}`}</Text>
         <Each of={toasts()}>{(t) => <Text>{t()}</Text>}</Each>
       </View>
     </View>

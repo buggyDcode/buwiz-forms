@@ -507,7 +507,9 @@ export function formatMoney(text: string, whole = false, round = true): string {
  */
 export function shownMoney(value: string, focused: boolean, whole = false): string {
   if (!isPlainAmount(value)) return String(value ?? "");
-  return focused ? moneyPlain(value) : formatMoney(value, whole, false);
+  if (!focused) return formatMoney(value, whole, false);
+  const plain = moneyPlain(value);
+  return isZeroAmount(plain) ? "" : plain;
 }
 
 // ---------------------------------------------------------------- percent and integers
