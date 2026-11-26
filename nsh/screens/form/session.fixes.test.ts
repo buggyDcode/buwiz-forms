@@ -1,6 +1,7 @@
 // The F3 fixes of the wave 2 review, each through the real door (scratch database, the demo taxpayer Juana Santos).
 // Tests in this file share one database, in order; each uses its own form or period.
 import { expect, test } from "nsh/test";
+import { bir } from "../../bir";
 import { DEMO, createDemoTaxpayer, warmForms } from "../../bir/testing";
 import { radioProps } from "./rows";
 import { emptyCell } from "./schema";
@@ -335,4 +336,32 @@ test("B14: a boxed birth date shows the long month and asks once to save to the 
   expect(s.shownOf(box)).toBe("August 17, 1988");
   expect(s.overlay()?.kind).toBe("profile-ask");
   s.dispose();
+});
+
+test("money safety net: a host-stored amount different from the shown amount is named and never reported saved", async () => {
+  const key = "frm2551Qv2018:txt15";
+  const original = bir.screen_form_fill;
+  bir.screen_form_fill = ((...args: Parameters<typeof original>): ReturnType<typeof original> => {
+    const r = original(...args);
+    if (args[2][key] === "100") {
+      // The host fault the net exists for: the fill answers as though it stored 99.00 for a shown 100.00.
+      (r.draft as { creditable_tax_withheld?: number }).creditable_tax_withheld = 99;
+      r.values[key] = "99.00";
+    }
+    return r;
+  }) as typeof original;
+  let reported = 0;
+  let s: FormSession | undefined;
+  try {
+    s = await opened(at("2551Q", 2025, 4), { onSaved: () => reported++ });
+    s.edit(key, "100");
+    await s.idle();
+    s.saveNow();
+    expect(s.boxMessageOf(key)).toBe("Item 15: the box shows 100.00, but the draft stored 99.00. Correct this amount; it was not saved.");
+    expect(reported).toBe(0);
+    expect(s.saveState().state).toBe("unsaved");
+  } finally {
+    bir.screen_form_fill = original;
+    s?.dispose();
+  }
 });
