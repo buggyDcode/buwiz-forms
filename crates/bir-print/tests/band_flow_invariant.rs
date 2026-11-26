@@ -136,22 +136,34 @@ fn check_invariant(case: &InvariantCase) {
             condensed.len()
         );
     }
-    // Continuation fragments (any page after the form's own first flow page
-    // that the engine spawned) must carry TIN and name. The TIN prints either
-    // as the dashed string or as comb digits in inputs; the name prints in
-    // uppercase. We require both somewhere past the first page fragment.
-    if frags.len() > 2 {
-        let continuation: String = frags[2..].concat();
-        let up = continuation.to_uppercase();
+    // Continuation fragments (any spawned continuation page: band-flow
+    // "continued" page or fallback `page-continuation` sheet) must EACH carry
+    // the filer's TIN and taxpayer name and a page number. Check on
+    // `rendered_text(frag)` so comb-split names and TINs (like 1601C p2c5/p2c6)
+    // are read as the contiguous strings a reader sees.
+    for (idx, frag) in frags.iter().enumerate().skip(1) {
+        let lower = frag.to_ascii_lowercase();
+        let is_cont = lower.contains("page-continuation")
+            || lower.contains("continued")
+            || lower.contains("additional sheet");
+        if !is_cont {
+            continue;
+        }
+        let rt = rendered_text(frag).to_uppercase();
         assert!(
-            up.contains("SANTOS"),
-            "{label}: continuation pages carry no taxpayer name"
+            rt.contains("SANTOS"),
+            "{label}: continuation page fragment {idx} carries no taxpayer name"
         );
-        let has_tin = continuation.contains("000-123-453")
-            || (continuation.contains("000")
-                && continuation.contains("123")
-                && continuation.contains("453"));
-        assert!(has_tin, "{label}: continuation pages carry no TIN");
+        let has_tin = rt.contains("000-123-453") || rt.contains("000123453");
+        assert!(
+            has_tin,
+            "{label}: continuation page fragment {idx} carries no TIN"
+        );
+        let has_page_num = rt.contains("PAGE");
+        assert!(
+            has_page_num,
+            "{label}: continuation page fragment {idx} carries no page number"
+        );
     }
 }
 
@@ -293,47 +305,55 @@ fn invariant_2200p_schedule1() {
     }
 }
 
-/// KNOWN FAULT: 1601C's continuation pages carry no taxpayer name — the
-/// overflow does not pass through the identity-strip repetition path.
-#[ignore = "1601C continuation pages lack the taxpayer name"]
 #[test]
 fn invariant_1601c_schedule1() {
     use bir_core::forms::form_1601c::{Form1601CDraft, Form1601CSchedule1Row};
     let profile = demo_profile();
-    let mut d = Form1601CDraft::new_from_profile(&profile, 2025, 1);
-    d.schedule_1.clear();
-    let mut markers = Vec::new();
-    for i in 1..=10usize {
-        markers.push(format!("BDO{i:02}"));
-        let mut row = Form1601CSchedule1Row {
-            previous_month: format!("{i:02}/2024"),
-            date_paid: format!("{i:02}/10/2024"),
-            drawee_bank_code_or_agency: format!("BDO{i:02}"),
-            payment_number: format!("OR{i:04}"),
-            tax_paid: 1_000.0,
-            should_be_tax_due: 1_500.0,
-            adjustment: 500.0,
-        };
-        row.recompute();
-        d.schedule_1.push(row);
+    for &count in &[10usize, 43usize] {
+        let mut d = Form1601CDraft::new_from_profile(&profile, 2025, 1);
+        d.schedule_1.clear();
+        let mut markers = Vec::new();
+        for i in 1..=count {
+            markers.push(format!("BDO{i:02}"));
+            let mut row = Form1601CSchedule1Row {
+                previous_month: format!("{:02}/2024", ((i - 1) % 12) + 1),
+                date_paid: format!("{:02}/10/2024", ((i - 1) % 12) + 1),
+                drawee_bank_code_or_agency: format!("BDO{i:02}"),
+                payment_number: format!("OR{i:04}"),
+                tax_paid: 1_000.0,
+                should_be_tax_due: 1_500.0,
+                adjustment: 500.0,
+            };
+            row.recompute();
+            d.schedule_1.push(row);
+        }
+        d.compute();
+        let fields = d.to_print_field_map();
+        let html = fill("1601c-2018", &fields);
+        let expected_sum = count * 500;
+        assert_eq!(
+            fields
+                .get("frm1601c:sched1:txtTotal1")
+                .map(|s| s.replace(',', "")),
+            Some(format!("{expected_sum}.00")),
+            "invariant: 1601C total must equal the sum of all {count} rows"
+        );
+        check_invariant(&InvariantCase {
+            label: "1601C Schedule 1",
+            slug: "1601c-2018",
+            html: &html,
+            row_markers: &markers,
+            total_text: &format!("{expected_sum}.00"),
+        });
+        if count == 43 {
+            let frags: Vec<&str> = html.split("class=\"page page-").collect();
+            assert!(
+                frags.len() >= 4,
+                "1601C at 43 rows must spawn a continuation page (got {} pages)",
+                frags.len() - 1
+            );
+        }
     }
-    d.compute();
-    let fields = d.to_print_field_map();
-    let html = fill("1601c-2018", &fields);
-    assert_eq!(
-        fields
-            .get("frm1601c:sched1:txtTotal1")
-            .map(|s| s.replace(',', "")),
-        Some("5000.00".to_string()),
-        "invariant: 1601C total must equal the sum of all 10 rows"
-    );
-    check_invariant(&InvariantCase {
-        label: "1601C Schedule 1",
-        slug: "1601c-2018",
-        html: &html,
-        row_markers: &markers,
-        total_text: "5,000.00",
-    });
 }
 
 #[test]
