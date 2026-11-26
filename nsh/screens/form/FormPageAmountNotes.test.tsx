@@ -50,12 +50,11 @@ test("the note survives folding and reopening the part, still true: the box show
   await app.waitFor(BOX);
   expect(app.value(BOX)).toBe(stored);
   expect(app.texts().some((t) => t.includes(`the return holds ${stored}`))).toBe(true);
-  // Back in the box, the note goes; leaving again without a change raises none.
+  // Back in the box and out again with no edit: the note stays (focus never ends a note; an edit does).
   await app.type(BOX, "");
-  await app.waitUntil(() => !app.texts().some((t) => t.includes("you typed")), { timeout: 3000 });
   await app.submit(BOX);
   await app.wait(600);
-  expect(app.texts().some((t) => t.includes("you typed"))).toBe(false);
+  expect(app.texts().some((t) => t.includes("you typed"))).toBe(true);
 }, 30_000);
 
 test("valid edits made after a note are saved with it: the save line says Saved and the return holds the other box's amount", async () => {
@@ -79,29 +78,68 @@ test("valid edits made after a note are saved with it: the save line says Saved 
   expect(app.value(BOX)).toBe("0.00");
 }, 40_000);
 
-test("Queue with the amount box still focused leaves it first and stops on its note; once the box is focused again Queue goes on", async () => {
+/** The host's queue check spoke (the demo taxpayer's profile is incomplete): Queue went past the page's own stops. Never a send here. */
+const checked = (app: Awaited<ReturnType<typeof page>>) => app.texts().some((x) => /is not set in the tax profile/.test(x));
+
+test("Queue with the amount box still focused leaves it first and stops once on its note, naming it; the next press goes on", async () => {
   const app = await page(2025, 4);
-  // The refused-edit path's toast ("6 items need attention."): Queue stopped on the page, before the host's queue check.
-  const stops = () => app.texts().filter((x) => /^\d+ items? needs? attention\.$/.test(x)).length;
   await app.clear(BOX);
   await app.type(BOX, "12345678901234567890");
   // No leaving step: Queue itself takes the keys out of the box.
   await app.press("id:fp-queue");
   await app.waitUntil(() => app.texts().some((t) => t.includes("you typed")), { timeout: 5000 });
-  await app.waitUntil(() => stops() === 1, { timeout: 3000 });
-  expect(app.value(BOX)).toBe(probe(app));
+  await app.wait(400);
+  // The stored amount (0.00; shown empty if the page's reveal put the keys back in the box, as a zero amount is while focused).
+  expect([probe(app), ""]).toContain(app.value(BOX) ?? "");
+  // The toast says the note (it names Item 15), on top of the note under the box.
+  expect(app.texts().filter((t) => t.startsWith("Item 15: you typed")).length).toBeGreaterThanOrEqual(2);
+  expect(checked(app)).toBe(false);
   expect(app.shows("text:Queue this return?")).toBe(false);
-  // The filer looks at the box: the note goes, and Queue goes on to the host's checks (never to a send here): no new stop toast,
-  // a new toast from the host's check instead.
-  await app.type(BOX, "");
-  await app.submit(BOX);
-  await app.waitUntil(() => !app.texts().some((t) => t.includes("you typed")), { timeout: 3000 });
-  const before = app.texts().length;
+  // Shown once: the next press goes on to the host's checks, the note still under its box.
   await app.press("id:fp-queue");
-  await app.wait(1200);
-  expect(stops()).toBe(1);
-  expect(app.texts().length).toBeGreaterThan(before);
+  await app.waitUntil(() => checked(app), { timeout: 5000 });
+  expect(app.texts().some((t) => t.startsWith("Item 15: you typed"))).toBe(true);
   expect(app.shows("text:Queue this return?")).toBe(false);
+}, 40_000);
+
+test("a note in a folded part stops Queue once: Queue opens the part, brings the box into view and names the item", async () => {
+  const app = await page(2024, 4);
+  await app.clear(BOX);
+  await app.type(BOX, "12345678901234567890");
+  await app.submit(BOX);
+  await app.waitUntil(() => app.texts().some((t) => t.startsWith("Item 15: you typed")), { timeout: 8000 });
+  await app.press("id:fp-part-2-toggle");
+  await app.waitUntil(() => !app.shows(BOX), { timeout: 3000 });
+  await app.press("id:fp-queue");
+  await app.waitFor(BOX, { timeout: 5000 });
+  await app.wait(400);
+  expect(app.texts().filter((t) => t.startsWith("Item 15: you typed")).length).toBeGreaterThanOrEqual(2);
+  expect(checked(app)).toBe(false);
+  await app.press("id:fp-queue");
+  await app.waitUntil(() => checked(app), { timeout: 5000 });
+}, 40_000);
+
+// A box that goes away while it has the keys (its part folds) runs its leave logic from its cleanup and unregisters its blur: the money
+// box's side of note rule 4, not in this tree yet. Until then the session still holds the box as focused, Queue's settle waits on a
+// blur that never comes and stops with "Finish the amount in Item 15 first." Turn BOX_LEAVES_ON_UNMOUNT on once it lands.
+const BOX_LEAVES_ON_UNMOUNT = false;
+
+(BOX_LEAVES_ON_UNMOUNT ? test : test.skip)("a note raised as the navigator folds its part still stops Queue: Queue opens the part, shows the box and names the item", async () => {
+  const app = await page(2024, 3);
+  await app.clear(BOX);
+  await app.type(BOX, "12345678901234567890");
+  // Another part in the navigator: the box is left as its part folds.
+  await app.press("id:fp-nav-1");
+  await app.waitUntil(() => !app.shows(BOX), { timeout: 3000 });
+  await app.wait(400);
+  await app.press("id:fp-queue");
+  await app.waitFor(BOX, { timeout: 5000 });
+  await app.wait(400);
+  expect(app.texts().filter((t) => t.startsWith("Item 15: you typed")).length).toBeGreaterThanOrEqual(2);
+  expect([probe(app), ""]).toContain(app.value(BOX) ?? "");
+  expect(checked(app)).toBe(false);
+  await app.press("id:fp-queue");
+  await app.waitUntil(() => checked(app), { timeout: 5000 });
 }, 40_000);
 
 // Unreadable text: on leaving, the money box puts the return's amount back and calls onLeftUnreadable; the session draws the note.

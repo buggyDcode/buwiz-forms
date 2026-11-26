@@ -401,13 +401,13 @@ test("money note: an amount the host stored as another number shows as stored, w
     expect(s.saveState().state).toBe("saved");
     expect(await s.flushNow()).toBe(true);
     expect(s.boxMessageOf(key)).toBe(note);
-    // Back in the box, the note goes; it does not come back by itself.
+    // Back in the box and out again with no edit, the note stays (focus never ends a note).
     s.focus(key);
-    expect(s.boxMessageOf(key) ?? "").toBe("");
+    expect(s.boxMessageOf(key)).toBe(note);
     s.blur(key);
     await s.idle();
-    expect(s.boxMessageOf(key) ?? "").toBe("");
-    // A new edit the host stores as typed raises none; one it stores otherwise raises it again, and an edit takes it away.
+    expect(s.boxMessageOf(key)).toBe(note);
+    // An edit takes it away; one the host stores otherwise raises it again; one stored as typed raises none.
     s.edit(key, "100");
     s.blur(key);
     await s.idle();
@@ -628,16 +628,15 @@ test("queue settles the box: with an amount box focused, Queue leaves it first (
     expect(s.boxMessageOf(key)).toBe("Item 15: you typed 100.00; the return holds 99.00.");
     expect(checks.count).toBe(0);
     expect(s.overlay()?.kind ?? "").not.toBe("queue-confirm");
-    // A second press while the note shows stops the same way.
-    s.queue();
-    await s.idle();
-    expect(checks.count).toBe(0);
-    // Back in the box the note goes, and Queue goes on to the host's check.
-    s.focus(key);
-    s.blur(key);
+    // Queue showed it (Part II open, its row in view, the toast says it): a second press goes on to the host's check, the note still
+    // under its box.
+    expect(s.part(2)().open).toBe(true);
+    expect(s.stepAt()).toBe(s.itemIdForKey(key));
+    expect(h.said.toasts.map((t) => t.message)).toContain("Item 15: you typed 100.00; the return holds 99.00.");
     s.queue();
     await s.idle();
     expect(checks.count).toBeGreaterThan(0);
+    expect(s.boxMessageOf(key)).toBe("Item 15: you typed 100.00; the return holds 99.00.");
   } finally {
     restore();
     checks.restore();
@@ -645,28 +644,40 @@ test("queue settles the box: with an amount box focused, Queue leaves it first (
   }
 });
 
-test("queue settles the box: a box that never reports its blur is left by Queue itself after a moment", async () => {
+test("Q2: a box that never reports its blur stops Queue: nothing is checked or queued, the box is left as it is, and the filer is told once", async () => {
   const key = "frm2551Qv2018:txt15";
-  const restore = hostFault(key, "100", "99.00");
+  const told = "Finish the amount in Item 15 first.";
   const checks = countQueueChecks();
+  const h = hooks();
   let s: FormSession | undefined;
   try {
-    s = await opened(at("2551Q", 2021, 4));
+    s = await opened(at("2551Q", 2021, 4), h);
     s.jumpTo(2);
+    // A box that is there (its blur registered) but never reports that it let go.
+    s.registerBlur(key, () => {});
     s.focus(key);
     s.edit(key, "100");
     s.queue();
     await s.idle();
-    expect(s.boxMessageOf(key)).toBe("Item 15: you typed 100.00; the return holds 99.00.");
     expect(checks.count).toBe(0);
+    expect(h.said.toasts.filter((t) => t.message === told).length).toBe(1);
+    // The session did not take the keys out of the box itself: it still has them as far as the session knows.
+    expect(s.focusedPart()).toBe(2);
+    expect(s.overlay()?.kind ?? "").not.toBe("queue-confirm");
+    // The box really was left: a later Queue goes on to the host's check.
+    s.blur(key);
+    await s.idle();
+    s.queue();
+    await s.idle();
+    expect(checks.count).toBeGreaterThan(0);
+    expect(h.said.toasts.filter((t) => t.message === told).length).toBe(1);
   } finally {
-    restore();
     checks.restore();
     s?.dispose();
   }
 });
 
-test("unreadable note: the box's report of text that is not an amount shows under it, stops Queue on an open part only, and stops nothing else", async () => {
+test("unreadable note: the box's report of text that is not an amount shows under it, stops Queue once (a folded part's too, opened), and stops nothing else", async () => {
   const key = "frm2551Qv2018:txt15";
   const sentence = "Item 15: 1500x is not an amount. The box kept 1,000.00.";
   const checks = countQueueChecks();
@@ -682,28 +693,30 @@ test("unreadable note: the box's report of text that is not an amount shows unde
     s.leftUnreadable(key, "1500x", "1,000.00");
     expect(s.boxMessageOf(key)).toBe(sentence);
     expect(s.isDirty()).toBe(false);
-    // Queue stops on it, like any message under a box.
-    s.queue();
-    await s.idle();
-    expect(checks.count).toBe(0);
     // Save and leaving go through.
     const before = saves.count;
     s.edit("frm2551Qv2018:txt17", "5");
     expect(await s.flushNow()).toBe(true);
     expect(saves.count).toBeGreaterThan(before);
     expect(s.boxMessageOf(key)).toBe(sentence);
-    // Its part folded: the note is not shown, so Queue does not count it (it shows again when the part opens).
+    // Its part folded: Queue still stops on it, opens the part, brings the row into view and says the sentence.
     s.togglePart(2);
+    expect(s.part(2)().open).toBe(false);
+    s.queue();
+    await s.idle();
+    expect(checks.count).toBe(0);
+    expect(s.part(2)().open).toBe(true);
+    expect(s.stepAt()).toBe(s.itemIdForKey(key));
+    expect(h.said.toasts.map((t) => t.message)).toContain(sentence);
+    // Shown once: the next press goes on; the note stays under its box, through a remount and a focus.
     s.queue();
     await s.idle();
     expect(checks.count).toBeGreaterThan(0);
-    s.togglePart(2);
-    expect(s.boxMessageOf(key)).toBe(sentence);
-    // A box drawn again (a remount registers its focus again) keeps the note: it is still true.
     s.registerFocus(key, () => {});
-    expect(s.boxMessageOf(key)).toBe(sentence);
-    // Focused, it goes.
     s.focus(key);
+    expect(s.boxMessageOf(key)).toBe(sentence);
+    // An edit of the box ends it.
+    s.edit(key, "1000");
     expect(s.boxMessageOf(key) ?? "").toBe("");
   } finally {
     checks.restore();
@@ -764,5 +777,163 @@ test("money note: leaving with a note and other valid edits saves them all; a se
     restore();
     s?.dispose();
     back?.dispose();
+  }
+});
+
+test("Q1: Queue pressed twice while it settles a focused amount box runs the host's queue check at most once, after the box was left", async () => {
+  const key = "frm2551Qv2018:txt17";
+  const checks = countQueueChecks();
+  let leftAt = -1;
+  const check = bir.screen_form_queue_check;
+  const door = bir as { screen_form_queue_check: typeof check };
+  let s: FormSession | undefined;
+  try {
+    s = await opened(at("2551Q", 2020, 1));
+    s.jumpTo(2);
+    let checkedAfterLeaving = true;
+    const counted = door.screen_form_queue_check;
+    door.screen_form_queue_check = ((...args: Parameters<typeof check>): ReturnType<typeof check> => {
+      if (leftAt < 0) checkedAfterLeaving = false;
+      return counted(...args);
+    }) as typeof check;
+    s.registerBlur(key, () => void setTimeout(() => ((leftAt = Date.now()), s!.blur(key)), 60));
+    s.focus(key);
+    s.edit(key, "5");
+    s.queue();
+    s.queue();
+    await s.idle();
+    expect(checks.count).toBeLessThanOrEqual(1);
+    expect(checkedAfterLeaving).toBe(true);
+    expect(leftAt).toBeGreaterThan(0);
+  } finally {
+    door.screen_form_queue_check = check;
+    checks.restore();
+    s?.dispose();
+  }
+});
+
+test("V8: an amount still pending when a removal's Undo is pressed is stored on its own row, and Undo then says it is no longer available", async () => {
+  const K = (n: string) => "frm1601EQ:" + n;
+  const h = hooks();
+  const s = await opened(at("1601EQ", 2024, 2), h);
+  s.choose({ [K("optWithheld:Y")]: "true", [K("optCategory:P")]: "true" });
+  s.choose({ [K("txtAtcCd1")]: "WI010" });
+  s.edit(K("txtTaxBase1"), "100");
+  s.flush();
+  s.choose({ [K("txtAtcCd2")]: "WI011" });
+  s.edit(K("txtTaxBase2"), "200");
+  s.flush();
+  await s.idle();
+  // Row 1 removed: WI011's row moves up into row 1, and Undo is offered.
+  s.choose({ [K("txtAtcCd1")]: "" });
+  s.confirmRemoval();
+  await s.idle();
+  expect([s.valueOf(K("txtAtcCd1")), s.valueOf(K("txtTaxBase1"))]).toEqual(["WI011", "200.00"]);
+  // 888 typed for WI011's row, still pending, then Undo.
+  s.edit(K("txtTaxBase1"), "888");
+  s.undoLastRemoval();
+  await s.idle();
+  const rows = [1, 2].map((n) => [s.valueOf(K("txtAtcCd" + n)), s.valueOf(K("txtTaxBase" + n))]);
+  expect(rows).toEqual([["WI011", "888.00"], ["", ""]]);
+  expect(h.said.toasts.map((t) => t.message)).toContain("Undo is no longer available: you typed since.");
+  s.dispose();
+});
+
+test("V8: an amount pending in a row when a choice removes that row or a row above: Continue puts it on no other row and raises no note", async () => {
+  const s = await opened(at("1601FQ", 2024, 2));
+  s.choose({ "frm1601FQ:SpecialTax_1": "true", "frm1601FQ:SpecialTax_2": "false" });
+  await s.idle();
+  s.choose({ drpATCCode0: s.box("drpATCCode0").options().map((o) => o.value).find((v) => v) ?? "" });
+  s.edit("txtAmtIncomePay0", "1000");
+  s.flush();
+  await s.idle();
+  expect(s.valueOf("txtAmtIncomePay0")).toBe("1,000.00");
+  // 5555 typed, still pending, then No: Schedule 1's rows go (the page asks first).
+  s.edit("txtAmtIncomePay0", "5555");
+  s.choose({ "frm1601FQ:SpecialTax_2": "true", "frm1601FQ:SpecialTax_1": "false" });
+  expect(s.overlay()?.kind).toBe("removal");
+  s.confirmRemoval();
+  await s.idle();
+  expect([s.valueOf("txtAmtIncomePay0"), s.valueOf("txtAmtIncomePay1")].map((v) => v.replace(/^0\.00$/, ""))).toEqual(["", ""]);
+  expect(s.boxMessageOf("txtAmtIncomePay0") ?? "").toBe("");
+  s.dispose();
+
+  // A row above removed (1601EQ: row 1's ATC cleared), 777 pending for row 2: it stays with WI011's row as that row moves up.
+  const K = (n: string) => "frm1601EQ:" + n;
+  const e = await opened(at("1601EQ", 2024, 3));
+  e.choose({ [K("optWithheld:Y")]: "true", [K("optCategory:P")]: "true" });
+  e.choose({ [K("txtAtcCd1")]: "WI010" });
+  e.edit(K("txtTaxBase1"), "100");
+  e.flush();
+  e.choose({ [K("txtAtcCd2")]: "WI011" });
+  e.edit(K("txtTaxBase2"), "200");
+  e.flush();
+  await e.idle();
+  e.edit(K("txtTaxBase2"), "777");
+  e.choose({ [K("txtAtcCd1")]: "" });
+  e.confirmRemoval();
+  await e.idle();
+  expect([1, 2].map((n) => [e.valueOf(K("txtAtcCd" + n)), e.valueOf(K("txtTaxBase" + n))])).toEqual([["WI011", "777.00"], ["", ""]]);
+  expect(e.boxMessageOf(K("txtTaxBase1")) ?? "").toBe("");
+  e.dispose();
+});
+
+test("note rules: a box that goes away unregisters its blur; Queue then treats it as left, neither waiting nor asking to finish the amount", async () => {
+  const key = "frm2551Qv2018:txt15";
+  const checks = countQueueChecks();
+  const h = hooks();
+  let s: FormSession | undefined;
+  try {
+    s = await opened(at("2551Q", 2020, 2), h);
+    s.jumpTo(2);
+    let called = 0;
+    s.registerBlur(key, () => void called++);
+    s.focus(key);
+    s.edit(key, "40");
+    // The row is recycled while the box has the keys: its cleanup unregisters.
+    s.registerBlur(key, null);
+    const started = Date.now();
+    s.queue();
+    await s.idle();
+    expect(called).toBe(0);
+    expect(Date.now() - started).toBeLessThan(450);
+    expect(h.said.toasts.some((t) => t.message.startsWith("Finish the amount"))).toBe(false);
+    expect(checks.count).toBeGreaterThan(0);
+    expect(s.valueOf(key)).toBe("40.00");
+  } finally {
+    checks.restore();
+    s?.dispose();
+  }
+});
+
+test("note rules: a note raised by a box leaving as its part folds is kept, and Queue stops on it and opens that part", async () => {
+  const key = "frm2551Qv2018:txt15";
+  const sentence = "Item 15: 1500,50 is not an amount. The box kept 100.00.";
+  const checks = countQueueChecks();
+  const h = hooks();
+  let s: FormSession | undefined;
+  try {
+    s = await opened(at("2551Q", 2019, 3), h);
+    s.jumpTo(2);
+    s.edit(key, "100");
+    s.blur(key);
+    await s.idle();
+    s.focus(key);
+    // The filer presses another part in the navigator: Part II folds while the box, unmounting, reports what it was left with.
+    s.jumpTo(1);
+    s.edit(key, "100");
+    s.leftUnreadable(key, "1500,50", "100.00");
+    s.blur(key);
+    await s.idle();
+    expect(s.part(2)().open).toBe(false);
+    expect(s.boxMessageOf(key)).toBe(sentence);
+    s.queue();
+    await s.idle();
+    expect(checks.count).toBe(0);
+    expect(s.part(2)().open).toBe(true);
+    expect(h.said.toasts.map((t) => t.message)).toContain(sentence);
+  } finally {
+    checks.restore();
+    s?.dispose();
   }
 });
