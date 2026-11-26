@@ -327,8 +327,12 @@ mod tests {
             );
             assert_eq!(
                 staticized.matches("sheet-flow").count(),
-                1,
-                "mode {mode:?}: only the CSS rule `.sheet-flow` should appear, never a `.sheet-flow` div"
+                2,
+                "mode {mode:?}: only the two CSS rules for `.sheet-flow` should appear, never a `.sheet-flow` div"
+            );
+            assert!(
+                !staticized.contains("class=\"sheet sheet-flow\""),
+                "mode {mode:?}: flowed 3-page document must never emit a `.sheet-flow` div"
             );
             assert!(staticized.contains("data-preview-label=\"Page 1 of 3\""));
             assert!(staticized.contains("data-preview-label=\"Page 2 of 3\""));
@@ -338,7 +342,9 @@ mod tests {
                 "mode {mode:?}: last sheet must suppress trailing page break so no blank spill page prints"
             );
             assert!(
-                staticized.contains("width:595.28pt;height:840.89pt;overflow:hidden"),
+                staticized.contains(
+                    "width:595.28pt;height:840.89pt;box-sizing:border-box;overflow:hidden"
+                ),
                 "mode {mode:?}: each sheet must stay fixed at A4 with overflow:hidden"
             );
         }
