@@ -94,6 +94,13 @@ pub enum BandKind {
 /// under the header, the way the paper's own additional sheets repeat the
 /// same identity block.
 fn identity_strip_band_indices(layout: &PageLayout, header_idx: Option<usize>) -> Vec<usize> {
+    // Pages 2+ already carry the TIN + Taxpayer Name strip inside their
+    // `PageHeader` (`p<N>b0`); everything between `p<N>b0` and the first
+    // `RowTemplate` on those pages is body schedules/parts, never an identity
+    // strip. Only Page 1 puts Part I (Background Information) below `p1b0`.
+    if layout.page > 1 {
+        return Vec::new();
+    }
     let Some(hi) = header_idx else {
         return Vec::new();
     };
