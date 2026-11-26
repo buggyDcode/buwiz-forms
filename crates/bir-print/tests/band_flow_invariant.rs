@@ -435,9 +435,6 @@ fn invariant_2200a_others() {
     });
 }
 
-/// OPEN: the Schedule 1 total expectation needs verification against the
-/// paper — which total column prints where has not been settled.
-#[ignore = "1707A total expectation unverified"]
 #[test]
 fn invariant_1707a_schedule1() {
     use bir_core::forms::form_1707a::{Form1707AAtc, Form1707ADraft, Form1707ARow};
@@ -455,44 +452,45 @@ fn invariant_1707a_schedule1() {
             selling_price: f64::from(k) * 2_000.0,
             cost: f64::from(k) * 1_000.0,
             gain_or_loss: 0.0,
-            tax_paid: 0.0,
+            tax_paid: f64::from(k) * 100.0,
         });
     }
     d.recompute();
     let fields = d.to_print_field_map();
     let html = fill("1707a-2021", &fields);
-    // rows print once each, in order; no blank page; continuation carries TIN+name
-    let up = rendered_text(&html).to_uppercase();
-    let mut last = 0;
-    for (i, m) in markers.iter().enumerate() {
-        let needle: String = m.split_whitespace().collect();
-        let count = up.matches(&needle).count();
-        assert_eq!(count, 1, "1707A row {} prints {count}x", i + 1);
-        let pos = up.find(&needle).unwrap();
-        assert!(pos >= last || i == 0, "1707A rows out of order");
-        last = pos;
-    }
+    // Official paper (BIR Form 1707-A April 2021 ENCS Page 2 PDF and
+    // html-frozen/1707a-2021/writer-cells.json): Schedule 1 Row 5 TOTAL prints
+    // ONLY Column (E) Capital Gains (`p2c57`, `txtS1I20TotalCapitalGains`, to
+    // Part II Item 13) and Column (F) Tax Paid (`p2c58`, `txtS1I20TotalTaxPaid`,
+    // to Part II Item 18A). Columns (C) Selling Price and (D) Cost have no total
+    // cells on the official paper.
+    // Here sum(E = C - D) = 1,000*(1+..+8) = 36,000.00; sum(F) = 100*(1+..+8) = 3,600.00.
+    assert_eq!(
+        fields
+            .get("frm1707Av2021:txtS1I20TotalCapitalGains")
+            .map(|s| s.replace(',', "")),
+        Some("36000.00".to_string()),
+        "invariant: 1707A Schedule 1 Column (E) total must equal the sum of all 8 rows' gains"
+    );
+    assert_eq!(
+        fields
+            .get("frm1707Av2021:txtS1I20TotalTaxPaid")
+            .map(|s| s.replace(',', "")),
+        Some("3600.00".to_string()),
+        "invariant: 1707A Schedule 1 Column (F) total must equal the sum of all 8 rows' tax paid"
+    );
+    check_invariant(&InvariantCase {
+        label: "1707A Schedule 1",
+        slug: "1707a-2021",
+        html: &html,
+        row_markers: &markers,
+        total_text: "36,000.00",
+    });
+    let text_no_commas = rendered_text(&html).replace(',', "");
+    assert!(
+        text_no_commas.contains("3600.00") || text_no_commas.contains("360000"),
+        "1707A Schedule 1 Column (F) total 3,600.00 must print on the rendered pages"
+    );
     let frags: Vec<&str> = html.split("class=\"page page-").collect();
     assert!(frags.len() > 2, "1707A at 8 rows must spawn a continuation");
-    for (idx, frag) in frags.iter().enumerate().skip(1) {
-        let condensed: String = strip_tags(frag).split_whitespace().collect();
-        assert!(
-            condensed.len() > 40,
-            "1707A page fragment {idx} blank ({} chars)",
-            condensed.len()
-        );
-    }
-    let continuation: String = frags[2..].concat();
-    let cup = continuation.to_uppercase();
-    assert!(cup.contains("SANTOS"), "1707A continuation lacks the name");
-    assert!(
-        continuation.contains("000-123-453") || continuation.contains("000"),
-        "1707A continuation lacks the TIN"
-    );
-    // printed total equals the sum of printed rows: selling 2000*(1+..+8)=72,000
-    let text = rendered_text(&html);
-    assert!(
-        text.contains("72,000.00") || text.contains("72000.00") || text.contains("7200000"),
-        "1707A Schedule 1 total of all 8 rows must print"
-    );
 }
