@@ -559,6 +559,9 @@ export class FormSession {
   private sCurrent = signal(0);
   private sStepAt = signal<string | null>(null);
   private sAllOpen = signal(false);
+  /** A schedule cell whose note Queue is bringing into view: its row's drawer opens when the schedule is drawn (rows.tsx). */
+  private sDrawerAsk = signal<string | null>(null);
+  readonly drawerAsk: Accessor<string | null> = () => this.sDrawerAsk();
   private sReveal = signal<{ row: string | null; part: number; seq: number } | null>(null);
   private sAttention = signal(0);
   private revealSeq = 0;
@@ -821,6 +824,13 @@ export class FormSession {
     if (id) s.touched.add(id);
     this.setErrors(s.errors);
     this.publish();
+  }
+
+  /** The schedule opened the drawer of the row that holds k, as Queue asked: its note has been shown. */
+  drawerOpened(k: string) {
+    const s = this.st;
+    if (this.sDrawerAsk() === k) this.sDrawerAsk.set(null);
+    if (s.amountNotes[k] !== undefined) s.notesShown[k] = s.amountNotes[k];
   }
 
   /** The notes Queue stops on: every note it has not brought into view yet, in page order (a folded part's too: Queue opens it). */
@@ -3513,7 +3523,10 @@ export class FormSession {
     if (unshown.length) {
       const k = unshown[0];
       const id = this.keyIndex.get(k)!;
-      s.notesShown[k] = s.amountNotes[k];
+      // A schedule cell sits in its row's drawer: the drawer opens (drawerOpened marks the note shown then); until it has, the note
+      // stops Queue again.
+      if (this.items.get(id)?.rows) this.sDrawerAsk.set(k);
+      else s.notesShown[k] = s.amountNotes[k];
       s.touched.add(id);
       this.jumpTo(Number(id.split(":")[0]), id);
       return this.toast(this.refusalText(k, s.amountNotes[k]), "triangle-alert");
