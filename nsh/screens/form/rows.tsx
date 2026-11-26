@@ -35,7 +35,6 @@ export function fieldProps(s: FormSession, f: SchemaField, narrow: Accessor<bool
     width,
     narrow,
     onEdit: (text) => s.edit(f.k, text),
-    onInvalid: (text, typing) => s.setAmountInvalid(f.k, text, typing),
     onFocus: () => s.focus(f.k),
     onBlur: () => s.blur(f.k),
     focusRef: (focus) => s.registerFocus(f.k, focus),

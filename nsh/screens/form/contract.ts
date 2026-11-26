@@ -178,8 +178,6 @@ export interface FieldControlProps {
    *  flushes 300 ms after the last edit); sel and chk call it once per pick ("true"/"false" for chk). A date control
    *  passes the text as typed: the session turns "12012020" into the draft's MM/DD/YYYY. */
   onEdit(text: string): void;
-  /** The box holds text that does not read as an amount (the text), or reads again (null). `typing`: the box still has focus. */
-  onInvalid?(text: string | null, typing?: boolean): void;
   /** The box gained focus (the session tracks the focused box for the profile Edit look). */
   onFocus(): void;
   /** The box lost focus: the session marks it touched (its error may show now) and flushes. */
