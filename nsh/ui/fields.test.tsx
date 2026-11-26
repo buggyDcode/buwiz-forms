@@ -71,16 +71,16 @@ for (const size of SIZES) {
     await app.type("id:kit-money", "x");
     await app.type("id:kit-money", ".");
     await app.type("id:kit-money", "7");
-    expect(app.value("id:kit-money")).toBe("1250000.57");
-    expect(readout(app, "Value:")).toBe("Value: 1250000.57");
+    expect(app.value("id:kit-money")).toBe("1250000.5x.7");
+    expect(readout(app, "Value:")).toBe("Value: 1250000.5");
     await app.keyboard.press("backspace");
     await app.keyboard.press("backspace");
     await app.keyboard.press("backspace");
-    expect(app.value("id:kit-money")).toBe("1250000");
+    expect(app.value("id:kit-money")).toBe("1250000.5");
     // Leaving the box: another field takes the keys.
     await app.type("id:kit-name", " ");
-    expect(app.value("id:kit-money")).toBe("1,250,000.00");
-    expect(readout(app, "Value:")).toBe("Value: 1250000");
+    expect(app.value("id:kit-money")).toBe("1,250,000.50");
+    expect(readout(app, "Value:")).toBe("Value: 1250000.5");
     await app.clear("id:kit-money");
     await app.paste("id:kit-money", { text: "₱ 2,500.75" });
     expect(readout(app, "Value:")).toBe("Value: 2500.75");
@@ -159,40 +159,42 @@ for (const size of SIZES) {
     expect(readout(app, "Amount:")).toBe("Amount: 1.01");
   });
 
-  test(`${size.name}: leaving a box that only gains zeros reports nothing, and a refused key reports nothing`, async () => {
+  test(`${size.name}: leaving a box that only gains zeros reports nothing, and an invalid key stays visible but unreported`, async () => {
     const app = await open("./masked.fixture.tsx", size.options);
     await app.type("id:m-amount", "1250000.5");
     expect(readout(app, "Amount:")).toBe("Amount: 1250000.5");
     const reports = readout(app, "Reports:");
     await app.type("id:m-amount", "x");
-    expect(app.value("id:m-amount")).toBe("1250000.5"); // the letter is taken back out of the box
+    expect(app.value("id:m-amount")).toBe("1250000.5x"); // invalid text stays exactly as typed
     expect(readout(app, "Reports:")).toBe(reports);
     await app.type("id:m-other", " ");
-    expect(app.value("id:m-amount")).toBe("1,250,000.50");
-    expect(readout(app, "Amount:")).toBe("Amount: 1250000.5"); // the same number, so the draft is left alone
+    expect(app.value("id:m-amount")).toBe("1250000.5x");
+    expect(readout(app, "Amount:")).toBe("Amount: 1250000.5"); // the invalid suffix was never reported
     expect(readout(app, "Reports:")).toBe(reports);
   });
 
-  test(`${size.name}: a negative is shown negative; a minus is typed or pasted only where negatives are allowed`, async () => {
+  test(`${size.name}: a negative is shown negative; an unallowed minus stays visible, invalid and unreported`, async () => {
     const app = await open("./masked.fixture.tsx", size.options);
-    expect(app.value("id:m-stored")).toBe("-250.00"); // the field takes no typed minus, the value is still negative
+    expect(app.value("id:m-stored")).toBe("-250.00"); // a stored negative is shown negative even where no minus may be typed
     await app.type("id:m-stored", "1");
     expect(app.value("id:m-stored")).toBe("-250.001");
-    expect(readout(app, "Stored:")).toBe("Stored: -250.001");
+    expect(app.texts()).toContain("Not a valid amount; it was not saved.");
+    expect(readout(app, "Stored:")).toBe("Stored: -250");
     await app.type("id:m-other", " ");
-    expect(app.value("id:m-stored")).toBe("-250.00");
-    expect(readout(app, "Stored:")).toBe("Stored: -250.00");
-    // Typed minus where it is not allowed: nothing happens (and the 5 that follows is the amount).
+    expect(app.value("id:m-stored")).toBe("-250.001");
+    expect(readout(app, "Stored:")).toBe("Stored: -250");
+    // Typed minus where it is not allowed stays visible; the whole text is invalid and nothing is reported.
     await app.type("id:m-amount", "-");
     await app.type("id:m-amount", "5");
-    expect(app.value("id:m-amount")).toBe("5");
-    expect(readout(app, "Amount:")).toBe("Amount: 5");
-    // Pasted negatives are refused whole, not made positive.
+    expect(app.value("id:m-amount")).toBe("-5");
+    expect(readout(app, "Amount:")).toBe("Amount: empty");
+    // Pasted negatives also stay exactly visible, invalid and unreported.
     await app.clear("id:m-amount");
     await app.paste("id:m-amount", { text: "-1,234.00" });
-    expect(app.value("id:m-amount")).toBe("");
+    expect(app.value("id:m-amount")).toBe("-1,234.00");
+    await app.clear("id:m-amount");
     await app.paste("id:m-amount", { text: "(1,234.00)" });
-    expect(app.value("id:m-amount")).toBe("");
+    expect(app.value("id:m-amount")).toBe("(1,234.00)");
     expect(readout(app, "Amount:")).toBe("Amount: empty");
     // Where negatives are allowed they are taken, brackets too.
     await app.type("id:m-free", "-");
@@ -201,25 +203,26 @@ for (const size of SIZES) {
     expect(readout(app, "Free:")).toBe("Free: -5");
     await app.clear("id:m-free");
     await app.paste("id:m-free", { text: "(1,234.00)" });
-    expect(app.value("id:m-free")).toBe("-1234.00");
-    expect(readout(app, "Free:")).toBe("Free: -1234.00");
+    expect(app.value("id:m-free")).toBe("(1,234.00)");
+    expect(readout(app, "Free:")).toBe("Free: empty");
   });
 
-  test(`${size.name}: pasted separators are read by one rule, an ambiguous paste is refused`, async () => {
+  test(`${size.name}: pasted text is strict: valid grouped amounts report, ambiguous text stays visible invalid and unreported`, async () => {
     const app = await open("./masked.fixture.tsx", size.options);
-    await app.paste("id:m-amount", { text: "1.234.567" });
-    expect(app.value("id:m-amount")).toBe("1234567");
+    await app.paste("id:m-amount", { text: "1,234,567" });
+    expect(app.value("id:m-amount")).toBe("1,234,567");
     expect(readout(app, "Amount:")).toBe("Amount: 1234567");
     await app.clear("id:m-amount");
-    await app.paste("id:m-amount", { text: "1.234,56" });
-    expect(app.value("id:m-amount")).toBe("1234.56");
+    await app.paste("id:m-amount", { text: "1,234.56" });
+    expect(app.value("id:m-amount")).toBe("1,234.56");
     expect(readout(app, "Amount:")).toBe("Amount: 1234.56");
-    await app.clear("id:m-amount");
-    await app.paste("id:m-amount", { text: "1.2.3" });
-    expect(app.value("id:m-amount")).toBe("");
-    expect(readout(app, "Amount:")).toBe("Amount: empty");
-    await app.paste("id:m-amount", { text: "1,234.567" });
-    expect(app.value("id:m-amount")).toBe("");
+    for (const bad of ["1.234.567", "1.234,56", "1.2.3"]) {
+      await app.clear("id:m-amount");
+      await app.paste("id:m-amount", { text: bad });
+      expect(app.value("id:m-amount")).toBe(bad);
+      expect(readout(app, "Amount:")).toBe("Amount: empty");
+      expect(app.texts()).toContain("Not a valid amount; it was not saved.");
+    }
   });
 
   test(`${size.name}: a stored value is shown as it is and leaving its box unedited changes nothing; an edit is rounded on leaving`, async () => {
@@ -359,10 +362,64 @@ for (const size of SIZES) {
     expect(readout(app, "Text writes:")).toBe(beforeText);
     expect(readout(app, "Caret writes:")).toBe(beforeCaret);
     await app.type("id:m-amount", "x.");
-    expect(app.value("id:m-amount")).toBe("99999999.995");
+    expect(app.value("id:m-amount")).toBe("99999999.995x.");
+    expect(readout(app, "Amount:")).toBe("Amount: 99999999.995");
+    expect(app.texts()).toContain("Not a valid amount; it was not saved.");
     await app.type("id:m-other", " ");
-    expect(app.value("id:m-amount")).toBe("100,000,000.00");
-    expect(readout(app, "Amount:")).toBe("Amount: 100000000.00");
+    expect(app.value("id:m-amount")).toBe("99999999.995x.");
+    expect(readout(app, "Amount:")).toBe("Amount: 99999999.995");
+  });
+
+  test(`${size.name}: typed commas and letters stay exact, invalid and unreported`, async () => {
+    for (const bad of ["15000,50", "150a00.50"]) {
+      const app = await open("./masked.fixture.tsx", size.options);
+      await app.clear("id:m-amount");
+      const textWrites = readout(app, "Text writes:");
+      const caretWrites = readout(app, "Caret writes:");
+      await app.type("id:m-amount", bad);
+      expect(app.value("id:m-amount")).toBe(bad);
+      expect(readout(app, "Amount:")).toBe("Amount: empty");
+      expect(app.texts()).toContain("Not a valid amount; it was not saved.");
+      expect(readout(app, "Text writes:")).toBe(textWrites);
+      expect(readout(app, "Caret writes:")).toBe(caretWrites);
+      await app.type("id:m-other", " ");
+      expect(app.value("id:m-amount")).toBe(bad);
+      expect(readout(app, "Amount:")).toBe("Amount: empty");
+    }
+  });
+
+  test(`${size.name}: invalid focused money text is never written back, reported or saved`, async () => {
+    for (const bad of ["1500,50", "1.234,56", "1,2,3", "1e5", "0x10", "1 234,50"]) {
+      const app = await open("./masked.fixture.tsx", size.options);
+      await app.clear("id:m-amount");
+      const textWrites = readout(app, "Text writes:");
+      const caretWrites = readout(app, "Caret writes:");
+      await app.paste("id:m-amount", { text: bad });
+      expect(app.value("id:m-amount")).toBe(bad);
+      expect(readout(app, "Amount:")).toBe("Amount: empty");
+      expect(app.texts()).toContain("Not a valid amount; it was not saved.");
+      expect(readout(app, "Text writes:")).toBe(textWrites);
+      expect(readout(app, "Caret writes:")).toBe(caretWrites);
+      await app.type("id:m-other", " ");
+      expect(app.value("id:m-amount")).toBe(bad);
+      expect(readout(app, "Amount:")).toBe("Amount: empty");
+    }
+  });
+
+  test(`${size.name}: a fast 15000..50 burst stays exact, invalid and unreported`, async () => {
+    const app = await open("./masked.fixture.tsx", size.options);
+    await app.clear("id:m-amount");
+    const textWrites = readout(app, "Text writes:");
+    const caretWrites = readout(app, "Caret writes:");
+    await app.type("id:m-amount", "15000..50");
+    expect(app.value("id:m-amount")).toBe("15000..50");
+    expect(app.texts()).toContain("Not a valid amount; it was not saved.");
+    expect(readout(app, "Amount:")).toBe("Amount: empty");
+    expect(readout(app, "Text writes:")).toBe(textWrites);
+    expect(readout(app, "Caret writes:")).toBe(caretWrites);
+    await app.type("id:m-other", " ");
+    expect(app.value("id:m-amount")).toBe("15000..50");
+    expect(readout(app, "Amount:")).toBe("Amount: empty");
   });
 }
 
