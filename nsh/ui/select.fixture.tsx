@@ -29,7 +29,7 @@ function App() {
         <Text variant="cap">{`Tin: ${tin() || "empty"}`}</Text>
         <Text variant="cap">{`Kept: ${kept() || "empty"}`}</Text>
       </View>
-      <View class="flex-row gap-2">
+      <View class="flex-row flex-wrap gap-2">
         <AppButton label="Focus some" size="sm" testID="s-go-some" onPress={() => someRef?.focus()} />
         <AppButton label="Focus zero" size="sm" testID="s-go-zero" onPress={() => zeroRef?.focus()} />
         <AppButton label="Focus zero same-turn 15" size="sm" testID="s-zero-same" onPress={() => {
@@ -43,6 +43,21 @@ function App() {
         <AppButton label="Count same-turn 15" size="sm" testID="s-count-same" onPress={() => {
           countRef?.focus();
           countRef?.insertText("15");
+        }} />
+        <AppButton label="Zero input then focus" size="sm" testID="s-zero-input-first" onPress={() => {
+          zeroRef?.setSelection(4, 4);
+          zeroRef?.insertText("15");
+          setTimeout(() => zeroRef?.focus(), 0);
+        }} />
+        <AppButton label="Rate input then focus" size="sm" testID="s-rate-input-first" onPress={() => {
+          rateRef?.setSelection(1, 1);
+          rateRef?.insertText("15");
+          setTimeout(() => rateRef?.focus(), 0);
+        }} />
+        <AppButton label="Count input then focus" size="sm" testID="s-count-input-first" onPress={() => {
+          countRef?.setSelection(1, 1);
+          countRef?.insertText("15");
+          setTimeout(() => countRef?.focus(), 0);
         }} />
       </View>
       <TextField label="Free" value={free()} onChange={(v) => free.set(v)} testID="s-free" />

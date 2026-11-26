@@ -279,6 +279,10 @@ function MaskedField(props: MaskedProps) {
   // Set only through the wrapped ref the page receives; a platform Tab, click or tap never sets it.
   let programmaticFocus = false;
   let programmaticFocusToken = 0;
+  // Input can reach the native box before its first focus callback (macOS, a zero-click burst). The box is
+  // semantically focused from that input; the late callback still goes to the page but must not start the edit again.
+  let focusCallbackSeen = false;
+  let inputBeforeFocus = false;
   // The zero text a focus is clearing, while its empty write waits one turn so same-turn input can supersede it.
   let zeroFocusText: string | undefined;
   let zeroWriteTimer: ReturnType<typeof setTimeout> | undefined;
@@ -343,6 +347,16 @@ function MaskedField(props: MaskedProps) {
   const change = (raw: string) => {
     armWindowsReselect = false;
     const prev = untracked(text);
+    const stored = props.value ?? "";
+    if (!untracked(focused) && isZeroAmount(stored) && props.shown(stored, true) === "" && prev === props.shown(stored, false)) {
+      inputBeforeFocus = true;
+      focused.set(true);
+      focusValue = stored;
+      commaState = initialCommaState(prev);
+      zeroFocusText = prev;
+      zeroMask = Array.from({ length: prev.length }, () => true);
+      zeroWriteLanded = true;
+    }
     const from = editFrom;
     const typed = editTyped;
     editFrom = undefined;
@@ -443,6 +457,8 @@ function MaskedField(props: MaskedProps) {
         editFrom = undefined;
         editTyped = false;
         edited = false;
+        focusCallbackSeen = false;
+        inputBeforeFocus = false;
         zeroFocusText = undefined;
         zeroMask = undefined;
         zeroWriteLanded = false;
@@ -525,9 +541,14 @@ function MaskedField(props: MaskedProps) {
       onFocus={() => {
         // A duplicate focus without a blur is not a new edit session: no reset, rewrite, reselect or renotify.
         if (untracked(focused)) {
+          const firstCallback = !focusCallbackSeen;
+          focusCallbackSeen = true;
           programmaticFocus = false;
+          programmaticFocusToken++;
+          if (firstCallback && inputBeforeFocus) props.field.onFocus?.();
           return;
         }
+        focusCallbackSeen = true;
         focused.set(true);
         boxText = undefined;
         edited = false;

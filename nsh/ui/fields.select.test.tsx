@@ -71,6 +71,22 @@ test("input in the zero focus's own turn wins over the empty write and reads wit
   expect(app.value("id:s-zero")).toBe("0.0015");
 });
 
+test("input before the focus callback reads without the stale zero in money, percent and count boxes", async () => {
+  const app = await open("./select.fixture.tsx", WIDE);
+  for (const [button, key] of [
+    ["s-zero-input-first", "Zero:"],
+    ["s-rate-input-first", "Rate:"],
+    ["s-count-input-first", "Count:"],
+  ] as const) {
+    await app.press(`id:${button}`);
+    if (key === "Zero:") expect(app.value("id:s-zero")).toBe("0.0015");
+    await app.waitUntil(() => readout(app, key) === `${key} 15`);
+  }
+  await app.type("id:s-free", "x");
+  expect(app.value("id:s-zero")).toBe("15.00");
+  expect(readout(app, "Zero:")).toBe("Zero: 15");
+});
+
 test("after the zero box is empty, a typed 0.005 keeps its own leading zeroes", async () => {
   const app = await open("./select.fixture.tsx", WIDE);
   await app.type("id:s-zero", "");
