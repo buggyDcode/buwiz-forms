@@ -145,7 +145,7 @@ const BOX_LEAVES_ON_UNMOUNT = false;
 // Unreadable text: on leaving, the money box puts the return's amount back and calls onLeftUnreadable; the session draws the note.
 const unreadable = test;
 
-for (const typed of ["1500x", "1500,50"]) {
+for (const typed of ["1500x", "15,00,50"]) {
   unreadable(`unreadable ${typed}: after leaving, the box shows the old amount, a note names both, the draft holds the old amount, Save works`, async () => {
     const app = await page(2024, typed === "1500x" ? 1 : 2);
     await app.clear(BOX);
@@ -157,12 +157,26 @@ for (const typed of ["1500x", "1500,50"]) {
     await app.submit(BOX);
     await app.waitUntil(() => app.texts().some((t) => t.includes("is not an amount")), { timeout: 5000 });
     expect(app.value(BOX)).toBe("1,000.00");
-    expect(app.texts()).toContain(`Item 15: ${typed} is not an amount. The box kept 1,000.00.`);
+    const hint = typed.includes(",") ? " Use a point for centavos, and commas only between thousands." : "";
+    expect(app.texts()).toContain(`Item 15: ${typed} is not an amount. The box kept 1,000.00.${hint}`);
     expect(probe(app)).toBe("1,000.00");
     await app.press("id:fp-save").catch(() => {});
     await app.waitFor("text:✓ Saved", { timeout: 8000 });
   }, 30_000);
 }
+
+test("decimal comma 1500,50: after leaving, the box shows the point amount, no sentence, and Save works", async () => {
+  const app = await page(2024, 2);
+  await app.type(BOX, "");
+  await app.waitUntil(() => app.value(BOX) === "", { timeout: 3000 });
+  await app.type(BOX, "1500,50");
+  await app.submit(BOX);
+  await app.waitUntil(() => app.value(BOX) === "1,500.50", { timeout: 5000 });
+  expect(probe(app)).toBe("1,500.50");
+  expect(app.texts().some((t) => t.includes("is not an amount"))).toBe(false);
+  await app.press("id:fp-save").catch(() => {});
+  await app.waitFor("text:✓ Saved", { timeout: 8000 });
+}, 30_000);
 
 // 2551Q Schedule 1, row 1's Taxable Amount: a cell edited in its row's drawer.
 const CELL = "id:fp-txtATCAmt1";

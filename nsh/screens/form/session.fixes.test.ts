@@ -908,7 +908,7 @@ test("note rules: a box that goes away unregisters its blur; Queue then treats i
 
 test("note rules: a note raised by a box leaving as its part folds is kept, and Queue stops on it and opens that part", async () => {
   const key = "frm2551Qv2018:txt15";
-  const sentence = "Item 15: 1500,50 is not an amount. The box kept 100.00.";
+  const sentence = "Item 15: 1500,50 is not an amount. The box kept 100.00. Use a point for centavos, and commas only between thousands.";
   const checks = countQueueChecks();
   const h = hooks();
   let s: FormSession | undefined;
