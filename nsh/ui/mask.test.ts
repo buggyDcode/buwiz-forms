@@ -2,7 +2,7 @@
 import { expect, test } from "nsh/test";
 import {
   applyMask, DATE_ERROR, digitsOnly, editBase, formatIso, formatLongDate, formatMDY, formatMoney, formatTin, formatTinDigits, intMask,
-  isPlainAmount, isZeroAmount, MONEY_MASK, moneyMask, moneyPlain, parseTypedDate, PERCENT_MASK, reconcile, sameAmount, shownDate, shownMoney,
+  isPlainAmount, isZeroAmount, MONEY_MASK, moneyEntryMask, moneyMask, moneyPlain, parseTypedDate, PERCENT_MASK, reconcile, sameAmount, shownDate, shownMoney,
   TIN_MASK,
 } from "./mask";
 
@@ -201,7 +201,7 @@ test("money: no 'Infinity.undefined', no '-0.00', every digit of a long amount s
 test("money: what a box shows for a stored value (negatives shown, non-amounts verbatim)", () => {
   expect(shownMoney("-250", false)).toBe("-250.00");
   expect(shownMoney("-250", true)).toBe("-250");
-  expect(shownMoney("1250000.5", true)).toBe("1,250,000.5");
+  expect(shownMoney("1250000.5", true)).toBe("1250000.5");
   expect(shownMoney("1250000.5", false)).toBe("1,250,000.50");
   expect(shownMoney("1234.5", false, true)).toBe("1234.5");
   expect(shownMoney("-0", false)).toBe("0.00");
@@ -439,4 +439,21 @@ test("editBase: fast keys are typed on the box's own text; a deletion from the s
   expect(editBase("12", undefined, "123", at(2))).toEqual(["12", at(2)]);
   // A selected leading zero deleted from the box's own text is not a deletion of the shown comma.
   expect(editBase("1,234", "01234", "1234", { start: 0, end: 1 })).toEqual(["01234", { start: 0, end: 1 }]);
+});
+
+
+test("money entry accepts mid-text digits and Backspace exactly, without reformatting", () => {
+  const mask = moneyEntryMask();
+  const digit = reconcile("12345678.90", "123456778.90", mask, undefined, { start: 7, end: 7 }, true);
+  expect(digit).toEqual({ text: "123456778.90", caret: 8 });
+  const back = reconcile("123456778.90", "12345678.90", mask, undefined, { start: 8, end: 8 }, false);
+  expect(back).toEqual({ text: "12345678.90", caret: 7 });
+  const decimal = reconcile("12345678.90", "12345678.905", mask, undefined, { start: 11, end: 11 }, true);
+  expect(decimal.text).toBe("12345678.905");
+  // 1234567890, Left, Left, Backspace: the caret is after digit 8, so Backspace removes exactly that digit.
+  const leftBack = reconcile("1234567890", "123456790", mask, undefined, { start: 8, end: 8 }, false);
+  expect(leftBack).toEqual({ text: "123456790", caret: 7 });
+  // An adjacent repeated digit stays exactly where typed; no separator insertion can make the edit ambiguous.
+  const repeated = reconcile("9999", "99999", mask, undefined, { start: 4, end: 4 }, true);
+  expect(repeated).toEqual({ text: "99999", caret: 5 });
 });

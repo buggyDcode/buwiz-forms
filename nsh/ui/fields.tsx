@@ -316,6 +316,7 @@ function MaskedField(props: MaskedProps) {
       if (!next.rejected && next.text === raw) {
         // A valid focused amount edit stays exactly as typed: no text or caret answer goes back to the box.
         boxText = raw;
+        text.set(raw); // exactly the edit the native box already holds: NSH sends no value op for it
         const value = props.valueOf(raw);
         if (value === last) return;
         last = value;

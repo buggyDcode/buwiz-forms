@@ -58,21 +58,25 @@ for (const size of SIZES) {
     expect(readout(app, "Digits:")).toBe("Digits: 00012345300000");
   });
 
-  test(`${size.name}: money groups while typing, plain value out, two decimals on leaving`, async () => {
+  test(`${size.name}: money stays plain while typing, plain value out, two decimals on leaving`, async () => {
     const app = await openKit("../BasePreview.tsx", size.options);
     expect(app.value("id:kit-money")).toBe("1,250,000.00");
     await app.clear("id:kit-money");
     expect(readout(app, "Value:")).toBe("Value: empty");
     await app.type("id:kit-money", "1250000");
-    expect(app.value("id:kit-money")).toBe("1,250,000");
+    expect(app.value("id:kit-money")).toBe("1250000");
     expect(readout(app, "Value:")).toBe("Value: 1250000");
-    await app.type("id:kit-money", ".5x.7");
-    expect(app.value("id:kit-money")).toBe("1,250,000.57");
+    // Real key events are separate turns; type the refused letter and the keys around it one at a time.
+    await app.type("id:kit-money", ".5");
+    await app.type("id:kit-money", "x");
+    await app.type("id:kit-money", ".");
+    await app.type("id:kit-money", "7");
+    expect(app.value("id:kit-money")).toBe("1250000.57");
     expect(readout(app, "Value:")).toBe("Value: 1250000.57");
     await app.keyboard.press("backspace");
     await app.keyboard.press("backspace");
     await app.keyboard.press("backspace");
-    expect(app.value("id:kit-money")).toBe("1,250,000");
+    expect(app.value("id:kit-money")).toBe("1250000");
     // Leaving the box: another field takes the keys.
     await app.type("id:kit-name", " ");
     expect(app.value("id:kit-money")).toBe("1,250,000.00");
@@ -161,7 +165,7 @@ for (const size of SIZES) {
     expect(readout(app, "Amount:")).toBe("Amount: 1250000.5");
     const reports = readout(app, "Reports:");
     await app.type("id:m-amount", "x");
-    expect(app.value("id:m-amount")).toBe("1,250,000.5"); // the letter is taken back out of the box
+    expect(app.value("id:m-amount")).toBe("1250000.5"); // the letter is taken back out of the box
     expect(readout(app, "Reports:")).toBe(reports);
     await app.type("id:m-other", " ");
     expect(app.value("id:m-amount")).toBe("1,250,000.50");
@@ -179,7 +183,8 @@ for (const size of SIZES) {
     expect(app.value("id:m-stored")).toBe("-250.00");
     expect(readout(app, "Stored:")).toBe("Stored: -250.00");
     // Typed minus where it is not allowed: nothing happens (and the 5 that follows is the amount).
-    await app.type("id:m-amount", "-5");
+    await app.type("id:m-amount", "-");
+    await app.type("id:m-amount", "5");
     expect(app.value("id:m-amount")).toBe("5");
     expect(readout(app, "Amount:")).toBe("Amount: 5");
     // Pasted negatives are refused whole, not made positive.
@@ -190,23 +195,24 @@ for (const size of SIZES) {
     expect(app.value("id:m-amount")).toBe("");
     expect(readout(app, "Amount:")).toBe("Amount: empty");
     // Where negatives are allowed they are taken, brackets too.
-    await app.type("id:m-free", "-5");
+    await app.type("id:m-free", "-");
+    await app.type("id:m-free", "5");
     expect(app.value("id:m-free")).toBe("-5");
     expect(readout(app, "Free:")).toBe("Free: -5");
     await app.clear("id:m-free");
     await app.paste("id:m-free", { text: "(1,234.00)" });
-    expect(app.value("id:m-free")).toBe("-1,234.00");
+    expect(app.value("id:m-free")).toBe("-1234.00");
     expect(readout(app, "Free:")).toBe("Free: -1234.00");
   });
 
   test(`${size.name}: pasted separators are read by one rule, an ambiguous paste is refused`, async () => {
     const app = await open("./masked.fixture.tsx", size.options);
     await app.paste("id:m-amount", { text: "1.234.567" });
-    expect(app.value("id:m-amount")).toBe("1,234,567");
+    expect(app.value("id:m-amount")).toBe("1234567");
     expect(readout(app, "Amount:")).toBe("Amount: 1234567");
     await app.clear("id:m-amount");
     await app.paste("id:m-amount", { text: "1.234,56" });
-    expect(app.value("id:m-amount")).toBe("1,234.56");
+    expect(app.value("id:m-amount")).toBe("1234.56");
     expect(readout(app, "Amount:")).toBe("Amount: 1234.56");
     await app.clear("id:m-amount");
     await app.paste("id:m-amount", { text: "1.2.3" });
@@ -233,7 +239,7 @@ for (const size of SIZES) {
   test(`${size.name}: long amounts keep every digit, odd stored values show as they are, partial TINs keep every digit`, async () => {
     const app = await open("./masked.fixture.tsx", size.options);
     await app.type("id:m-amount", "123456789012345678");
-    expect(app.value("id:m-amount")).toBe("123,456,789,012,345,678");
+    expect(app.value("id:m-amount")).toBe("123456789012345678");
     expect(readout(app, "Amount:")).toBe("Amount: 123456789012345678");
     await app.type("id:m-other", " ");
     expect(app.value("id:m-amount")).toBe("123,456,789,012,345,678.00");
@@ -260,4 +266,61 @@ for (const size of SIZES) {
     expect(app.value("id:m-rate")).toBe("12.5");
     expect(readout(app, "Rate:")).toBe("Rate: 12.5");
   });
+}
+
+
+for (const size of SIZES) {
+  test(`${size.name}: focused money typing sends no text or caret back, at 8, 10 and 12 digits`, async () => {
+    const app = await open("./masked.fixture.tsx", size.options);
+    for (const digits of ["12345678", "1234567890", "123456789012", "100000"]) {
+      await app.clear("id:m-amount");
+      const textWrites = readout(app, "Text writes:");
+      const caretWrites = readout(app, "Caret writes:");
+      await app.type("id:m-amount", digits);
+      expect(app.value("id:m-amount")).toBe(digits);
+      expect(readout(app, "Amount:")).toBe(`Amount: ${digits}`);
+      expect(readout(app, "Text writes:")).toBe(textWrites);
+      expect(readout(app, "Caret writes:")).toBe(caretWrites);
+      await app.type("id:m-other", " ");
+      expect(app.value("id:m-amount")).toBe(formatGroupedExpectation(digits));
+    }
+    for (const amount of ["12345678.90", "1234567890.12", "123456789012.34", "99999.99", "1000000.005", "99999999.99", "15000.50"]) {
+      await app.clear("id:m-amount");
+      const textWrites = readout(app, "Text writes:");
+      const caretWrites = readout(app, "Caret writes:");
+      await app.type("id:m-amount", amount);
+      expect(app.value("id:m-amount")).toBe(amount);
+      expect(readout(app, "Amount:")).toBe(`Amount: ${amount}`);
+      expect(readout(app, "Text writes:")).toBe(textWrites);
+      expect(readout(app, "Caret writes:")).toBe(caretWrites);
+    }
+  });
+
+  test(`${size.name}: a plain paste, a third decimal and a refused key send no focused write`, async () => {
+    const app = await open("./masked.fixture.tsx", size.options);
+    await app.clear("id:m-amount");
+    const beforePasteText = readout(app, "Text writes:");
+    const beforePasteCaret = readout(app, "Caret writes:");
+    await app.paste("id:m-amount", { text: "99999999.99" });
+    expect(app.value("id:m-amount")).toBe("99999999.99");
+    expect(readout(app, "Amount:")).toBe("Amount: 99999999.99");
+    expect(readout(app, "Text writes:")).toBe(beforePasteText);
+    expect(readout(app, "Caret writes:")).toBe(beforePasteCaret);
+    const beforeText = readout(app, "Text writes:");
+    const beforeCaret = readout(app, "Caret writes:");
+    await app.type("id:m-amount", "5");
+    expect(app.value("id:m-amount")).toBe("99999999.995");
+    expect(readout(app, "Amount:")).toBe("Amount: 99999999.995");
+    expect(readout(app, "Text writes:")).toBe(beforeText);
+    expect(readout(app, "Caret writes:")).toBe(beforeCaret);
+    await app.type("id:m-amount", "x.");
+    expect(app.value("id:m-amount")).toBe("99999999.995");
+    await app.type("id:m-other", " ");
+    expect(app.value("id:m-amount")).toBe("100,000,000.00");
+    expect(readout(app, "Amount:")).toBe("Amount: 100000000.00");
+  });
+}
+
+function formatGroupedExpectation(digits: string): string {
+  return `${digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.00`;
 }

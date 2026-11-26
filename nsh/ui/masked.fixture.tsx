@@ -8,6 +8,8 @@ import { Text } from "./text";
 function App() {
   const amount = signal("");
   const reports = signal(0);
+  const textWrites = signal(0);
+  const caretWrites = signal(0);
   const stored = signal("-250");
   const free = signal("");
   const whole = signal("1234.5");
@@ -22,6 +24,8 @@ function App() {
       <View class="flex-row flex-wrap gap-x-3">
         <Text variant="cap">{`Amount: ${amount() || "empty"}`}</Text>
         <Text variant="cap">{`Reports: ${reports()}`}</Text>
+        <Text variant="cap">{`Text writes: ${textWrites()}`}</Text>
+        <Text variant="cap">{`Caret writes: ${caretWrites()}`}</Text>
         <Text variant="cap">{`Stored: ${stored() || "empty"}`}</Text>
         <Text variant="cap">{`Free: ${free() || "empty"}`}</Text>
         <Text variant="cap">{`Whole: ${whole() || "empty"}`}</Text>
@@ -39,6 +43,7 @@ function App() {
           reports.update((n) => n + 1);
         }}
         testID="m-amount"
+        writeProbe={(write) => (write === "text" ? textWrites.update((n) => n + 1) : caretWrites.update((n) => n + 1))}
       />
       <MoneyInput label="Stored" value={stored()} onChange={(v) => stored.set(v)} testID="m-stored" />
       <MoneyInput label="Free" negative value={free()} onChange={(v) => free.set(v)} testID="m-free" />
