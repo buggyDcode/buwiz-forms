@@ -397,3 +397,131 @@ test("money safety net: a host-stored amount different from the shown amount is 
     s?.dispose();
   }
 });
+
+// The money safety net's review findings (F1, F9, F10), through the door's seams: `hostFault` is the host fault the net exists for
+// (wherever the draft holds `typed` for `key`, the host answers `stored`, in a fill's and a validation's values alike), and `countSaves`
+// counts the host's saves.
+
+const NOT_SAVED = "An amount was not saved. Correct the highlighted box.";
+
+function hostFault(key: string, typed: string, stored: string): () => void {
+  const fill = bir.screen_form_fill;
+  const validate = bir.screen_form_validate;
+  const door = bir as { screen_form_fill: typeof fill; screen_form_validate: typeof validate };
+  const fault = (values: Record<string, unknown> | undefined) => {
+    const v = String(values?.[key] ?? "").replace(/,/g, "");
+    if (values && v !== "" && Number(v) === Number(typed)) values[key] = stored;
+  };
+  door.screen_form_fill = ((...args: Parameters<typeof fill>): ReturnType<typeof fill> => {
+    const r = fill(...args);
+    fault(r.values as Record<string, unknown>);
+    return r;
+  }) as typeof fill;
+  door.screen_form_validate = ((...args: Parameters<typeof validate>): ReturnType<typeof validate> =>
+    validate(...args).then((r) => {
+      fault(r.values as Record<string, unknown> | undefined);
+      return r;
+    })) as typeof validate;
+  return () => {
+    door.screen_form_fill = fill;
+    door.screen_form_validate = validate;
+  };
+}
+
+function countSaves(): { count: number; restore: () => void } {
+  const save = bir.screen_form_save;
+  const door = bir as { screen_form_save: typeof save };
+  const out = { count: 0, restore: () => void (door.screen_form_save = save) };
+  door.screen_form_save = ((...args: Parameters<typeof save>): ReturnType<typeof save> => {
+    out.count++;
+    return save(...args);
+  }) as typeof save;
+  return out;
+}
+
+/** The session's private save paths, for the tests that name them. */
+const inner = (s: FormSession) => s as unknown as { saveReturn(announce: boolean): boolean; finish(): string | null };
+
+test("F1: no save is made while a shown amount differs from the stored one; leaving is refused with the box's sentence; corrected, it saves", async () => {
+  const key = "frm2551Qv2018:txt15";
+  const sentence = "Item 15: the box shows 100.00, but the draft stored 99.00. Correct this amount; it was not saved.";
+  const restore = hostFault(key, "100", "99.00");
+  const saves = countSaves();
+  const h = hooks();
+  let reported = 0;
+  let s: FormSession | undefined;
+  try {
+    s = await opened(at("2551Q", 2023, 1), { ...h, onSaved: () => reported++ });
+    s.edit(key, "100");
+    // The fill, then autosave's turn: held.
+    await s.idle();
+    expect(s.boxMessageOf(key)).toBe(sentence);
+    expect(saves.count).toBe(0);
+    // The explicit save: held, and said.
+    s.saveNow();
+    await s.idle();
+    expect(saves.count).toBe(0);
+    expect(h.said.toasts.map((t) => t.message)).toContain(NOT_SAVED);
+    expect(inner(s).saveReturn(false)).toBe(false);
+    // Leaving: refused with the sentence the box shows, as a failed save is.
+    expect(inner(s).finish()).toBe(sentence);
+    expect(await s.flushNow()).toBe(false);
+    expect(h.said.toasts.map((t) => t.message)).toContain(sentence);
+    expect(saves.count).toBe(0);
+    expect(reported).toBe(0);
+    expect(s.saveState().state).toBe("unsaved");
+    // Corrected (a new edit the host stores as shown): every path goes ahead.
+    s.edit(key, "250");
+    await s.idle();
+    expect(s.boxMessageOf(key) ?? "").toBe("");
+    expect(saves.count).toBeGreaterThan(0);
+    expect(inner(s).saveReturn(false)).toBe(true);
+    expect(inner(s).finish()).toBe(null);
+    expect(await s.flushNow()).toBe(true);
+    expect(s.saveState().state).toBe("saved");
+    expect(reported).toBeGreaterThan(0);
+  } finally {
+    restore();
+    saves.restore();
+    s?.dispose();
+  }
+});
+
+test("F1: a Form library sample is not saved as a return while a shown amount differs from the stored one", async () => {
+  const key = "frm2551Qv2018:txt15";
+  const restore = hostFault(key, "100", "99.00");
+  const saves = countSaves();
+  const h = hooks();
+  let s: FormSession | undefined;
+  const save = async (session: FormSession) => {
+    session.saveNow();
+    const o = session.overlay();
+    if (o?.kind === "sample-period") {
+      const answer: Record<string, string> = {};
+      for (const p of o.parts) answer[p.key] = p.part === "year" ? "2023" : p.part === "year_end_month" ? "12" : p.part === "quarter" ? String(p.quarter === 2) : p.value;
+      session.takeSamplePeriod(answer);
+    }
+    await session.idle();
+    await session.idle();
+  };
+  try {
+    s = await opened(at("2551Q", 0, 0, "sample"), h);
+    s.edit(key, "100");
+    await s.idle();
+    expect(s.boxMessageOf(key)).toContain("Correct this amount");
+    await save(s);
+    expect(saves.count).toBe(0);
+    expect(s.target().mode).toBe("sample");
+    expect(h.said.toasts.map((t) => t.message)).toContain(NOT_SAVED);
+    // Corrected, the sample saves and becomes the return.
+    s.edit(key, "250");
+    await s.idle();
+    await save(s);
+    expect(saves.count).toBeGreaterThan(0);
+    expect(s.target().mode).toBe("return");
+  } finally {
+    restore();
+    saves.restore();
+    s?.dispose();
+  }
+});

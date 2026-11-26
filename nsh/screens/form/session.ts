@@ -445,6 +445,8 @@ function freshState(target: FormTarget): St {
 const sameJson = <T,>(a: T, b: T) => a === b || JSON.stringify(a) === JSON.stringify(b);
 
 const AMOUNT_MISMATCH = "shown amount mismatch";
+/** The toast of a save held by a shown-amount mismatch (nothing was written). */
+const AMOUNT_NOT_SAVED = "An amount was not saved. Correct the highlighted box.";
 
 /** Two amounts are the same number; a blank one is zero. */
 function sameNumber(a: string, b: string): boolean {
@@ -1965,6 +1967,18 @@ export class FormSession {
     return refusalSentence(this.refusalCtx(k, raw));
   }
 
+  /** The boxes whose shown amount differs from the amount the host stored (the money safety net's entries). */
+  private mismatchKeys(): string[] {
+    return Object.entries(this.st.rejected)
+      .filter(([, msg]) => msg.startsWith(`${AMOUNT_MISMATCH}|`))
+      .map(([k]) => k);
+  }
+
+  /** The sentences those boxes show, in the filer's words; "" when there is none. */
+  private mismatchText(): string {
+    return this.mismatchKeys().map((k) => this.refusalText(k, this.st.rejected[k])).join(" ");
+  }
+
   /** A host validation message as the page shows it (0605's four, plus the leak net). */
   private validationText(k: string | null, raw: string, field?: string): string {
     return hostSentence(this.refusalCtx(k ?? "", raw), field);
@@ -3195,7 +3209,7 @@ export class FormSession {
     this.saveTimer = this.later(SAVING_PAINT, () => {
       this.saveTimer = null;
       if (token !== this.token || this.disposed) return;
-      if (this.st.sample) this.saveSample(null);
+      if (this.st.sample) this.saveSample(null, false);
       else this.saveReturn(false);
       this.publish();
     });
@@ -3232,6 +3246,15 @@ export class FormSession {
         this.applyFill(f, edits);
         edits = {};
       }
+      // F1: a box whose shown amount differs from the one the host stored holds the whole save. Nothing is written until the
+      // filer corrects it (its sentence is on the box), so the draft never stores an amount the page did not show.
+      if (this.mismatchKeys().length) {
+        s.dirty = true;
+        s.saveState = this.restingSaveState();
+        if (announce) this.toast(AMOUNT_NOT_SAVED, "triangle-alert");
+        this.validate();
+        return false;
+      }
       const r = bir.screen_form_save(s.target.formCode, s.draft);
       this.wrote("screen_form_save");
       // Saved, the return has a new state: a removal's Undo would bring back a draft older than the stored one.
@@ -3247,11 +3270,10 @@ export class FormSession {
       // Only a refusal whose typed text still stands keeps the save line honest.
       if (Object.keys(s.rejected).some((k) => !s.unfixable.has(k))) s.dirty = true;
       s.saveState = s.dirty ? this.restingSaveState() : { state: "saved" };
-      const mismatch = Object.values(s.rejected).some((msg) => msg.startsWith(`${AMOUNT_MISMATCH}|`));
-      if (changed && !mismatch) this.hooks.onSaved?.(s.target);
-      if (announce) this.toast(mismatch ? "An amount was not saved. Correct the highlighted box." : "Draft saved.", mismatch ? "triangle-alert" : "save");
+      if (changed) this.hooks.onSaved?.(s.target);
+      if (announce) this.toast("Draft saved.", "save");
       this.validate();
-      return !mismatch;
+      return true;
     } catch (e) {
       s.pending = { ...edits, ...s.pending };
       s.saveState = { state: "failed", message: errorText(e) };
@@ -3267,9 +3289,15 @@ export class FormSession {
    * is asked first; a period that has a stored return is offered, never saved over; a period not set yet is asked
    * for in the period dialog. Saved, the session reopens as the return it became, then then() runs on it.
    */
-  private saveSample(then: (() => void) | null) {
+  private saveSample(then: (() => void) | null, announce = true) {
     const s = this.st;
     this.commitHeldPeriod();
+    // F1: the hold a return's save has: nothing is saved while a box's shown amount differs from the stored one.
+    if (this.mismatchKeys().length) {
+      s.saveState = this.restingSaveState();
+      if (announce) this.toast(AMOUNT_NOT_SAVED, "triangle-alert");
+      return this.publish();
+    }
     if (s.periodIncomplete) {
       s.saveState = this.restingSaveState();
       return this.askSamplePeriod("", then);
@@ -4254,7 +4282,9 @@ export class FormSession {
     }
     if (!s.dirty || s.sample || !this.canAutosave()) return null;
     if (this.saveReturn(false)) return null;
-    return s.saveState.state === "failed" ? s.saveState.message : null;
+    if (s.saveState.state === "failed") return s.saveState.message;
+    // F1: a shown amount that differs from the stored one held the save: the reason is the sentence its box shows.
+    return this.mismatchText() || null;
   }
 
   /** Typing flushed and saved now where autosave may (the frame awaits it before quit or navigation). False when a save was refused (toasted). */
