@@ -1417,6 +1417,14 @@ export class FormSession {
   choose(edits: Record<string, string>, clear: string[] = []) {
     const s = this.st;
     if (!s.editable || !s.draft) return;
+    // A schedule row deleted or cleared lets the host move the rows below it up. Typing still pending is filled first, on the keys it
+    // was typed for (and judged as every fill is), so it never lands on the row that moves into its place. A removal question or a
+    // refused fill stops the delete: the filer answers that first.
+    const clearsRow = Object.entries(edits).some(([k, v]) => String(v).trim() === "" && Boolean(this.items.get(this.keyIndex.get(k) ?? "")?.rows));
+    if (clearsRow && Object.keys(s.pending).length && !this.reopening) {
+      this.flush();
+      if (s.removal || Object.keys(s.pending).length) return;
+    }
     // Answers an agent's fill dropped: staged with the edits and dropped in the same fill, before them, so the return is
     // computed once, as the agent computed it (dropped alone, an ATC and a rate would zero the graduated income before the
     // edit that brings the rate back). The save that follows then does not store them again.

@@ -529,3 +529,40 @@ test("money note: a note on a schedule amount goes when deleting the row above m
     s?.dispose();
   }
 });
+
+test("pending edits before row moves: an amount typed in a row is filled on its own row before a Delete row in the same turn moves the rows", async () => {
+  const row = (s: FormSession, n: number) => [s.valueOf("txtNameWithHoldingAgent3" + n), s.valueOf("txtIncomePayment3" + n)];
+  const errors = (s: FormSession) => [0, 1, 2].flatMap((n) => sched3(n)).filter((k) => Boolean(s.boxMessageOf(k)));
+  const three = async (period: number) => {
+    const s = await opened(at("2550Q", 2024, period));
+    fillSched3Row(s, 0, "A0", "1000");
+    fillSched3Row(s, 1, "A1", "2000");
+    fillSched3Row(s, 2, "A2", "3000");
+    await s.idle();
+    return s;
+  };
+  // Typed in row 1, row 0 deleted: the typed row (now first) holds 7,777; A2's 3,000 is not overwritten.
+  let s = await three(1);
+  s.edit("txtIncomePayment31", "7777");
+  deleteRow(s, 0);
+  await s.idle();
+  expect([row(s, 0), row(s, 1), row(s, 2)]).toEqual([["A1", "7,777.00"], ["A2", "3,000.00"], ["", ""]]);
+  expect(errors(s)).toEqual([]);
+  s.dispose();
+  // Typed in the row being deleted: the amount goes with the row, no error.
+  s = await three(2);
+  s.edit("txtIncomePayment31", "7777");
+  deleteRow(s, 1);
+  await s.idle();
+  expect([row(s, 0), row(s, 1), row(s, 2)]).toEqual([["A0", "1,000.00"], ["A2", "3,000.00"], ["", ""]]);
+  expect(errors(s)).toEqual([]);
+  s.dispose();
+  // Typed in a row above the deleted one: it stays as typed.
+  s = await three(3);
+  s.edit("txtIncomePayment30", "7777");
+  deleteRow(s, 1);
+  await s.idle();
+  expect([row(s, 0), row(s, 1), row(s, 2)]).toEqual([["A0", "7,777.00"], ["A2", "3,000.00"], ["", ""]]);
+  expect(errors(s)).toEqual([]);
+  s.dispose();
+});
