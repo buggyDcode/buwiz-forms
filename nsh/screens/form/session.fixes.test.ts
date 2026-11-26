@@ -973,3 +973,36 @@ test("note in a row drawer: Queue asks the schedule to open the cell's row drawe
     s?.dispose();
   }
 });
+
+test("number note [L2]: a percent the host answers as another number shows as stored, with a note naming both (1601FQ Schedule 1's rate before the tax-relief answer)", async () => {
+  // The host answers every Schedule 1 row blank while the tax-relief question is unanswered: the box shows the return's 0.00,
+  // and a percent box says so like an amount box does (before: only money boxes had the sentence).
+  const rate = "txtRate0";
+  const s = await opened(at("1601FQ", 2025, 1));
+  s.focus(rate);
+  s.edit(rate, "42");
+  s.blur(rate);
+  await s.idle();
+  expect(s.shownOf(rate)).toBe("0.00");
+  expect(s.boxMessageOf(rate) ?? "").toContain("you typed 42; the return holds 0.00.");
+  // The amount beside it had its sentence already; it still does.
+  const income = "txtAmtIncomePay0";
+  s.focus(income);
+  s.edit(income, "1000");
+  s.blur(income);
+  await s.idle();
+  expect(s.boxMessageOf(income) ?? "").toContain("you typed 1,000.00; the return holds 0.00.");
+  s.dispose();
+});
+
+test("number note [L2]: a count the host stores as typed raises no note (2551Q Number of Sheets)", async () => {
+  const sheets = "frm2551Qv2018:txtSheets";
+  const s = await opened(at("2551Q", 2025, 3));
+  s.focus(sheets);
+  s.edit(sheets, "2");
+  s.blur(sheets);
+  await s.idle();
+  expect(s.shownOf(sheets)).toBe("2");
+  expect(s.boxMessageOf(sheets) ?? "").not.toContain("you typed");
+  s.dispose();
+});

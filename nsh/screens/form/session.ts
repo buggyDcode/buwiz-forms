@@ -1052,7 +1052,7 @@ export class FormSession {
     if (period) return this.editPeriod(period.period, text);
     const kind = this.kindOf.get(k);
     if (kind === "sel" || kind === "chk" || kind === "radio") return this.choose({ [k]: text });
-    if (kind === "money" || kind === "num") this.amountEdited.add(k);
+    if (kind && NUMBER_KINDS.has(kind)) this.amountEdited.add(k);
     this.sValue.get(k).set(text);
     if (s.periodParts.has(k)) return this.setPeriodPart({ [k]: text });
     let value = text;
@@ -1797,7 +1797,8 @@ export class FormSession {
     if (this.dropStaleNotes()) this.setErrors(s.errors);
     for (const k of Object.keys(edits)) {
       const kind = this.kindOf.get(k);
-      if ((kind !== "money" && kind !== "num") || k in rej || this.pools.has(k) || this.oneDateParts.has(k) || this.periodPartKeys.has(k)) continue;
+      // Every number box, a percent and a count included: whatever the kind, a box that shows another number than the one typed says so.
+      if (!kind || !NUMBER_KINDS.has(kind) || k in rej || this.pools.has(k) || this.oneDateParts.has(k) || this.periodPartKeys.has(k)) continue;
       const typedEdit = this.amountEdited.delete(k);
       const typed = String(edits[k] ?? "");
       const stored = String(s.values[k] ?? "");
@@ -1806,8 +1807,10 @@ export class FormSession {
       if (this.isShut(k)) continue;
       if (sameNumber(typed, stored)) continue;
       const whole = kind === "money" && this.wholeKeys.has(k);
-      const shownAmount = exactMoney(typed, whole);
-      const storedAmount = stored === "" ? "no amount" : exactMoney(stored, whole);
+      // An amount is named in its money form; a percent or a count as it is typed and as the return holds it.
+      const amount = kind === "money" || kind === "num";
+      const shownAmount = amount ? exactMoney(typed, whole) : typed.trim();
+      const storedAmount = stored === "" ? "no amount" : amount ? exactMoney(stored, whole) : stored.trim();
       if (shownAmount === storedAmount || sameNumber(shownAmount, stored)) continue;
       // The host stored another number than the one typed (a long number rounded, a clamp): the box shows what the return holds
       // (syncShown: the host changed it) and a note under it says what was typed. It holds no save.
