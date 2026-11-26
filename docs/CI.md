@@ -13,6 +13,9 @@ words.
 | Event | `ci.yml` | `nsh.yml` | Systems |
 | --- | --- | --- | --- |
 | Pull request (into `main`, `feat/**`, `gol/**`, `codex/**`) | quick checks | nothing | Linux |
+| Draft pull request (opened, or pushed to, as a draft) | nothing | nothing | none |
+| Draft marked ready for review | quick checks | nothing | Linux |
+| Pull request closed or merged | nothing; cancels its queued and running runs | nothing | none |
 | Push to `main` (a merge) | quick checks, never cancelled | nothing | Linux |
 | Push to `codex/**` | quick checks | nothing | Linux |
 | Push to `test/**` | workspace tests, Windows installer | app build, app Rust tests, screen tests | from the branch name |
@@ -37,12 +40,35 @@ The quick checks are:
 - The validation-rules audits on Linux, only when their paths change (see the table below).
 - `changes` decides all of this. `ci-ok` sums it up.
 
-`ci-ok` is the one required status. It fails if any job it asked for did not pass. A `test/**` push, a manual run
+`ci-ok` is the one required status. It fails if any job it asked for did not pass. A cancelled run (a newer push
+replaced it, or the pull request closed) reports no `ci-ok`. A `test/**` push, a manual run
 and the nightly run report `tests-ok` instead, so a test run on a pull request's commit never adds a second `ci-ok`
 result.
 
 No GitHub macOS job starts by itself. macOS runs only for `test/macos/**`, `test/all/**`, a manual run that names
 macOS, and the nightly run. Proof for the Mac normally comes from the Devin Macs.
+
+## Drafts and closed pull requests
+
+A draft pull request runs nothing. Every job of `ci.yml` is skipped before it takes a runner, so the pull request's
+checks list shows only skipped jobs, and none is red. GitHub does not work out a skipped job's name, so two of them
+are listed under the expression their name is made from, `ci-ok`'s among them. No check named `ci-ok` is reported, so
+the required `ci-ok` shows as not reported yet. That is expected: a draft cannot be merged anyway. Marking the pull
+request ready for review starts the quick checks, and their `ci-ok` is the one that counts. After that, every push
+runs them as before.
+
+Open a pull request as a draft while you are still pushing to it, and mark it ready when you want its checks
+(`gh pr create --draft`, then `gh pr ready`). Turning a ready pull request back into a draft does not stop the run
+already going. The next push to it does: that push runs nothing, and it cancels the older run.
+
+When a pull request closes or merges, its `closed` event cancels the pull request's runs that are still queued or
+running, and runs nothing itself. A pull request's runs share one concurrency group, keyed on its number, and a new
+run in that group cancels the older ones. Neither the `closed` run nor a cancelled run reports a check named
+`ci-ok`, so nothing turns red: the pull request keeps the `ci-ok` of its last finished run, if it had one.
+
+This does not reach `test/**` runs. Those are pushes to their own branch, in that branch's group. A newer push to the
+same `test/...` branch replaces its run, and `gh run cancel <run id>` stops one. `just ci-test-clean` deletes the
+branches whose runs have all finished. It keeps the busy ones, and deleting a branch does not stop its runs anyway.
 
 ## Asking for tests
 
@@ -77,7 +103,10 @@ git push --force origin HEAD:refs/heads/test/windows/my-branch
 The cleanup is a recipe, not a CI job. A job that deleted its own branch would need write access to the repository
 in CI. It would also break the other workflow's queued jobs on that branch, which still have to check it out.
 `just ci-test-clean` uses your own push access and skips every branch that still has a queued or running run.
-Deleting a branch does not remove its results from the commit.
+Deleting a branch does not remove its results from the commit. Batch branches (`test/<system>/batch-...`, see
+"Proving several pull requests together") are deleted the same way once their runs finish. On any machine but the
+one that built the batch, `just ci-batch-merge` and `just ci-batch-verify` need the branch, so clean up after the
+verify.
 
 ### Manual runs
 
@@ -112,9 +141,61 @@ A pull request is ready to merge when both of these hold:
 
 1. The quick checks are green on GitHub (`ci-ok`).
 2. The test suites passed at that exact commit, either from a `test/...` push (its runs show on the pull request)
-   or from a Devin machine at the pull request's head.
+   or from a Devin machine at the pull request's head. Or the pull request is in a green batch, merged as the batch
+   says (next section).
 
 Only the owner merges.
+
+## Proving several pull requests together
+
+Pull requests that touch the same files merge one at a time, and each is proven again with the one before it merged
+in: about half a day per merge. A batch (a rollup, as in bors or a GitLab merge train) proves several of them in one
+complete run, on exactly the tree `main` will have once they are all merged, and then they merge in that order.
+
+Use it for a queue of pull requests that are each reviewed and ready: not drafts, based on `main`, quick checks green.
+Leave out a pull request you still expect to push to: any push to it voids the batch.
+
+```sh
+just ci-batch 412 415 418           # Linux and Windows; or: just ci-batch all 412 415 418
+just ci-batch-status test/linux-windows/batch-412-415-418
+just ci-batch-merge  test/linux-windows/batch-412-415-418   # prints the merge commands, runs nothing
+just ci-batch-verify test/linux-windows/batch-412-415-418   # after the merges
+```
+
+- `just ci-batch [system] <pr> <pr> ...` reads each pull request from GitHub in one read (its full head sha, base,
+  draft flag and state) and refuses one that is closed, merged, a draft or not based on `main`, saying which. It then
+  starts at `main`'s current commit and applies the squash of each pull request in the order given: the head merged
+  onto the running commit with the merge base git finds, committed as one commit, which is what
+  `gh pr merge --squash` does once the ones before it are merged. It uses git plumbing only (`git merge-tree`,
+  `git commit-tree`) in the checkout's object store: no checkout, index or local branch changes, and nothing is
+  written outside the repository. On a conflict it stops, names the pull request and the files, and pushes nothing.
+  Otherwise it pushes the result to `test/<system>/batch-<pr>-<pr>...`, which starts the suites like any `test/**`
+  push (to `$CI_TEST_REMOTE` or `origin`, as `just ci-test` does). The system is `linux-windows` unless given first
+  (`linux`, `windows`, `macos`, `all`); macOS proof normally comes from the Devin Macs. One batch on Linux and Windows
+  takes about as many runners as one `just ci-test`, against the account's 20 jobs at a time (5 macOS).
+- The branch tip is an empty commit on top of the squashes whose message is the record: `Batch-Main` (main's full
+  sha), one `Batch-PR: <number> <full head sha>` per pull request in merge order, `Batch-Tree` (the final tree hash)
+  and `Batch-Systems`. The other three commands read only that record. A local copy is kept under
+  `refs/ci-batch/`, so on the machine that built the batch they still work after `just ci-test-clean` deleted the
+  branch.
+- `just ci-batch-status <branch>` says green, red or running for each workflow run of the batch's commit (`CI`,
+  `NSH app`), and for red, which jobs failed. It does not guess which pull request broke the batch: it prints the two
+  `just ci-batch` commands that run each half of the list, side by side on their own branches. Repeat on the red half.
+- `just ci-batch-merge <branch>` refuses unless the batch is green. It reads `main`'s sha and each pull request again
+  from GitHub, refuses if any of them moved (or is no longer open, ready and based on `main`), and then prints the
+  `gh pr merge <n> --repo hexuria/buwiz-forms --squash --match-head-commit <recorded sha>` commands in order. It runs
+  none of them: only the owner merges (adding `--admin` if needed).
+- `just ci-batch-verify <branch>`, after the merges, compares `main`'s tree hash with the batch's `Batch-Tree`: equal
+  or not equal. Not equal means the batch's proof does not cover `main`; prove `main` itself (`just ci-main`).
+
+The proof is valid only when all of this holds:
+
+1. When merging, `main` is still the recorded `Batch-Main` and every head is still its recorded sha
+   (`just ci-batch-merge` checks both; `--match-head-commit` checks each head again at its own merge).
+2. The pull requests merge in the recorded order, as squash merges, with nothing else merged in between.
+3. Afterwards `main`'s tree equals `Batch-Tree` (`just ci-batch-verify`).
+
+If any of these fails, the batch proves nothing about `main`: run the batch again, or prove `main`.
 
 ## Which paths lead to which suites
 
@@ -147,7 +228,8 @@ production-boundary check is a different thing: it stays in the quick checks of 
 
 - Each merge to `main` runs the quick checks in a concurrency group of its own, so no merge cancels another and none
   cancels the nightly run. Before this, four merges in three minutes cancelled each other and left `main` with no
-  complete run. On a branch or a pull request, a newer push cancels the older run.
+  complete run. On a branch or a pull request, a newer push cancels the older run. A pull request's group is keyed
+  on its number, so closing or merging it cancels its runs too.
 - The nightly run tests everything on all three systems, with one runner per system for the screen tests.
 - After a batch of merges, `just ci-main` starts the same complete run straight away (`gh workflow run` on
   `main` for both workflows).
