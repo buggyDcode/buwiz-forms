@@ -1,12 +1,11 @@
 // A test fixture, not a screen: the form page for the demo taxpayer, the form named by the test
 // (open(..., { host: { params: { formCode, year, period, mode } } })). Toasts are listed as texts (testID fx-toasts), and the
 // ids of dismissed ones too, so a test reads what the page said.
-import { host, mount, signal, Text, View } from "nsh";
+import { cleanup, host, mount, signal, Text, View } from "nsh";
 import { bir } from "../../bir";
 import "../../theme/fonts";
 import { createDemoTaxpayer, DEMO } from "../../bir/testing";
 import { app, store } from "../../shell";
-import { moneyWriteOps } from "./controls/FieldControl";
 import { FormPage, type FormTarget } from "./FormPage";
 
 interface Params {
@@ -50,6 +49,10 @@ let count = 0;
 function Fixture() {
   createDemoTaxpayer();
   const p = (host.params || {}) as Params;
+  let probeTimer: ReturnType<typeof setInterval> | undefined;
+  cleanup(() => {
+    if (probeTimer !== undefined) clearInterval(probeTimer);
+  });
   if (p.compact) app.setPref("compactFormNav", true);
   const seeded = signal(!p.seed);
   if (p.seed) void seedParity(DEMO.tin).then(() => seeded.set(true));
@@ -79,7 +82,7 @@ function Fixture() {
               }
               for (const [k, v] of Object.entries(p.edits || {})) s.edit(k, v);
               if (p.stepRow) s.jumpTo(Number(p.stepRow.split(":")[0]), p.stepRow);
-              if (p.probeKey) setInterval(() => probeValue.set(s.valueOf(p.probeKey!) || ""), 100);
+              if (p.probeKey) probeTimer = setInterval(() => probeValue.set(s.valueOf(p.probeKey!) || ""), 100);
             })
           }
         />
@@ -88,7 +91,6 @@ function Fixture() {
         <Text>{`saved returns ${store.savedReturns().length}`}</Text>
         <Text testID="fx-session-fields">{`session fields ${sessionFields()}`}</Text>
         <Text>{`probe ${probeValue()}`}</Text>
-        <Text>{`writes ${moneyWriteOps()}`}</Text>
         <Each of={toasts()}>{(t) => <Text>{t()}</Text>}</Each>
       </View>
     </View>

@@ -32,7 +32,7 @@ test("desktop: a checkbox and a dropdown take the keyboard from their ref", asyn
   expect(app.shows("text:Alpha")).toBe(true);
 });
 
-test("desktop: programmatic focus on a filled amount writes no text or caret", async () => {
+test("desktop: programmatic focus on a filled amount writes no text and selects it whole", async () => {
   const app = await open(ENTRY, WIDE);
   expect(app.value("id:f-filled")).toBe("1,234.56");
   const textWrites = readout(app, "Text writes:");
@@ -41,5 +41,18 @@ test("desktop: programmatic focus on a filled amount writes no text or caret", a
   await app.wait(200);
   expect(app.value("id:f-filled")).toBe("1,234.56");
   expect(readout(app, "Text writes:")).toBe(textWrites);
-  expect(readout(app, "Caret writes:")).toBe(caretWrites);
+  expect(readout(app, "Caret writes:")).not.toBe(caretWrites);
+  expect(readout(app, "Caret range:")).toBe("Caret range: 0:8");
+  // Headless typing always goes at the end and does not model a native selection; the selection operation itself is
+  // the cross-platform contract here, and real keys prove the replacement.
+});
+
+test("desktop: a repeated focus without a blur does not rewrite, reselect or renotify a filled amount", async () => {
+  const app = await open(ENTRY, WIDE);
+  await app.press("id:go-filled-twice");
+  await app.wait(100);
+  expect(app.value("id:f-filled")).toBe("1,234.56");
+  expect(readout(app, "Text writes:")).toBe("Text writes: 0");
+  expect(readout(app, "Caret writes:")).toBe("Caret writes: 1");
+  expect(readout(app, "Focus events:")).toBe("Focus events: 1");
 });

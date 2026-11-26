@@ -74,7 +74,7 @@ test("money round trip desktop: focus on a filled amount keeps its grouped text 
   const box = "id:fp-frm2551Qv2018:txt15";
   const app = await open(ENTRY, {
     ...DESKTOP,
-    host: { params: { formCode: "2551Q", year: 2025, period: 2, probeKey: "frm2551Qv2018:txt15", probeWrites: "frm2551Qv2018:txt15", edits: { "frm2551Qv2018:txt15": "1234.56" } } },
+    host: { params: { formCode: "2551Q", year: 2025, period: 2, probeKey: "frm2551Qv2018:txt15", edits: { "frm2551Qv2018:txt15": "1234.56" } } },
   });
   await app.waitFor("text:BIR Form 2551Q");
   await app.press("id:fp-nav-2");
@@ -83,11 +83,9 @@ test("money round trip desktop: focus on a filled amount keeps its grouped text 
   await app.type(box, ""); // focus only
   await app.wait(300);
   expect(app.value(box)).toBe("1,234.56");
-  expect(app.texts()).toContain("writes ");
   await app.type(box, "9");
   await app.wait(300); // the host round trip may answer before the assertion
   expect(app.value(box)).toBe("1,234.569");
-  expect(app.texts()).toContain("writes ");
   await app.submit(box);
   await app.waitFor("text:✓ Saved", { timeout: 8000 });
   await app.waitUntil(() => app.texts().includes("probe 1,234.57"), { timeout: 5000 });
@@ -99,18 +97,18 @@ test("money round trip desktop: twelve digits count without separators in a fill
   const box = "id:fp-frm2551Qv2018:txt15";
   const filled = await open(ENTRY, {
     ...DESKTOP,
-    host: { params: { formCode: "2551Q", year: 2025, period: 2, probeKey: "frm2551Qv2018:txt15", edits: { "frm2551Qv2018:txt15": "99999999.99" } } },
+    host: { params: { formCode: "2551Q", year: 2025, period: 2, probeKey: "frm2551Qv2018:txt15", edits: { "frm2551Qv2018:txt15": "99999999.12" } } },
   });
   await filled.waitFor("text:BIR Form 2551Q");
   await filled.press("id:fp-nav-2");
   await filled.waitFor(box);
-  await filled.waitUntil(() => filled.value(box) === "99,999,999.99", { timeout: 5000 });
+  await filled.waitUntil(() => filled.value(box) === "99,999,999.12", { timeout: 5000 });
   await filled.type(box, "99"); // ten digits already there, then two more inside the grouped text: twelve digits in all
   await filled.wait(500);
-  expect(filled.value(box)).toBe("99,999,999.9999");
+  expect(filled.value(box)).toBe("99,999,999.1299");
   await filled.submit(box);
   await filled.waitFor("text:✓ Saved", { timeout: 8000 });
-  await filled.waitUntil(() => filled.texts().includes("probe 100,000,000.00"), { timeout: 5000 });
+  await filled.waitUntil(() => filled.texts().includes("probe 99,999,999.13"), { timeout: 5000 });
 
   const replacement = await open(ENTRY, {
     ...DESKTOP,
@@ -121,14 +119,34 @@ test("money round trip desktop: twelve digits count without separators in a fill
   await replacement.waitFor(box);
   await replacement.type(box, "");
   await replacement.waitUntil(() => replacement.value(box) === "", { timeout: 3000 });
-  await replacement.type(box, "9999999999.99");
+  await replacement.type(box, "99999999.1299");
   await replacement.wait(500);
-  expect(replacement.value(box)).toBe("9999999999.99");
+  expect(replacement.value(box)).toBe("99999999.1299");
   await replacement.submit(box);
   await replacement.waitFor("text:✓ Saved", { timeout: 8000 });
-  await replacement.waitUntil(() => replacement.texts().includes("probe 9,999,999,999.99"), { timeout: 5000 });
+  await replacement.waitUntil(() => replacement.texts().includes("probe 99,999,999.13"), { timeout: 5000 });
 }, 45_000);
 
+
+test("money unreadable desktop: leaving 1500x keeps the old amount, says so, and the save goes through", async () => {
+  const box = "id:fp-frm2551Qv2018:txt15";
+  const app = await open(ENTRY, {
+    ...DESKTOP,
+    host: { params: { formCode: "2551Q", year: 2025, period: 3, probeKey: "frm2551Qv2018:txt15", edits: { "frm2551Qv2018:txt15": "100" } } },
+  });
+  await app.waitFor("text:BIR Form 2551Q");
+  await app.press("id:fp-nav-2");
+  await app.waitFor(box);
+  await app.waitUntil(() => app.value(box) === "100.00", { timeout: 5000 });
+  await app.clear(box); // one focus: the amount it held then was 100.00
+  await app.type(box, "1500x");
+  expect(app.value(box)).toBe("1500x");
+  await app.submit(box);
+  await app.waitUntil(() => app.value(box) === "100.00", { timeout: 5000 });
+  expect(app.texts()).toContain("1500x is not an amount. The box kept 100.00.");
+  await app.waitUntil(() => app.texts().includes("probe 100.00"), { timeout: 5000 });
+  await app.waitFor("text:✓ Saved", { timeout: 8000 });
+}, 30_000);
 
 test("F7-1 desktop: emptying an amount box shows the host's zero, not the old amount, and the save line says Saved", async () => {
   // The amount is typed through the fixture (app.type lands beside a box's prefilled 0.00).

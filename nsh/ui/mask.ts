@@ -415,7 +415,11 @@ export function readAmount(text: string, negative = false): string | null {
   if (suffix && suffix.index > 0) t = t.slice(0, suffix.index).trim();
   if (t === "") return null;
   let neg = false;
-  if (t.startsWith("-")) {
+  if (t.startsWith("(") && t.endsWith(")")) {
+    if (!negative) return null;
+    neg = true;
+    t = t.slice(1, -1);
+  } else if (t.startsWith("-")) {
     if (!negative) return null;
     neg = true;
     t = t.slice(1);
@@ -430,7 +434,7 @@ export function readAmount(text: string, negative = false): string | null {
 
 /** Whether focused money text reads as an amount. Empty is zero and valid. */
 export function validAmountText(text: string, negative = false): boolean {
-  return String(text ?? "") === "" || readAmount(text, negative) !== null;
+  return String(text ?? "").trim() === "" || readAmount(text, negative) !== null;
 }
 
 /** The money mask with no minus to type. */

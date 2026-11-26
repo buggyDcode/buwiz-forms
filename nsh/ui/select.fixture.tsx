@@ -30,6 +30,10 @@ function App() {
       <View class="flex-row gap-2">
         <AppButton label="Focus some" size="sm" testID="s-go-some" onPress={() => someRef?.focus()} />
         <AppButton label="Focus zero" size="sm" testID="s-go-zero" onPress={() => zeroRef?.focus()} />
+        <AppButton label="Focus zero same-turn 15" size="sm" testID="s-zero-same" onPress={() => {
+          zeroRef?.focus();
+          zeroRef?.insertText("15");
+        }} />
       </View>
       <TextField label="Free" value={free()} onChange={(v) => free.set(v)} testID="s-free" />
       <MoneyInput label="Some" value={some()} onChange={(v) => some.set(v)} inputRef={(r) => (someRef = r)} testID="s-some" />
