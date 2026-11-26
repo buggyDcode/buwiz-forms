@@ -33,6 +33,9 @@ function App() {
   const showCb = signal(true);
   let twoRef: InputRef | undefined;
   const armHeld = signal(false);
+  const refill = signal("1250");
+  const refillOnce = signal(true);
+  const refillBefore = signal(false);
   return (
     <View class="gap-2 p-3">
       <View class="flex-row flex-wrap gap-x-3">
@@ -52,6 +55,7 @@ function App() {
         <Text variant="cap">{`Code: ${code() || "empty"}`}</Text>
         <Text variant="cap">{`Zcode: ${zcode() || "empty"}`}</Text>
         <Text variant="cap">{`Host: ${host() || "empty"}`}</Text>
+        <Text variant="cap">{`Refill: ${refill() || "empty"}`}</Text>
         <Text variant="cap">{`Two: ${two() || "empty"}`}</Text>
         <Text variant="cap">{`Invalid: ${invalid()}`}</Text>
         <Text variant="cap">{`Invalid count: ${invalidCount()}`}</Text>
@@ -94,6 +98,10 @@ function App() {
       <AppButton label="Blur two" size="sm" testID="m-blur-two" onPress={() => twoRef?.blur()} />
       <AppButton label="Insert x in two" size="sm" testID="m-insert-x-two" onPress={() => twoRef?.insertText("x")} />
       <AppButton label="Arm held outside" size="sm" testID="m-arm-held" onPress={() => armHeld.set(true)} />
+      <AppButton label="Arm refill before empty" size="sm" testID="m-arm-refill-before" onPress={() => {
+        refillOnce.set(false);
+        refillBefore.set(true);
+      }} />
       <AppButton label="Unmount cb" size="sm" testID="m-unmount-cb" onPress={() => showCb.set(false)} />
       <MoneyInput
         width={100}
@@ -123,6 +131,24 @@ function App() {
           testID="m-cb"
         />
       </If>
+      <MoneyInput
+        width={100}
+        label="Refill"
+        value={refill()}
+        onFocus={() => {
+          if (!refillBefore()) return;
+          refillBefore.set(false);
+          refill.set("3000");
+        }}
+        onChange={(v) => {
+          refill.set(v);
+          if (v === "" && refillOnce()) {
+            refillOnce.set(false);
+            setTimeout(() => refill() === "" && refill.set("1250"), 50);
+          }
+        }}
+        testID="m-refill"
+      />
       <MoneyInput
         width={100}
         label="Host"

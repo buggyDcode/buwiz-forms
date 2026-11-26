@@ -181,6 +181,7 @@ test("a real window: an outside refill waits for the box to be left, and typing 
   expect(app.value("id:s-kept")).toBe("");
   await app.type("id:s-free", "");
   expect(app.value("id:s-kept")).toBe("1,250.00");
+  expect(read(app, "Kept:")).toBe("Kept: 1250");
 
   const typed = await open(FIXTURE, WIDE);
   if (!(await real(typed))) return;

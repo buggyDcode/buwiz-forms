@@ -255,6 +255,10 @@ function MaskedField(props: MaskedProps) {
   // box took the keys.
   let last = props.value ?? "";
   let edited = false;
+  // Whether the box's last report was empty, and whether a nonzero outside value answered that report during
+  // this focus. The first later edit is the filer's answer instead.
+  let lastReportEmpty = false;
+  let outsideAfterEmpty = false;
   // The selection the input last reported, and what the current edit started from (taken at its key press): that
   // selection, and whether the key typed a character (a paste or any edit without a key is judged as a paste).
   let selected: TextSelection | undefined;
@@ -304,6 +308,11 @@ function MaskedField(props: MaskedProps) {
     props.field.writeProbe?.("caret", start, end);
     input?.setSelection(start, end);
   };
+  const report = (value: string) => {
+    last = value;
+    lastReportEmpty = value === "";
+    props.onChange(value);
+  };
   // A value set from outside (another box, a reload) shows; the field's own edits come back equal and change nothing.
   effect(() => {
     const value = props.value ?? "";
@@ -314,6 +323,7 @@ function MaskedField(props: MaskedProps) {
       // where a host that truly holds blank still shows blank and a host that holds zero shows zero.
       const ownEmptyEcho = last === "" && isZeroAmount(value);
       if (!same(value, last) && !ownEmptyEcho) {
+        if (lastReportEmpty && last === "") outsideAfterEmpty = true;
         outsideValue = value;
         last = value;
       }
@@ -350,6 +360,8 @@ function MaskedField(props: MaskedProps) {
     const stored = props.value ?? "";
     if (!untracked(focused) && isZeroAmount(stored) && props.shown(stored, true) === "" && prev === props.shown(stored, false)) {
       inputBeforeFocus = true;
+      lastReportEmpty = false;
+      outsideAfterEmpty = false;
       focused.set(true);
       focusValue = stored;
       commaState = initialCommaState(prev);
@@ -357,6 +369,7 @@ function MaskedField(props: MaskedProps) {
       zeroMask = Array.from({ length: prev.length }, () => true);
       zeroWriteLanded = true;
     }
+    if (outsideAfterEmpty) outsideAfterEmpty = false;
     const from = editFrom;
     const typed = editTyped;
     editFrom = undefined;
@@ -375,8 +388,7 @@ function MaskedField(props: MaskedProps) {
           // A newer value held for this focus is the fallback, not the older value the box had when focus began.
           const fallback = untracked(focused) ? (outsideValue ?? focusValue) : last;
           if (!same(fallback, last)) {
-            last = fallback;
-            props.onChange(fallback);
+            report(fallback);
           }
         }
         return;
@@ -389,8 +401,7 @@ function MaskedField(props: MaskedProps) {
       // A key and its Backspace are no edit: a value held from outside still wins on leaving.
       edited = !same(value, focusValue);
       if (value === last) return;
-      last = value;
-      props.onChange(value);
+      report(value);
       return;
     }
     const staleRead = readWithoutStaleZero(prev, raw);
@@ -409,8 +420,7 @@ function MaskedField(props: MaskedProps) {
     const value = props.valueOf(zeroMask ? staleRead : next.text);
     edited = !same(value, focusValue);
     if (value === last) return;
-    last = value;
-    props.onChange(value);
+    report(value);
   };
   // Blur and unmount are the same leave. Unmount cannot write the native box away, but the value, unreadable-note
   // callback and the box's blur callback are exactly the blur ones.
@@ -440,16 +450,17 @@ function MaskedField(props: MaskedProps) {
           invalidActive = false;
           rollbackReported = false;
         } else {
-          if (write && !edited && outsideValue !== undefined) writeText(props.shown(outsideValue, false));
+          const refillWins = outsideAfterEmpty && reading.trim() === "";
+          const filerEdited = edited && !refillWins;
+          if (write && !filerEdited && outsideValue !== undefined) writeText(props.shown(outsideValue, false));
           const heldZero = reading.trim() === "" && isZeroAmount(props.value ?? "") ? (props.value ?? "") : commaValueOf(reading, true);
-          const laidOut = edited ? props.shown(heldZero, false) : props.shown(outsideValue ?? props.value ?? "", false);
-          const semanticShown = edited && props.settle ? props.settle(laidOut) : laidOut;
+          const laidOut = filerEdited ? props.shown(heldZero, false) : props.shown(outsideValue ?? props.value ?? "", false);
+          const semanticShown = filerEdited && props.settle ? props.settle(laidOut) : laidOut;
           // Blank is what nullable amounts hold; a host that stores zero writes that zero back through the outside value.
           if (write && semanticShown !== text()) writeText(semanticShown);
           const value = commaValueOf(semanticShown, true);
           if (!same(value, last)) {
-            last = value;
-            props.onChange(value);
+            report(value);
           }
         }
         outsideValue = undefined;
@@ -459,6 +470,8 @@ function MaskedField(props: MaskedProps) {
         edited = false;
         focusCallbackSeen = false;
         inputBeforeFocus = false;
+        lastReportEmpty = false;
+        outsideAfterEmpty = false;
         zeroFocusText = undefined;
         zeroMask = undefined;
         zeroWriteLanded = false;
@@ -556,6 +569,8 @@ function MaskedField(props: MaskedProps) {
         rollbackReported = false;
         invalidActive = false;
         leftUnreadable.set(null);
+        lastReportEmpty = false;
+        outsideAfterEmpty = false;
         zeroFocusText = undefined;
         if (WINDOWS_RESELECT && outsideWriteAt > 0 && Date.now() - outsideWriteAt <= WINDOWS_RESELECT_WRITE_MS && !windowsReselectDone) {
           armWindowsReselect = true;

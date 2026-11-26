@@ -507,6 +507,38 @@ for (const size of SIZES) {
     expect(readout(app, "Two:")).toBe("Two: 3000.00");
   });
 
+  test(`${size.name}: M2-2: an outside refill after the empty report wins when it is left unanswered`, async () => {
+    const app = await open("./masked.fixture.tsx", { ...size.options, clock: {} });
+    await app.clear("id:m-refill");
+    await app.clock?.runFor(100);
+    expect(app.value("id:m-refill")).toBe("");
+    expect(readout(app, "Refill:")).toBe("Refill: 1250");
+    await app.type("id:m-other", " ");
+    expect(app.value("id:m-refill")).toBe("1,250.00");
+    expect(readout(app, "Refill:")).toBe("Refill: 1250");
+  });
+
+  test(`${size.name}: M2-2: any edit after the refill is the filer's, even back to empty`, async () => {
+    const app = await open("./masked.fixture.tsx", { ...size.options, clock: {} });
+    await app.clear("id:m-refill");
+    await app.clock?.runFor(100);
+    await app.keyboard.press("7");
+    await app.keyboard.press("backspace");
+    await app.type("id:m-other", " ");
+    expect(app.value("id:m-refill")).toBe("");
+    expect(readout(app, "Refill:")).toBe("Refill: empty");
+  });
+
+  test(`${size.name}: M2-2: an outside value before the emptying does not win`, async () => {
+    const app = await open("./masked.fixture.tsx", { ...size.options, clock: {} });
+    await app.press("id:m-arm-refill-before");
+    await app.type("id:m-refill", "");
+    await app.clear("id:m-refill");
+    await app.type("id:m-other", " ");
+    expect(app.value("id:m-refill")).toBe("");
+    expect(readout(app, "Refill:")).toBe("Refill: empty");
+  });
+
   test(`${size.name}: a valid money key reports in the same turn, with no timer`, async () => {
     const app = await open("./masked.fixture.tsx", { ...size.options, clock: {} });
     await app.clear("id:m-amount");
