@@ -6,7 +6,7 @@
 // a TIN its digits (no dashes); a date MM/DD/YYYY once the text reads as a date, else the text; sel the code; chk
 // "true"/"false". Locked, computed and disabled boxes draw as read-only boxes (no Input) and report nothing.
 import type { ViewRef } from "nsh";
-import { View } from "nsh";
+import { cleanup, View } from "nsh";
 import {
   CheckboxLabel, DateField, Dropdown, Icon, IntInput, Line, MoneyInput, moneyPlain, PercentInput, T_H, T_MIN_H, Text, TextField, TinInput, Tooltip, TOUCH,
 } from "../../../ui";
@@ -307,6 +307,7 @@ function TypedBox(props: { p: FieldInput }) {
  * off is drawn faded. Wide: the box has the width the page gives. Narrow: the whole room, with the kit's touch height.
  */
 export function FieldControl(props: FieldInput) {
+  cleanup(() => props.blurRef?.(null));
   return (
     <View class="min-w-0 gap-1" style={{ opacity: props.box.off() ? OFF_OPACITY : 1 }}>
       <If

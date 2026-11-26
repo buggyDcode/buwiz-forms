@@ -122,7 +122,7 @@ test("a note in a folded part stops Queue once: Queue opens the part, brings the
 // A box that goes away while it has the keys (its part folds) runs its leave logic from its cleanup and unregisters its blur: the money
 // box's side of note rule 4, not in this tree yet. Until then the session still holds the box as focused, Queue's settle waits on a
 // blur that never comes and stops with "Finish the amount in Item 15 first." Turn BOX_LEAVES_ON_UNMOUNT on once it lands.
-const BOX_LEAVES_ON_UNMOUNT = false;
+const BOX_LEAVES_ON_UNMOUNT = true;
 
 (BOX_LEAVES_ON_UNMOUNT ? test : test.skip)("a note raised as the navigator folds its part still stops Queue: Queue opens the part, shows the box and names the item", async () => {
   const app = await page(2024, 3);

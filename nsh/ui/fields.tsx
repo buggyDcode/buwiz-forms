@@ -4,7 +4,7 @@
 // the selection the input reported before each edit goes to the mask so the edit is read exactly (NSH: onKeyPress comes
 // before the text changes, onSelectionChange has the selection; nsh/.nsh/types/nsh/types.d.ts InputHostProps).
 import type { InputRef, JSX, ViewRef } from "nsh";
-import { effect, platform, signal, Text as NText, untracked, View } from "nsh";
+import { cleanup, effect, platform, signal, Text as NText, untracked, View } from "nsh";
 import { Calendar, type CalendarEntry, DatePicker, Input, OtpInput, type OtpInputRef } from "nsh/base";
 import { AppButton } from "./buttons";
 import type { IconName } from "./icons";
@@ -450,6 +450,10 @@ function MaskedField(props: MaskedProps) {
         programmaticFocusToken++;
         props.field.onBlur?.();
   };
+
+  cleanup(() => {
+    if (untracked(focused)) finishLeave(false);
+  });
 
   return (
     <TextField

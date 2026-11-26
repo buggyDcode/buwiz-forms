@@ -608,6 +608,39 @@ function formatGroupedExpectation(digits: string): string {
 }
 
 for (const size of SIZES) {
+  test(`${size.name}: U: unmounting a focused unreadable money box is a leave, without a box write`, async () => {
+    const app = await open("./masked.fixture.tsx", size.options);
+    await app.clear("id:m-cb");
+    await app.type("id:m-cb", "1500x");
+    await app.press("id:m-unmount-cb");
+    expect(readout(app, "Invalid:")).toBe("Invalid: 1500x|2,000.00");
+    expect(readout(app, "Invalid count:")).toBe("Invalid count: 1");
+    expect(readout(app, "Cb blurs:")).toBe("Cb blurs: 1");
+    expect(app.shows("id:m-cb")).toBe(false);
+  });
+
+  test(`${size.name}: U: unmounting a focused readable money box reports the blur amount; unfocused unmount says nothing`, async () => {
+    const app = await open("./masked.fixture.tsx", size.options);
+    await app.clear("id:m-cb");
+    await app.type("id:m-cb", "1500.5");
+    await app.press("id:m-unmount-cb");
+    expect(readout(app, "Cb:")).toBe("Cb: 1500.5");
+    expect(readout(app, "Cb blurs:")).toBe("Cb blurs: 1");
+    expect(readout(app, "Invalid count:")).toBe("Invalid count: 0");
+  });
+}
+
+for (const size of SIZES) {
+
+  test(`${size.name}: U: unmounting an unfocused money box says nothing`, async () => {
+    const app = await open("./masked.fixture.tsx", size.options);
+    await app.press("id:m-unmount-cb");
+    expect(readout(app, "Cb blurs:")).toBe("Cb blurs: 0");
+    expect(readout(app, "Invalid count:")).toBe("Invalid count: 0");
+  });
+}
+
+for (const size of SIZES) {
   test(`${size.name}: S2: unreadable text in an unfocused box falls back to its last value, not a stale focus value`, async () => {
     const app = await open("./masked.fixture.tsx", size.options);
     await app.type("id:m-two", "");
