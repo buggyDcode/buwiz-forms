@@ -383,6 +383,8 @@ interface St {
   messageCounts: Record<string, number>;
   /** Boxes the host refused at the last fill, with its message (kept until the box is edited again). */
   rejected: Record<string, string>;
+  /** A host refusal or shown-amount mismatch that arrived while its box held text that is not an amount: back once the text reads again. */
+  heldUnder: Record<string, string>;
   /** Refused keys whose refusal retyping cannot fix (shut/locked): they restore the stored value and do not hold Save or Queue. */
   unfixable: Set<string>;
   /** `dirty` as it was before the pending batch opened, so an all-unfixable batch can give it back. */
@@ -434,7 +436,7 @@ function freshState(target: FormTarget): St {
     stepFromTop: false, asks: [], askAt: new Map(), askPick: {}, askText: {}, askSavedAt: new Map(), factErrors: [],
     profileSave: {}, profileEdited: new Set(), profileAsked: new Set(), profileAskUnknown: false, guessed: new Set(), profileAskSeen: {}, profileAskMsg: {},
     askDone: new Set(), askDoneRaw: new Map(), profileChanged: [], errors: [], messages: {},
-    messageKeys: {}, messageCounts: {}, rejected: {}, unfixable: new Set(), dirtyBatch: null, boxMessages: {}, formErrors: [], checkable: {}, electionAt: null, electionPick: null, electionSavedAt: null,
+    messageKeys: {}, messageCounts: {}, rejected: {}, heldUnder: {}, unfixable: new Set(), dirtyBatch: null, boxMessages: {}, formErrors: [], checkable: {}, electionAt: null, electionPick: null, electionSavedAt: null,
     profileRefreshed: false, dateErrors: {}, datesEdited: new Set(), pending: {}, rangeHeld: {}, forget: [], chosenFrom: {}, dirty: false,
     editSeq: 0, validateSeq: 0, checking: false, removal: null, queueWarn: null, openParts: new Set([0]), current: 0,
     touched: new Set(), showAll: false, previewOpen: false, overlay: null, saveState: { state: "idle" },
@@ -447,6 +449,8 @@ const sameJson = <T,>(a: T, b: T) => a === b || JSON.stringify(a) === JSON.strin
 const AMOUNT_MISMATCH = "shown amount mismatch";
 /** The toast of a save held by a shown-amount mismatch (nothing was written). */
 const AMOUNT_NOT_SAVED = "An amount was not saved. Correct the highlighted box.";
+/** A money box holds text that does not read as an amount: "amount not valid|<text>" (the box's onInvalid). */
+const AMOUNT_INVALID = "amount not valid";
 
 /** Two amounts are the same number; a blank one is zero. */
 function sameNumber(a: string, b: string): boolean {
@@ -1387,9 +1391,13 @@ export class FormSession {
       s.pending[k] = v;
       if (s.opened.has(k) && s.profileSave[k]) s.profileEdited.add(k);
       delete s.kept[k];
-      delete s.rejected[k];
+      // A box still holding text that is not an amount keeps saying so: only its own onInvalid(null) lifts that.
+      delete s.heldUnder[k];
+      if (!this.isInvalid(k)) {
+        delete s.rejected[k];
+        delete s.boxMessages[k];
+      }
       s.unfixable.delete(k);
-      delete s.boxMessages[k];
     }
     s.dirty = true;
     this.unquiet(Object.keys(edits));
@@ -1462,6 +1470,7 @@ export class FormSession {
     for (const k of Object.keys(edits)) {
       delete s.kept[k];
       delete s.rejected[k];
+      delete s.heldUnder[k];
       s.unfixable.delete(k);
     }
     s.chosenFrom = Object.fromEntries(Object.keys(edits).map((k) => [k, s.values[k] ?? ""]));
@@ -1720,7 +1729,7 @@ export class FormSession {
       const storedAmount = stored === "" ? "blank" : formatMoney(stored, whole);
       if (shownAmount === storedAmount) continue;
       shownRejected[k] = `${AMOUNT_MISMATCH}|${shownAmount}|${storedAmount}`;
-      s.rejected[k] = shownRejected[k];
+      this.refuseBox(k, shownRejected[k]);
       const id = this.keyIndex.get(k);
       if (id) s.touched.add(id);
     }
@@ -1735,6 +1744,11 @@ export class FormSession {
       Object.keys(edits).length > 0 && Object.keys(edits).every((k) => k in rej && unfixableRefusal(rej[k]));
     // A refused box shows its own sentence under it; its message shows (its row is touched) until it is edited again.
     for (const [k, msg] of Object.entries(rej)) {
+      // Under text that is not an amount the refusal waits (it is about an amount the box no longer shows).
+      if (this.isInvalid(k)) {
+        this.refuseBox(k, msg);
+        continue;
+      }
       const sentence = this.refusalText(k, msg);
       s.boxMessages[k] = s.boxMessages[k] ? `${s.boxMessages[k]} ${sentence}` : sentence;
       const id = this.keyIndex.get(k);
@@ -1753,7 +1767,7 @@ export class FormSession {
       // B19: a fixable refusal keeps what was typed; the draft never took it.
     }
     // F9: this fill's locks and moves may leave an earlier mismatch on a box the filer can no longer correct.
-    this.dropStaleMismatches();
+    this.dropStaleMismatches({ before, edits });
     if (allUnfixable && heldDirty !== null) {
       s.dirty = heldDirty;
       s.saveState = this.restingSaveState();
@@ -1780,18 +1794,94 @@ export class FormSession {
    * F9: a shown-amount mismatch lasts only while the filer can correct its box. It goes, and the box shows what the draft holds, when
    * the box is shut now (locked, computed, off by a gate, a penalty not opened), or when the host moved or cleared what it stored there
    * since: a deleted schedule row's rows below move up, so the row the mismatch was about is no longer at that box. Left alone it would
-   * hold every save and Queue with its message on a box that cannot be corrected or no longer shows that row.
+   * hold every save and Queue with its message on a box that cannot be corrected or no longer shows that row. Text that is not an
+   * amount goes by the same rule: when its box is shut, or a fill (`moved`: the values before it and its edits) changed what the draft
+   * holds there without an edit of that box. What it covered comes back, and is judged in turn.
    */
-  private dropStaleMismatches() {
+  private dropStaleMismatches(moved?: { before: Record<string, string>; edits: Record<string, string> }) {
     const s = this.st;
-    for (const k of this.mismatchKeys()) {
+    for (const k of Object.keys(s.rejected)) {
+      if (!this.isInvalid(k)) continue;
+      const shifted = moved && !(k in moved.edits) && (moved.before[k] ?? "") !== (s.values[k] ?? "");
+      if (!shifted && !this.isShut(k)) continue;
+      this.liftInvalid(k);
+      if (!(k in s.rejected)) this.sValue.get(k).set(this.shownText(k));
+    }
+    for (const k of this.heldKeys()) {
+      if (this.isInvalid(k)) continue;
       const stored = s.rejected[k].split("|")[2] ?? "";
-      const moved = !sameNumber(stored === "blank" ? "" : stored, String(s.values[k] ?? ""));
-      if (!moved && !this.isShut(k)) continue;
+      const movedAway = !sameNumber(stored === "blank" ? "" : stored, String(s.values[k] ?? ""));
+      if (!movedAway && !this.isShut(k)) continue;
       delete s.rejected[k];
       delete s.boxMessages[k];
       this.sValue.get(k).set(this.shownText(k));
     }
+  }
+
+  /** Whether box k holds text that is not an amount (the box said so with onInvalid). */
+  private isInvalid(k: string): boolean {
+    return (this.st.rejected[k] ?? "").startsWith(`${AMOUNT_INVALID}|`);
+  }
+
+  /** Records a host refusal or a mismatch for k; under text that is not an amount it waits until that text reads again. */
+  private refuseBox(k: string, msg: string) {
+    if (this.isInvalid(k)) this.st.heldUnder[k] = msg;
+    else this.st.rejected[k] = msg;
+  }
+
+  /** The not-an-amount entry of k goes; what it covered comes back. */
+  private liftInvalid(k: string) {
+    const s = this.st;
+    if (!this.isInvalid(k)) return;
+    delete s.rejected[k];
+    delete s.boxMessages[k];
+    const under = s.heldUnder[k];
+    delete s.heldUnder[k];
+    if (under === undefined) return;
+    s.rejected[k] = under;
+    if (unfixableRefusal(under)) s.unfixable.add(k);
+  }
+
+  /**
+   * The money box k holds text that does not read as an amount (`text`), or reads again (null). Its last amount may be in the draft,
+   * so while the text stands the return is held as for a shown-amount mismatch: no save, leaving and Queue refused with the box's
+   * sentence. A new edit of k does not lift it; null does, or the box being shut or its row moved (F9). Null lifts only this entry.
+   * `typing`: the box still has focus (text on its way to an amount, "1,5"): the hold is the same, but no sentence shows under the box
+   * until it is left (the box calls again with typing false) or the filer tries to save, leave or Queue (revealTyping).
+   */
+  setAmountInvalid(k: string, text: string | null, typing = false) {
+    const s = this.st;
+    if (!s.draft) return;
+    if (text === null) {
+      if (!this.isInvalid(k)) return;
+      this.liftInvalid(k);
+      this.setErrors(s.errors);
+      this.publish();
+      if (!Object.keys(s.pending).length) this.scheduleAutosave();
+      return;
+    }
+    if (!s.editable || this.isShut(k)) return;
+    const entry = `${AMOUNT_INVALID}|${text}${typing ? "|typing" : ""}`;
+    if (s.rejected[k] === entry) return;
+    if (!this.isInvalid(k) && s.rejected[k] !== undefined) s.heldUnder[k] = s.rejected[k];
+    s.rejected[k] = entry;
+    s.unfixable.delete(k);
+    s.dirty = true;
+    this.markUnsaved();
+    this.setErrors(s.errors);
+    this.publish();
+  }
+
+  /** The filer tried to save, leave or Queue: a box's not-an-amount text still being typed shows its sentence now. */
+  private revealTyping() {
+    const s = this.st;
+    let changed = false;
+    for (const [k, msg] of Object.entries(s.rejected)) {
+      if (!this.isInvalid(k) || !msg.endsWith("|typing")) continue;
+      s.rejected[k] = msg.slice(0, -"|typing".length);
+      changed = true;
+    }
+    if (changed) this.setErrors(s.errors);
   }
 
   /**
@@ -1986,16 +2076,16 @@ export class FormSession {
     return refusalSentence(this.refusalCtx(k, raw));
   }
 
-  /** The boxes whose shown amount differs from the amount the host stored (the money safety net's entries). */
-  private mismatchKeys(): string[] {
+  /** The boxes that hold the return's saves (the money safety net): a shown amount differs from the stored one, or the text is not an amount. */
+  private heldKeys(): string[] {
     return Object.entries(this.st.rejected)
-      .filter(([, msg]) => msg.startsWith(`${AMOUNT_MISMATCH}|`))
+      .filter(([, msg]) => msg.startsWith(`${AMOUNT_MISMATCH}|`) || msg.startsWith(`${AMOUNT_INVALID}|`))
       .map(([k]) => k);
   }
 
   /** The sentences those boxes show, in the filer's words; "" when there is none. */
-  private mismatchText(): string {
-    return this.mismatchKeys().map((k) => this.refusalText(k, this.st.rejected[k])).join(" ");
+  private heldText(): string {
+    return this.heldKeys().map((k) => this.refusalText(k, this.st.rejected[k].replace(/\|typing$/, ""))).join(" ");
   }
 
   /** A host validation message as the page shows it (0605's four, plus the leak net). */
@@ -2017,6 +2107,8 @@ export class FormSession {
     // A refused edit's sentence sits on its box; it counts toward the row it belongs to.
     for (const [k, msg] of Object.entries(s.rejected)) {
       const sentence = this.refusalText(k, msg);
+      // Text still being typed that is not an amount yet holds the saves but says nothing under its box.
+      if (!sentence) continue;
       s.boxMessages[k] = s.boxMessages[k] ? `${s.boxMessages[k]} ${sentence}` : sentence;
       const id = this.keyIndex.get(k);
       if (id) (s.messageKeys[id] ||= []).push(k);
@@ -2133,6 +2225,8 @@ export class FormSession {
   private syncShown(before: Record<string, string>, edits: Record<string, string>, rejected?: Record<string, string>) {
     const s = this.st;
     for (const k of this.allKeys) {
+      // The box holds text that is not an amount: it keeps it (the session never writes over it).
+      if (this.isInvalid(k)) continue;
       if (k in edits) {
         // A refused edit keeps what was typed (B19); only an accepted write the host
         // changed to something other than what was typed shows the host's value.
@@ -3267,10 +3361,13 @@ export class FormSession {
       }
       // F1: a box whose shown amount differs from the one the host stored holds the whole save. Nothing is written until the
       // filer corrects it (its sentence is on the box), so the draft never stores an amount the page did not show.
-      if (this.mismatchKeys().length) {
+      if (this.heldKeys().length) {
         s.dirty = true;
         s.saveState = this.restingSaveState();
-        if (announce) this.toast(AMOUNT_NOT_SAVED, "triangle-alert");
+        if (announce) {
+          this.revealTyping();
+          this.toast(AMOUNT_NOT_SAVED, "triangle-alert");
+        }
         this.validate();
         return false;
       }
@@ -3312,9 +3409,12 @@ export class FormSession {
     const s = this.st;
     this.commitHeldPeriod();
     // F1: the hold a return's save has: nothing is saved while a box's shown amount differs from the stored one.
-    if (this.mismatchKeys().length) {
+    if (this.heldKeys().length) {
       s.saveState = this.restingSaveState();
-      if (announce) this.toast(AMOUNT_NOT_SAVED, "triangle-alert");
+      if (announce) {
+        this.revealTyping();
+        this.toast(AMOUNT_NOT_SAVED, "triangle-alert");
+      }
       return this.publish();
     }
     if (s.periodIncomplete) {
@@ -3404,6 +3504,8 @@ export class FormSession {
   queue() {
     const s = this.st;
     if (s.sample) return this.saveSample(() => this.queue());
+    // A box's not-an-amount text still being typed holds Queue too; the filer tried to go, so its sentence shows.
+    this.revealTyping();
     // B19: a refused edit is still unsaved work; Queue waits for it to be fixed or cleared. An
     // unfixable one (shut/locked) put the stored value back, so it does not hold Queue (R7).
     if (Object.keys(s.rejected).some((k) => !s.unfixable.has(k))) {
@@ -4302,8 +4404,10 @@ export class FormSession {
     if (!s.dirty || s.sample || !this.canAutosave()) return null;
     if (this.saveReturn(false)) return null;
     if (s.saveState.state === "failed") return s.saveState.message;
-    // F1: a shown amount that differs from the stored one held the save: the reason is the sentence its box shows.
-    return this.mismatchText() || null;
+    // F1: a shown amount that differs from the stored one, or text that is not an amount, held the save: the reason is the
+    // sentence its box shows (shown now also for text still being typed: the filer tried to go).
+    this.revealTyping();
+    return this.heldText() || null;
   }
 
   /** Typing flushed and saved now where autosave may (the frame awaits it before quit or navigation). False when a save was refused (toasted). */
