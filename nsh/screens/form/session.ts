@@ -444,6 +444,8 @@ function freshState(target: FormTarget): St {
 
 const sameJson = <T,>(a: T, b: T) => a === b || JSON.stringify(a) === JSON.stringify(b);
 
+const AMOUNT_MISMATCH = "shown amount mismatch";
+
 /** Two amounts are the same number; a blank one is zero. */
 function sameNumber(a: string, b: string): boolean {
   const plain = (t: string) => {
@@ -1695,11 +1697,24 @@ export class FormSession {
         if (note) s.lockNotes[k] = note;
       }
     }
-    this.syncShown(before, edits, r.rejected);
+    const rej = r.rejected || {};
+    const shownRejected = { ...rej };
+    for (const k of Object.keys(edits)) {
+      const kind = this.kindOf.get(k);
+      if ((kind !== "money" && kind !== "num") || k in rej || this.pools.has(k) || this.oneDateParts.has(k) || this.periodPartKeys.has(k)) continue;
+      const typed = String(edits[k] ?? "");
+      const stored = String(s.values[k] ?? "");
+      if (sameNumber(typed, stored)) continue;
+      const whole = kind === "money" && this.wholeKeys.has(k);
+      shownRejected[k] = `${AMOUNT_MISMATCH}|${formatMoney(typed, whole)}|${stored === "" ? "blank" : formatMoney(stored, whole)}`;
+      s.rejected[k] = shownRejected[k];
+      const id = this.keyIndex.get(k);
+      if (id) s.touched.add(id);
+    }
+    this.syncShown(before, edits, shownRejected);
     this.checkRangeOrders();
     this.livePreview();
     this.sayYearEndPutBack(edits);
-    const rej = r.rejected || {};
     // A batch the host refused whole for shut/locked boxes changed nothing: give `dirty` back (R7).
     const heldDirty = s.dirtyBatch;
     s.dirtyBatch = null;
@@ -3216,10 +3231,11 @@ export class FormSession {
       // Only a refusal whose typed text still stands keeps the save line honest.
       if (Object.keys(s.rejected).some((k) => !s.unfixable.has(k))) s.dirty = true;
       s.saveState = s.dirty ? this.restingSaveState() : { state: "saved" };
-      if (changed) this.hooks.onSaved?.(s.target);
-      if (announce) this.toast("Draft saved.", "save");
+      const mismatch = Object.values(s.rejected).some((msg) => msg.startsWith(`${AMOUNT_MISMATCH}|`));
+      if (changed && !mismatch) this.hooks.onSaved?.(s.target);
+      if (announce) this.toast(mismatch ? "An amount was not saved. Correct the highlighted box." : "Draft saved.", mismatch ? "triangle-alert" : "save");
       this.validate();
-      return true;
+      return !mismatch;
     } catch (e) {
       s.pending = { ...edits, ...s.pending };
       s.saveState = { state: "failed", message: errorText(e) };

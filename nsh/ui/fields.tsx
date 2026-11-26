@@ -10,7 +10,7 @@ import { AppButton } from "./buttons";
 import type { IconName } from "./icons";
 import { cx, TOUCH } from "./look";
 import {
-  DATE_ERROR, digitsOnly, editBase, formatIso, formatLongDate, formatMDY, formatMoney, formatTinDigits, intMask, type Mask, moneyMask, moneyPlain,
+  DATE_ERROR, digitsOnly, editBase, formatIso, formatLongDate, formatMDY, formatMoney, formatTinDigits, intMask, type Mask, moneyEntryMask, moneyPlain,
   isZeroAmount, parseTypedDate, PERCENT_MASK, reconcile, sameAmount, shownMoney, TIN_LENGTH, TIN_MASK, type TextSelection,
 } from "./mask";
 import { Chip } from "./status";
@@ -168,7 +168,10 @@ export function TextField(props: TextFieldProps) {
 // ---------------------------------------------------------------- masked fields
 
 /** What the masked fields share with TextField (the value and its events are theirs). `inputRef` gives the box's InputRef (focus(), setSelection()). */
-export type MaskedFieldProps = Omit<TextFieldProps, "value" | "onChange" | "keyboardType" | "masked" | "maxLength">;
+export type MaskedFieldProps = Omit<TextFieldProps, "value" | "onChange" | "keyboardType" | "masked" | "maxLength"> & {
+  /** Test hook: each text or caret operation this field sends to its native box. */
+  writeProbe?: (write: "text" | "caret") => void;
+};
 
 interface MaskedProps {
   /** The caller's TextField props (read where used, so they stay live). */
@@ -190,6 +193,8 @@ interface MaskedProps {
    * replaces it; the box's own focus() (the form's step) selects the whole text whatever it holds.
    */
   numeric?: boolean;
+  /** No live formatting: a valid focused edit is left exactly as typed; focus lays the value out plainly once. */
+  noLiveFormat?: boolean;
   /** Defaults where the caller sets none. */
   placeholder?: string;
   prefix?: string;
@@ -233,6 +238,7 @@ function MaskedField(props: MaskedProps) {
   // The selection the input last reported, and what the current edit started from (taken at its key press): that
   // selection, and whether the key typed a character (a paste or any edit without a key is judged as a paste).
   let selected: TextSelection | undefined;
+  let selectionSeq = 0;
   let editFrom: TextSelection | undefined;
   let editTyped = false;
   // The text the box last reported while it has the keys. Keys that come faster than the answers (a burst, an agent's
@@ -244,6 +250,28 @@ function MaskedField(props: MaskedProps) {
   let clickUntil = 0;
   // The page's focus() was called: the box is selected whole, there is no click to wait for.
   let byFocus = false;
+  // The one focus rewrite of a no-live-format box: the selection that arrives with the click is mapped from its old laid-out text.
+  let focusMap: { from: string; to: string } | undefined;
+  let focusCaret: number | undefined;
+  const writeText = (value: string) => {
+    if (untracked(text) !== value) props.field.writeProbe?.("text");
+    text.set(value);
+  };
+  const writeCaret = (start: number, end = start) => {
+    props.field.writeProbe?.("caret");
+    input?.setSelection(start, end);
+  };
+  const caretAfterSameDigits = (fromText: string, toText: string, caret: number) => {
+    const significant = (ch: string) => props.mask.significant(ch);
+    let count = 0;
+    for (const ch of fromText.slice(0, caret)) if (significant(ch)) count++;
+    let at = 0;
+    while (count > 0 && at < toText.length) {
+      if (significant(toText[at])) count--;
+      at++;
+    }
+    return at;
+  };
   // What the page gets as the box's ref: in a number box its focus() selects the whole text (NSH puts the caret at the end).
   const handle = (r: InputRef): InputRef =>
     props.numeric
@@ -251,7 +279,7 @@ function MaskedField(props: MaskedProps) {
           focus() {
             byFocus = true;
             r.focus();
-            r.setSelection(0, untracked(text).length);
+            writeCaret(0, untracked(text).length);
           },
           blur: () => r.blur(),
           measure: () => r.measure(),
@@ -271,8 +299,8 @@ function MaskedField(props: MaskedProps) {
       // again): selected whole, so the digits typed next replace it instead of being appended to it.
       const refilled = props.numeric && now === "" && edited && untracked(focused);
       const shown = props.shown(value, untracked(focused));
-      text.set(shown);
-      if (refilled && shown !== "") input?.setSelection(0, shown.length);
+      writeText(shown);
+      if (refilled && shown !== "") writeCaret(0, shown.length);
     }
   });
   const change = (raw: string) => {
@@ -282,16 +310,29 @@ function MaskedField(props: MaskedProps) {
     editFrom = undefined;
     editTyped = false;
     const [on, at] = editBase(prev, boxText, raw, from);
-    const next = reconcile(on, raw, props.mask, undefined, at, typed);
+    let next = reconcile(on, raw, props.mask, undefined, at, typed);
+    if (props.noLiveFormat) {
+      if (next.rejected || (typed && next.text !== raw)) next = { ...next, text: prev, rejected: true };
+      if (!next.rejected && next.text === raw) {
+        // A valid focused amount edit stays exactly as typed: no text or caret answer goes back to the box.
+        boxText = raw;
+        const value = props.valueOf(raw);
+        if (value === last) return;
+        last = value;
+        edited = true;
+        props.onChange(value);
+        return;
+      }
+    }
     // An edit that changes nothing is taken back: what the box holds after it is the text shown.
     boxText = next.rejected || next.text === prev ? next.text : raw;
     // The native box holds `raw`. A signal that already holds the answer would send nothing: show `raw` first so the
     // answer is a change the box must take.
-    if (next.text === prev && raw !== prev) text.set(raw);
-    text.set(next.text);
+    if (next.text === prev && raw !== prev) writeText(raw);
+    writeText(next.text);
     // The box puts the caret at the end of a text it takes, so a caret that belongs there is not sent: sent, it would
     // arrive after the keys typed since this edit and put the next ones inside the number.
-    if (next.rejected || (next.text !== raw && next.caret !== next.text.length)) input?.setSelection(next.caret);
+    if (next.rejected || (next.text !== raw && next.caret !== next.text.length)) writeCaret(next.caret);
     if (next.rejected) return;
     const value = props.valueOf(next.text);
     if (value === last) return;
@@ -329,14 +370,29 @@ function MaskedField(props: MaskedProps) {
       testID={props.field.testID}
       onSelectionChange={(e) => {
         selected = { start: e.start, end: e.end };
-        if (e.start === e.end && clickUntil > 0 && Date.now() <= clickUntil && props.numeric) {
+        selectionSeq++;
+        if (focusMap && clickUntil > 0 && Date.now() <= clickUntil) {
           const now = untracked(text);
-          if (isZeroAmount(now)) input?.setSelection(0, now.length);
+          if (e.start === 0 && e.end >= Math.max(focusMap.from.length, focusMap.to.length)) {
+            if (!(e.start === 0 && e.end === now.length)) writeCaret(0, now.length);
+          } else if (e.start === e.end) {
+            if (props.numeric && isZeroAmount(now)) {
+              if (!(e.start === 0 && e.end === now.length)) writeCaret(0, now.length);
+            } else {
+              if (focusCaret === undefined) focusCaret = caretAfterSameDigits(focusMap.from, focusMap.to, e.start);
+              if (focusCaret !== e.start) writeCaret(focusCaret);
+            }
+          }
+        } else if (e.start === e.end && clickUntil > 0 && Date.now() <= clickUntil && props.numeric) {
+          const now = untracked(text);
+          if (isZeroAmount(now)) writeCaret(0, now.length);
         }
         props.field.onSelectionChange?.(e);
       }}
       onKeyPress={(e) => {
         clickUntil = 0;
+        focusMap = undefined;
+        focusCaret = undefined;
         editFrom = selected;
         editTyped = [...e.key].length === 1;
         props.field.onKeyPress?.(e);
@@ -345,20 +401,46 @@ function MaskedField(props: MaskedProps) {
         focused.set(true);
         boxText = undefined;
         edited = false;
+        if (props.noLiveFormat) {
+          const before = untracked(text);
+          const plain = props.shown(props.value ?? "", true);
+          if (plain !== before) {
+            focusMap = { from: before, to: plain };
+            writeText(plain);
+          }
+        }
+        const selectWhole = byFocus;
+        const selectionAtFocus = selectionSeq;
         props.field.onFocus?.();
         clickUntil = byFocus ? 0 : Date.now() + CLICK_MS;
         byFocus = false;
+        if (selectWhole) writeCaret(0, untracked(text).length);
+        const mapped = focusMap;
+        if (mapped) {
+          setTimeout(() => {
+            if (!untracked(focused) || focusMap !== mapped) return;
+            const now = untracked(text);
+            if (selectWhole || (props.numeric && isZeroAmount(now))) {
+              writeCaret(0, now.length);
+            } else if (selectionSeq !== selectionAtFocus && selected && selected.start === selected.end) {
+              if (focusCaret === undefined) focusCaret = caretAfterSameDigits(mapped.from, mapped.to, selected.start);
+              writeCaret(focusCaret);
+            }
+          }, 0);
+        }
       }}
       onBlur={() => {
         focused.set(false);
         clickUntil = 0;
+        focusMap = undefined;
+        focusCaret = undefined;
         byFocus = false;
         editFrom = undefined;
         editTyped = false;
         const laidOut = props.shown(props.valueOf(text()), false);
         const shown = edited && props.settle ? props.settle(laidOut) : laidOut;
         edited = false;
-        if (shown !== text()) text.set(shown);
+        if (shown !== text()) writeText(shown);
         const value = props.valueOf(shown);
         if (!same(value, last)) {
           last = value;
@@ -413,7 +495,7 @@ export interface MoneyInputProps extends MaskedFieldProps {
 }
 
 /**
- * An amount: digits and one decimal point, thousands separators while typing, right-aligned in tabular figures, a ₱
+ * An amount: digits and one decimal point, plain digits while it has the keys, thousands separators when left, right-aligned in tabular figures, a ₱
  * before it; leaving the box writes two decimals (formatMoney, on the digits: decimal rounding half up, any length). The
  * value out is the plain numeric string, and the box never shows a number other than the one reported.
  */
@@ -425,13 +507,14 @@ export function MoneyInput(props: MoneyInputProps) {
       onChange={props.onChange}
       prefix={props.prefix ?? "₱"}
       align="right"
-      mask={moneyMask({ negative: props.negative })}
+      mask={moneyEntryMask({ negative: props.negative })}
       shown={(v, focused) => shownMoney(v, focused, props.whole)}
       settle={(t) => formatMoney(t, props.whole)}
       valueOf={(t) => moneyPlain(t)}
       same={sameAmount}
       keyboardType="decimal-pad"
       numeric
+      noLiveFormat
     />
   );
 }

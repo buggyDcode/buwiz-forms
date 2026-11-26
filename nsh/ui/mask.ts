@@ -278,7 +278,7 @@ export function groupThousands(int: string): string {
 
 /** A plain amount's parts: its sign, whole digits and decimals; null when the text is not an amount. */
 function amountParts(text: string): { neg: boolean; int: string; frac: string } | null {
-  const m = /^(-?)(\d*)(?:\.(\d*))?$/.exec(String(text ?? "").replace(/[₱,\s]/g, ""));
+  const m = /^(-?)(\d*)(?:\.(\d*))?$/.exec(moneyPlain(text));
   if (!m || (m[2] === "" && !m[3])) return null;
   return { neg: m[1] === "-", int: m[2], frac: m[3] ?? "" };
 }
@@ -418,7 +418,48 @@ export function isZeroAmount(text: string): boolean {
 
 /** The plain numeric string of a money text: "1,250,000.50" -> "1250000.50", "₱ -12" -> "-12"; "" stays "". */
 export function moneyPlain(text: string): string {
-  return String(text ?? "").replace(/[₱,\s]/g, "");
+  const raw = String(text ?? "").trim();
+  const paren = /^\((.*)\)$/.exec(raw);
+  const body = (paren ? paren[1] : raw).replace(/[₱,\s]/g, "");
+  return `${paren ? "-" : ""}${body}`;
+}
+
+/**
+ * The money mask's validation while a box has the keys: the same characters and paste rules, but no grouping and no
+ * leading-zero rewrite. A valid digit or point leaves the text exactly as typed; formatting is for blur only.
+ */
+export function moneyEntryMask(o?: MoneyMaskOptions): Mask {
+  const base = moneyMask(o);
+  return {
+    significant: base.significant,
+    insert: base.insert,
+    format(sig) {
+      const keep: boolean[] = new Array(sig.length).fill(false);
+      let neg = false;
+      let dot = false;
+      let out = "";
+      for (let i = 0; i < sig.length; i++) {
+        const ch = sig[i];
+        if (ch === "-") {
+          if (i === 0 && !neg) {
+            neg = true;
+            out += ch;
+            keep[i] = true;
+          }
+        } else if (ch === ".") {
+          if (!dot) {
+            dot = true;
+            out += ch;
+            keep[i] = true;
+          }
+        } else {
+          out += ch;
+          keep[i] = true;
+        }
+      }
+      return { keep, text: out };
+    },
+  };
 }
 
 /** The digits of `int`.`frac` rounded to `places` decimals, half up, on the digits themselves. */
@@ -466,7 +507,7 @@ export function formatMoney(text: string, whole = false, round = true): string {
  */
 export function shownMoney(value: string, focused: boolean, whole = false): string {
   if (!isPlainAmount(value)) return String(value ?? "");
-  return focused ? applyMask(value, moneyMask({ negative: true })) : formatMoney(value, whole, false);
+  return focused ? moneyPlain(formatMoney(value, whole, false)) : formatMoney(value, whole, false);
 }
 
 // ---------------------------------------------------------------- percent and integers

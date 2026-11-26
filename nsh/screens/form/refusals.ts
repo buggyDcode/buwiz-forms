@@ -95,6 +95,9 @@ export function refusalSentence(ctx: RefusalContext): string {
   }
   if (raw === "date conflicts with a locked part") return `${at} use the date set by the return.`;
   if (raw === "calendar year ends in December") return "A calendar year ends in December. Choose Fiscal to pick another month.";
+  const mismatch = /^shown amount mismatch\|([^|]*)\|([^|]*)$/.exec(raw);
+  if (mismatch) return `${at} the box shows ${mismatch[1]}, but the draft stored ${mismatch[2]}. Correct this amount; it was not saved.`;
+
 
   // A gate: the box is shut by another answer ("Needs item 4 = Yes", the off tag).
   if (/^needs\b/i.test(raw) || /^item\s+\S+\s+is checked\.?$/i.test(raw)) return gateSentence(ctx, raw);
