@@ -249,11 +249,10 @@ const WINDOWS_RESELECT = platform.os === "windows";
  * key press (the typed text, or "Backspace" for any deletion, Cut included) BEFORE the change, with the selection the edit
  * started from known from the last onSelectionChange; an emptied box reports "" like any other value.
  *
- * Where the caret goes as the box takes the keys (macOS, onFocus then onSelectionChange; a click gives the focus, AppKit
- * selects all, then the click's caret follows within the same mouse press; Tab gives the focus and the whole text stays selected):
- * a Tab keeps the whole text selected; a click puts the caret where it landed, but in a number box holding zero the whole text is
- * selected so the first digit replaces it (typing at the caret of "0.00" gave "1,000.00" for 100); a box focused by its own
- * focus() (the form's step, which NSH gives a caret at the end) is selected whole.
+ * Where the caret goes as the box takes the keys: platform focus keeps the platform's own selection or click caret; a zero
+ * number becomes empty so its first digit starts the amount; and the page's own focus() selects the whole text after focus has
+ * landed. Besides that deliberate selection write, Windows has exactly one more: the narrowly guarded recompute-collapse repair
+ * below. No other caret or text is written while the box has the keys.
  */
 function MaskedField(props: MaskedProps) {
   let input: InputRef | undefined;
