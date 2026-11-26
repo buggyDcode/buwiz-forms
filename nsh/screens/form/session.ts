@@ -3441,12 +3441,14 @@ export class FormSession {
    */
   queue() {
     const s = this.st;
+    // Q1: a second press while Queue is settling a focused box does nothing; the first one goes on once the box was left.
+    if (this.settling) return;
     // Queue cannot be taken back: an amount box that still has the keys is left first, so the amount it puts back and the note it
     // raises exist before anything is judged. Its blur may come on a later turn: Queue waits until the session has seen the box let
     // go (blur() clears focusKey), blurs it itself after QUEUE_SETTLE_MS, and goes on one turn after that.
     const held = s.focusKey;
     const heldKind = held ? this.kindOf.get(held) : undefined;
-    if (held && (heldKind === "money" || heldKind === "num") && !this.settling) {
+    if (held && (heldKind === "money" || heldKind === "num")) {
       this.settling = true;
       this.blurers.get(held)?.();
       const token = this.token;

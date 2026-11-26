@@ -766,3 +766,35 @@ test("money note: leaving with a note and other valid edits saves them all; a se
     back?.dispose();
   }
 });
+
+test("Q1: Queue pressed twice while it settles a focused amount box runs the host's queue check at most once, after the box was left", async () => {
+  const key = "frm2551Qv2018:txt17";
+  const checks = countQueueChecks();
+  let leftAt = -1;
+  const check = bir.screen_form_queue_check;
+  const door = bir as { screen_form_queue_check: typeof check };
+  let s: FormSession | undefined;
+  try {
+    s = await opened(at("2551Q", 2020, 1));
+    s.jumpTo(2);
+    let checkedAfterLeaving = true;
+    const counted = door.screen_form_queue_check;
+    door.screen_form_queue_check = ((...args: Parameters<typeof check>): ReturnType<typeof check> => {
+      if (leftAt < 0) checkedAfterLeaving = false;
+      return counted(...args);
+    }) as typeof check;
+    s.registerBlur(key, () => void setTimeout(() => ((leftAt = Date.now()), s!.blur(key)), 60));
+    s.focus(key);
+    s.edit(key, "5");
+    s.queue();
+    s.queue();
+    await s.idle();
+    expect(checks.count).toBeLessThanOrEqual(1);
+    expect(checkedAfterLeaving).toBe(true);
+    expect(leftAt).toBeGreaterThan(0);
+  } finally {
+    door.screen_form_queue_check = check;
+    checks.restore();
+    s?.dispose();
+  }
+});
