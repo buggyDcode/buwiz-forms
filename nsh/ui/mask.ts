@@ -302,7 +302,10 @@ export function isPlainAmount(text: string): boolean {
 export function sameAmount(a: string, b: string): boolean {
   if (a === b) return true;
   const x = canonicalAmount(a);
-  return x !== null && x === canonicalAmount(b);
+  const y = canonicalAmount(b);
+  // Empty is the zero amount a money box reports; it must equal every textual zero, or a host echo clobbers the focus fallback.
+  if ((a === "" || x === "0") && (b === "" || y === "0")) return true;
+  return x !== null && x === y;
 }
 
 /** Options of the money mask. */
@@ -415,7 +418,11 @@ export function readAmount(text: string, negative = false): string | null {
   if (suffix && suffix.index > 0) t = t.slice(0, suffix.index).trim();
   if (t === "") return null;
   let neg = false;
-  if (t.startsWith("-")) {
+  if (t.startsWith("(") && t.endsWith(")")) {
+    if (!negative) return null;
+    neg = true;
+    t = t.slice(1, -1);
+  } else if (t.startsWith("-")) {
     if (!negative) return null;
     neg = true;
     t = t.slice(1);
@@ -430,7 +437,7 @@ export function readAmount(text: string, negative = false): string | null {
 
 /** Whether focused money text reads as an amount. Empty is zero and valid. */
 export function validAmountText(text: string, negative = false): boolean {
-  return String(text ?? "") === "" || readAmount(text, negative) !== null;
+  return String(text ?? "").trim() === "" || readAmount(text, negative) !== null;
 }
 
 /** The money mask with no minus to type. */

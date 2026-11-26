@@ -171,8 +171,8 @@ export function TextField(props: TextFieldProps) {
 export type MaskedFieldProps = Omit<TextFieldProps, "value" | "onChange" | "keyboardType" | "masked" | "maxLength"> & {
   /** Test hook: each text or caret operation this field sends to its native box. */
   writeProbe?: (write: "text" | "caret", start?: number, end?: number) => void;
-  /** Money text stopped reading as an amount (`typing` while focused, false when left), or reads again / is replaced (null). */
-  onInvalid?: (text: string | null, typing?: boolean) => void;
+  /** Money text was left unreadable: what was typed, and the amount text the box kept. */
+  onLeftUnreadable?: (typed: string, kept: string) => void;
 };
 
 interface MaskedProps {
@@ -237,7 +237,8 @@ function MaskedField(props: MaskedProps) {
   let boxText: string | undefined;
   // A value that arrives while the box has the keys: applied on blur only when the filer made no edit of their own.
   let outsideValue: string | undefined;
-  const invalidError = signal(false);
+  // The sentence this box draws itself when no form session does it for it; null while focused or readable.
+  const leftUnreadable = signal<string | null>(null);
   // The value shown when this focus began: an unreadable edit rolls the report back to it once.
   let focusValue = props.value ?? "";
   let invalidActive = false;
@@ -253,19 +254,21 @@ function MaskedField(props: MaskedProps) {
   // A value set from outside (another box, a reload) shows; the field's own edits come back equal and change nothing.
   effect(() => {
     const value = props.value ?? "";
-    last = value;
-    // Focused text is never rewritten. An outside value is held for blur until the filer's own edit supersedes it.
+    // Focused text is never rewritten. A change equal to what this box just reported is its own echo; only a different
+    // value is outside, and is held for blur until the filer's own edit supersedes it.
     if (untracked(focused)) {
-      outsideValue = value;
+      if (!same(value, last)) {
+        outsideValue = value;
+        last = value;
+      }
       return;
     }
+    last = value;
     const now = untracked(text);
-    if (invalidActive || untracked(invalidError) || !same(props.valueOf(now), value)) {
+    if (!same(props.valueOf(now), value)) {
       writeText(props.shown(value, false));
       invalidActive = false;
       rollbackReported = false;
-      invalidError.set(false);
-      props.field.onInvalid?.(null);
     }
   });
   const change = (raw: string) => {
@@ -274,22 +277,20 @@ function MaskedField(props: MaskedProps) {
     const typed = editTyped;
     editFrom = undefined;
     editTyped = false;
-    const [on, at] = editBase(prev, boxText, raw, from);
-    let next = reconcile(on, raw, props.mask, undefined, at, typed);
     if (props.noLiveFormat) {
-      // Focused text is authoritative: even a refused or invalid edit is never written back out of the box.
+      // Focused text is authoritative: strict reading decides the report; no mask rewrite or refusal answer is computed for it.
       boxText = raw;
       text.set(raw);
-      const valid = props.valid ? props.valid(raw) : !next.rejected && next.text === raw;
-      edited = true;
+      const valid = props.valid ? props.valid(raw) : true;
       if (!valid) {
         invalidActive = true;
-        props.field.onInvalid?.(raw, true);
         if (!rollbackReported) {
           rollbackReported = true;
-          if (focusValue !== last) {
-            last = focusValue;
-            props.onChange(focusValue);
+          // A newer value held for this focus is the fallback, not the older value the box had when focus began.
+          const fallback = outsideValue ?? focusValue;
+          if (!same(fallback, last)) {
+            last = fallback;
+            props.onChange(fallback);
           }
         }
         return;
@@ -297,16 +298,17 @@ function MaskedField(props: MaskedProps) {
       if (invalidActive) {
         invalidActive = false;
         rollbackReported = false;
-        props.field.onInvalid?.(null);
-      } else if (raw === "") {
-        props.field.onInvalid?.(null);
       }
       const value = props.valueOf(raw);
+      // A key and its Backspace are no edit: a value held from outside still wins on leaving.
+      edited = !same(value, focusValue);
       if (value === last) return;
       last = value;
       props.onChange(value);
       return;
     }
+    const [on, at] = editBase(prev, boxText, raw, from);
+    const next = reconcile(on, raw, props.mask, undefined, at, typed);
     // An edit that changes nothing is taken back: what the box holds after it is the text shown.
     boxText = next.rejected || next.text === prev ? next.text : raw;
     // The native box holds `raw`. A signal that already holds the answer would send nothing: show `raw` first so the
@@ -318,9 +320,9 @@ function MaskedField(props: MaskedProps) {
     if (next.rejected || (next.text !== raw && next.caret !== next.text.length)) writeCaret(next.caret);
     if (next.rejected) return;
     const value = props.valueOf(next.text);
+    edited = !same(value, focusValue);
     if (value === last) return;
     last = value;
-    edited = true;
     props.onChange(value);
   };
   return (
@@ -336,7 +338,7 @@ function MaskedField(props: MaskedProps) {
       label={props.field.label}
       accessibilityLabel={props.field.accessibilityLabel}
       hint={props.field.hint}
-      error={invalidError() ? "Not a valid amount. Correct it or clear the box; it was not saved." : props.field.error}
+      error={leftUnreadable() ?? props.field.error}
       placeholder={props.field.placeholder ?? props.placeholder}
       disabled={props.field.disabled}
       locked={props.field.locked}
@@ -366,7 +368,8 @@ function MaskedField(props: MaskedProps) {
         edited = false;
         focusValue = props.value ?? "";
         rollbackReported = false;
-        invalidError.set(false);
+        invalidActive = false;
+        leftUnreadable.set(null);
         if (props.noLiveFormat) {
           const before = untracked(text);
           const plain = props.shown(props.value ?? "", true);
@@ -377,25 +380,34 @@ function MaskedField(props: MaskedProps) {
         props.field.onFocus?.();
       }}
       onBlur={() => {
-        if (!edited && outsideValue !== undefined) writeText(props.shown(outsideValue, false));
-        outsideValue = undefined;
-        focused.set(false);
-        editFrom = undefined;
-        editTyped = false;
-        const validBlur = !props.valid || props.valid(text());
-        invalidError.set(!validBlur);
-        if (!validBlur) props.field.onInvalid?.(text(), false);
-        const laidOut = edited && validBlur ? props.shown(props.valueOf(text()), false) : edited ? text() : props.shown(props.value ?? "", false);
-        const shown = edited && validBlur && props.settle ? props.settle(laidOut) : laidOut;
-        edited = false;
-        if (shown !== text()) writeText(shown);
-        if (validBlur) {
+        const held = text();
+        const validBlur = !props.valid || props.valid(held);
+        if (!validBlur) {
+          // The return keeps the fallback amount. A newer outside value held during this focus is that fallback.
+          const fallback = outsideValue ?? focusValue;
+          const shownFallback = props.shown(fallback, false);
+          const kept = shownFallback === "" ? props.shown("0", false) : shownFallback;
+          writeText(kept);
+          if (props.field.onLeftUnreadable) props.field.onLeftUnreadable(held, kept);
+          else leftUnreadable.set(`${held} is not an amount. The box kept ${kept}.`);
+          invalidActive = false;
+          rollbackReported = false;
+        } else {
+          if (!edited && outsideValue !== undefined) writeText(props.shown(outsideValue, false));
+          const laidOut = edited ? props.shown(props.valueOf(text()), false) : props.shown(outsideValue ?? props.value ?? "", false);
+          const shown = edited && props.settle ? props.settle(laidOut) : laidOut;
+          if (shown !== text()) writeText(shown);
           const value = props.valueOf(shown);
           if (!same(value, last)) {
             last = value;
             props.onChange(value);
           }
         }
+        outsideValue = undefined;
+        focused.set(false);
+        editFrom = undefined;
+        editTyped = false;
+        edited = false;
         props.field.onBlur?.();
       }}
     />

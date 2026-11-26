@@ -498,6 +498,11 @@ for (const [name, pasted, expected] of [
 }
 
 test("money paste reading: a second point is not an amount", () => {
+  expect(readAmount("(1,000.00)", true)).toBe("-1000.00");
+  expect(validAmountText("(1,000.00)", true)).toBe(true);
+  expect(readAmount("(1,000.00)", false)).toBeNull();
+  expect(validAmountText("(1,000.00)", false)).toBe(false);
+  expect(validAmountText(" ")).toBe(true);
   expect(readAmount("15000.50.25")).toBeNull();
   expect(validAmountText("15000.50.25")).toBe(false);
 });

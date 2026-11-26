@@ -1,6 +1,7 @@
 // The entry the masked-field tests open (fields.test.tsx): one of each masked box with a readout of the value it reports, a
 // count of how often it reported, and a plain box to leave the others for. Tests only; nothing imports it. The readouts are
 // first so a phone-sized window shows them all.
+import type { InputRef } from "nsh";
 import { mount, signal, View } from "nsh";
 import { AppButton } from "./buttons";
 import { IntInput, MoneyInput, PercentInput, TextField, TinInput } from "./fields";
@@ -24,6 +25,10 @@ function App() {
   const host = signal("0.00");
   const two = signal("2000");
   const invalid = signal("none");
+  const invalidCount = signal(0);
+  const cb = signal("2000");
+  let twoRef: InputRef | undefined;
+  const armHeld = signal(false);
   return (
     <View class="gap-2 p-3">
       <View class="flex-row flex-wrap gap-x-3">
@@ -43,6 +48,8 @@ function App() {
         <Text variant="cap">{`Host: ${host() || "empty"}`}</Text>
         <Text variant="cap">{`Two: ${two() || "empty"}`}</Text>
         <Text variant="cap">{`Invalid: ${invalid()}`}</Text>
+        <Text variant="cap">{`Invalid count: ${invalidCount()}`}</Text>
+        <Text variant="cap">{`Cb: ${cb() || "empty"}`}</Text>
       </View>
       <View class="flex-row flex-wrap gap-2">
       <TextField width={100} label="Other" value={other()} onChange={(v) => other.set(v)} testID="m-other" />
@@ -74,13 +81,32 @@ function App() {
       <PercentInput width={100} label="Rate" value={rate()} onChange={(v) => rate.set(v)} testID="m-rate" />
       <IntInput width={100} label="Code" maxDigits={4} value={code()} onChange={(v) => code.set(v)} testID="m-code" />
       <AppButton label="Set two outside" size="sm" testID="m-set-two" onPress={() => two.set("3000")} />
+      <AppButton label="Blur two" size="sm" testID="m-blur-two" onPress={() => twoRef?.blur()} />
+      <AppButton label="Arm held outside" size="sm" testID="m-arm-held" onPress={() => armHeld.set(true)} />
       <MoneyInput
         width={100}
         label="Two"
         value={two()}
         onChange={(v) => two.set(v === "" ? "0" : v)}
-        onInvalid={(value, typing) => invalid.set(value === null ? "null" : `${value}|${typing}`)}
+        inputRef={(r) => (twoRef = r)}
+        onFocus={() => {
+          if (armHeld()) {
+            armHeld.set(false);
+            two.set("3000");
+          }
+        }}
         testID="m-two"
+      />
+      <MoneyInput
+        width={100}
+        label="Cb"
+        value={cb()}
+        onChange={(v) => cb.set(v === "" ? "0" : v)}
+        onLeftUnreadable={(typed, kept) => {
+          invalidCount.update((n) => n + 1);
+          invalid.set(`${typed}|${kept}`);
+        }}
+        testID="m-cb"
       />
       <MoneyInput
         width={100}
