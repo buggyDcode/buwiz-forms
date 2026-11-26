@@ -77,8 +77,6 @@ fn form_1707a_continuation_pages_carry_the_full_engine_header() {
     draft.recompute();
     let fields = draft.to_print_field_map();
     let doc = filled_document_with_report("1707a-2021", &fields, None).unwrap();
-    std::fs::create_dir_all("/tmp/bfout").unwrap();
-    std::fs::write("/tmp/bfout/1707a-fixes3.html", &doc.html).unwrap();
 
     assert!(
         doc.html.contains("Additional sheet") || doc.html.contains("-cont-"),
@@ -153,7 +151,6 @@ fn form_1600pt_continuation_pages_carry_tin_and_name() {
     draft.recompute();
     let fields = draft.to_print_field_map();
     let doc = filled_document_with_report("1600-pt-2018", &fields, None).unwrap();
-    std::fs::write("/tmp/bfout/1600pt-fixes3.html", &doc.html).unwrap();
 
     let page_count = doc.html.matches("class=\"page page-").count();
     assert!(

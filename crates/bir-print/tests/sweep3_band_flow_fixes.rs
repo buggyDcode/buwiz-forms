@@ -296,14 +296,16 @@ fn every_growable_table_prints_all_rows_once_in_order_with_continuation_headers(
 
             // 2. Any continuation page must name the page and carry TIN when present.
             for (pi, chunk) in out.html.split("class=\"page ").skip(1).enumerate() {
-                if chunk.starts_with("page-") && chunk.contains("-cont-") {
-                    if !chunk.contains("continued") && !chunk.contains("Page") {
-                        failures.push(format!(
-                            "{slug} / {}: continuation page {} missing page label",
-                            sched.heading,
-                            pi + 1
-                        ));
-                    }
+                if chunk.starts_with("page-")
+                    && chunk.contains("-cont-")
+                    && !chunk.contains("continued")
+                    && !chunk.contains("Page")
+                {
+                    failures.push(format!(
+                        "{slug} / {}: continuation page {} missing page label",
+                        sched.heading,
+                        pi + 1
+                    ));
                 }
             }
         }

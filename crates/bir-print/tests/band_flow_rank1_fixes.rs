@@ -103,14 +103,15 @@ fn form_2200p_prints_all_31_schedule1_rows_including_added_28_to_31() {
     d.schedule[0].place_of_removal = "DEPOT 1".to_string();
     d.schedule[0].local_manufactured = Some(100.0);
     for r in 28..=31usize {
-        let mut row = Form2200PRow::default();
-        row.atc_digits = format!("{r:03}");
-        row.description = format!("ADDED FUEL {r}");
-        row.unit_of_measure = "PER KG".to_string();
-        row.applicable_rate = Some(10.0);
-        row.place_of_removal = format!("DEPOT {r}");
-        row.local_manufactured = Some(100.0 * (r as f64));
-        d.schedule.push(row);
+        d.schedule.push(Form2200PRow {
+            atc_digits: format!("{r:03}"),
+            description: format!("ADDED FUEL {r}"),
+            unit_of_measure: "PER KG".to_string(),
+            applicable_rate: Some(10.0),
+            place_of_removal: format!("DEPOT {r}"),
+            local_manufactured: Some(100.0 * (r as f64)),
+            ..Default::default()
+        });
     }
     d.recompute();
     let fields = d.to_print_field_map();

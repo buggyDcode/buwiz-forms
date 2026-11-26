@@ -487,14 +487,6 @@ pub(crate) fn match_schedule_to_bands(
         }
     }
 
-    if std::env::var_os("BF_DEBUG").is_some() {
-        eprintln!(
-            "BFDBG match {}: html_to_col={} bands={}",
-            sched.heading,
-            html_to_col.len(),
-            bands.len()
-        );
-    }
     if html_to_col.is_empty() {
         return None;
     }
@@ -535,15 +527,6 @@ pub(crate) fn match_schedule_to_bands(
         }
     }
 
-    if std::env::var_os("BF_DEBUG").is_some() {
-        eprintln!(
-            "BFDBG match {}: matched_bands={} covered={}/{}",
-            sched.heading,
-            matched_bands.len(),
-            covered_cols.len(),
-            sched.columns.len()
-        );
-    }
     if matched_bands.is_empty() {
         return None;
     }
@@ -552,14 +535,6 @@ pub(crate) fn match_schedule_to_bands(
     // omits one or more columns of this schedule (e.g. 1707 Schedule 2's
     // upper Name of Corporate Stock rows), fall back to the plain table.
     if covered_cols.len() < sched.columns.len() {
-        if std::env::var_os("BF_DEBUG").is_some() {
-            eprintln!(
-                "BFDBG match {}: REJECT coverage {}/{}",
-                sched.heading,
-                covered_cols.len(),
-                sched.columns.len()
-            );
-        }
         return None;
     }
 

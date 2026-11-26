@@ -113,7 +113,9 @@ fn check_invariant(case: &InvariantCase) {
             for (fi, f) in case.html.split("<div class=\"page").enumerate().skip(1) {
                 let ft = rendered_text(f).to_uppercase();
                 let fh = if is_numeric {
-                    ft.chars().filter(|c| *c != ',' && *c != '.').collect::<String>()
+                    ft.chars()
+                        .filter(|c| *c != ',' && *c != '.')
+                        .collect::<String>()
                 } else {
                     ft
                 };
@@ -728,7 +730,9 @@ fn invariant_1700_schedule1() {
 /// rows each (`0..=2`).
 #[test]
 fn invariant_2000ot_schedules() {
-    use bir_core::forms::form_2000ot::{Form2000OTDraft, Form2000OTPropertyRow, Form2000OTShareRow};
+    use bir_core::forms::form_2000ot::{
+        Form2000OTDraft, Form2000OTPropertyRow, Form2000OTShareRow,
+    };
     let profile = demo_profile();
     let cap = 3usize;
     for &count in &[cap, cap + 3, cap + 40] {
