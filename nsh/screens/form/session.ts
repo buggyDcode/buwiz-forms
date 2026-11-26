@@ -812,8 +812,48 @@ export class FormSession {
     else this.blurers.delete(k);
   }
   private blurers = new Map<string, () => void>();
-  /** Queue is waiting for a focused amount box to let go. */
+  /** Queue, a Delete row, Print or Save is waiting for a focused amount box to let go. */
   private settling = false;
+
+  /**
+   * An amount box that still has the keys is left before `then` (Queue, a Delete row, Print, Save), so what it holds is the
+   * return's before anything is judged, moved, printed or saved. True when `then` was put off (or stopped); false when no amount
+   * box has the keys and the caller goes on now. The box's blur may come on a later turn: `then` waits until the session has seen
+   * the box let go (blur() clears focusKey) and runs one turn after that. Q1: a second press while a box settles does nothing.
+   * Q2: a box that has not let go after QUEUE_SETTLE_MS stops it: the session does not know what the box holds, so nothing is done
+   * and the box is left exactly as it is.
+   */
+  private settleFocused(then: () => void): boolean {
+    if (this.settling) return true;
+    const held = this.st.focusKey;
+    const heldKind = held ? this.kindOf.get(held) : undefined;
+    if (!held || (heldKind !== "money" && heldKind !== "num")) return false;
+    const blurHeld = this.blurers.get(held);
+    // A focused key whose box is gone (it unregistered its blur): the box ran its own leave logic as it went; it is treated as left.
+    if (!blurHeld) {
+      this.blur(held);
+      return false;
+    }
+    this.settling = true;
+    blurHeld();
+    const token = this.token;
+    const started = Date.now();
+    const go = () => {
+      if (token !== this.token) return void (this.settling = false);
+      if (this.st.focusKey === held && Date.now() - started < QUEUE_SETTLE_MS) return void this.later(25, go);
+      if (this.st.focusKey === held) {
+        this.settling = false;
+        const ctx = this.refusalCtx(held, "");
+        return void this.toast(`Finish the amount in ${ctx.item ? `Item ${ctx.item}` : ctx.label} first.`, "triangle-alert");
+      }
+      this.later(0, () => {
+        this.settling = false;
+        if (token === this.token) then();
+      });
+    };
+    this.later(0, go);
+    return true;
+  }
 
   /** Amount box k was left with text that is not an amount and shows `kept`, the return's amount, again: a note under it says so. */
   leftUnreadable(k: string, typed: string, kept: string) {
@@ -1467,6 +1507,11 @@ export class FormSession {
     // was typed for (and judged as every fill is), so it never lands on the row that moves into its place. A removal question or a
     // refused fill stops the delete: the filer answers that first.
     const clearsRow = Object.entries(edits).some(([k, v]) => String(v).trim() === "" && Boolean(this.items.get(this.keyIndex.get(k) ?? "")?.rows));
+    // B1: an amount box that still has the keys is left first, as Queue leaves it. Left after the rows moved, it would hold the
+    // amount of the row that moved into its keys and put its own typed amount back over it (or bring back a deleted last row). Left
+    // first, its amount is stored on its own row; then the row is cleared and the rows below move up with the box no longer focused.
+    // The drawer's Delete row closes the drawer right after: the box going away runs the same leave, before this clear goes on.
+    if (clearsRow && !this.reopening && this.settleFocused(() => this.choose(edits, clear))) return;
     if (clearsRow && Object.keys(s.pending).length && !this.reopening) {
       this.flush();
       if (s.removal || Object.keys(s.pending).length) return;
@@ -3488,37 +3533,9 @@ export class FormSession {
    */
   queue() {
     const s = this.st;
-    // Q1: a second press while Queue is settling a focused box does nothing; the first one goes on once the box was left.
-    if (this.settling) return;
     // Queue cannot be taken back: an amount box that still has the keys is left first, so the amount it puts back and the note it
-    // raises exist before anything is judged. Its blur may come on a later turn: Queue waits until the session has seen the box let
-    // go (blur() clears focusKey) and goes on one turn after that. Q2: a box that has not let go after QUEUE_SETTLE_MS stops Queue:
-    // the session does not know what it holds, so nothing is queued and the box is left exactly as it is.
-    const held = s.focusKey;
-    const heldKind = held ? this.kindOf.get(held) : undefined;
-    const blurHeld = held ? this.blurers.get(held) : undefined;
-    // A focused key whose box is gone (it unregistered its blur): the box ran its own leave logic as it went; Queue treats it as left.
-    if (held && (heldKind === "money" || heldKind === "num") && !blurHeld) this.blur(held);
-    else if (held && (heldKind === "money" || heldKind === "num")) {
-      this.settling = true;
-      blurHeld!();
-      const token = this.token;
-      const started = Date.now();
-      const go = () => {
-        if (token !== this.token) return void (this.settling = false);
-        if (this.st.focusKey === held && Date.now() - started < QUEUE_SETTLE_MS) return void this.later(25, go);
-        if (this.st.focusKey === held) {
-          this.settling = false;
-          const ctx = this.refusalCtx(held, "");
-          return void this.toast(`Finish the amount in ${ctx.item ? `Item ${ctx.item}` : ctx.label} first.`, "triangle-alert");
-        }
-        this.later(0, () => {
-          this.settling = false;
-          if (token === this.token) this.queue();
-        });
-      };
-      return void this.later(0, go);
-    }
+    // raises exist before anything is judged (Q1, Q2: settleFocused).
+    if (this.settleFocused(() => this.queue())) return;
     if (s.sample) return this.saveSample(() => this.queue());
     // A note Queue has not shown yet stops it once, wherever it is: its part opens (the others fold, as the navigator does), its row
     // is brought into view, and the toast says the note itself, which names the item. Shown, it stops Queue no more.

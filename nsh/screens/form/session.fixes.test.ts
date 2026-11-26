@@ -1006,3 +1006,202 @@ test("number note [L2]: a count the host stores as typed raises no note (2551Q N
   expect(s.boxMessageOf(sheets) ?? "").not.toContain("you typed");
   s.dispose();
 });
+
+/**
+ * A money box with the keys, as fields.tsx's MaskedField leaves: on its blur or as it goes away (unmount), whichever comes first, it
+ * reports its own reading (`reads`) and then its blur; going away also unregisters its blur. `blurOn`: "later" when the blur the
+ * session asks for reaches it on a later turn (60 ms), "now" when it comes at once, "never" when it never comes.
+ */
+function heldBox(s: FormSession, k: string, typed: string, blurOn: "later" | "now" | "never", reads = typed) {
+  let focused = true;
+  const leave = () => {
+    if (!focused) return;
+    focused = false;
+    s.edit(k, reads);
+    s.blur(k);
+  };
+  let asked = 0;
+  s.registerBlur(k, () => {
+    asked++;
+    if (blurOn === "now") leave();
+    else if (blurOn === "later") setTimeout(leave, 60);
+  });
+  s.focus(k);
+  s.edit(k, typed);
+  return {
+    asked: () => asked,
+    /** The drawer closed: the box goes away. */
+    unmount: () => {
+      leave();
+      s.registerBlur(k, null);
+    },
+  };
+}
+
+const sched3Rows = (s: FormSession, n: number) => Array.from({ length: n }, (_x, i) => [s.valueOf("txtNameWithHoldingAgent3" + i), s.valueOf("txtIncomePayment3" + i)]);
+const sched3Messages = (s: FormSession) => [0, 1, 2].flatMap((n) => sched3(n)).filter((k) => Boolean(s.boxMessageOf(k)));
+
+test("[B1] Delete row with an amount box in that row still focused: the typed amount goes with its row and never lands on the row that moves up", async () => {
+  // Schedule.tsx's remove(): the row's clear (onClearRow), then the drawer closes at once and the focused cell goes away.
+  for (const [period, blurOn] of [[4, "later"], [4, "now"]] as const) {
+    const s = await opened(at("2550Q", blurOn === "later" ? 2025 : 2022, period));
+    fillSched3Row(s, 0, "A0", "1000");
+    fillSched3Row(s, 1, "A1", "2000");
+    fillSched3Row(s, 2, "A2", "3000");
+    await s.idle();
+    const box = heldBox(s, "txtIncomePayment31", "500", blurOn);
+    deleteRow(s, 1);
+    box.unmount();
+    await s.idle();
+    expect(sched3Rows(s, 3)).toEqual([["A0", "1,000.00"], ["A2", "3,000.00"], ["", ""]]);
+    expect(sched3Messages(s)).toEqual([]);
+    s.dispose();
+  }
+});
+
+test("[B1] Delete row with an amount box focused in a row below: the typed amount moves up with its own row and leaves nothing behind", async () => {
+  const s = await opened(at("2550Q", 2021, 4));
+  fillSched3Row(s, 0, "A0", "1000");
+  fillSched3Row(s, 1, "A1", "2000");
+  fillSched3Row(s, 2, "A2", "3000");
+  await s.idle();
+  const box = heldBox(s, "txtIncomePayment32", "500", "later");
+  deleteRow(s, 1);
+  await s.idle();
+  box.unmount();
+  await s.idle();
+  expect(sched3Rows(s, 3)).toEqual([["A0", "1,000.00"], ["A2", "500.00"], ["", ""]]);
+  expect(sched3Messages(s)).toEqual([]);
+  s.dispose();
+});
+
+test("[B1] Delete row of the last row with its amount box still focused: the row does not come back", async () => {
+  const s = await opened(at("2550Q", 2023, 2));
+  fillSched3Row(s, 0, "A0", "1000");
+  fillSched3Row(s, 1, "A1", "2000");
+  await s.idle();
+  const box = heldBox(s, "txtIncomePayment31", "500", "later");
+  deleteRow(s, 1);
+  box.unmount();
+  await s.idle();
+  expect(sched3Rows(s, 3)).toEqual([["A0", "1,000.00"], ["", ""], ["", ""]]);
+  expect(sched3(1).map((k) => s.valueOf(k).replace(/^0\.00$/, ""))).toEqual(["", "", "", "", ""]);
+  s.dispose();
+});
+
+test("[B1] Delete row while a focused amount box never lets go: nothing is cleared and the filer is told to finish the amount, once", async () => {
+  const h = hooks();
+  const s = await opened(at("2550Q", 2023, 4), h);
+  fillSched3Row(s, 0, "A0", "1000");
+  fillSched3Row(s, 1, "A1", "2000");
+  await s.idle();
+  const box = heldBox(s, "txtIncomePayment30", "500", "never");
+  const started = Date.now();
+  deleteRow(s, 0);
+  await s.idle();
+  expect(box.asked()).toBe(1);
+  expect(Date.now() - started).toBeGreaterThanOrEqual(450);
+  const told = h.said.toasts.map((t) => t.message).filter((m) => /^Finish the amount in .+ first\.$/.test(m));
+  expect(told).toEqual(["Finish the amount in (C) Income Payment first."]);
+  expect(s.valueOf("txtNameWithHoldingAgent30")).toBe("A0");
+  expect(s.valueOf("txtNameWithHoldingAgent31")).toBe("A1");
+  // The box really was left: Delete row then clears the row, its typed amount with it.
+  box.unmount();
+  deleteRow(s, 0);
+  await s.idle();
+  expect(sched3Rows(s, 2)).toEqual([["A1", "2,000.00"], ["", ""]]);
+  s.dispose();
+});
+
+test("[B1] a second Delete row while the first settles a focused amount box does nothing", async () => {
+  const s = await opened(at("2550Q", 2022, 1));
+  fillSched3Row(s, 0, "A0", "1000");
+  fillSched3Row(s, 1, "A1", "2000");
+  fillSched3Row(s, 2, "A2", "3000");
+  await s.idle();
+  const box = heldBox(s, "txtIncomePayment30", "500", "later");
+  deleteRow(s, 0);
+  deleteRow(s, 0);
+  await s.idle();
+  expect(box.asked()).toBe(1);
+  expect(sched3Rows(s, 3)).toEqual([["A1", "2,000.00"], ["A2", "3,000.00"], ["", ""]]);
+  s.dispose();
+});
+
+test("[B1] Delete row with a focused amount box that is gone (its blur unregistered): treated as left, cleared at once", async () => {
+  const h = hooks();
+  const s = await opened(at("2550Q", 2022, 2), h);
+  fillSched3Row(s, 0, "A0", "1000");
+  fillSched3Row(s, 1, "A1", "2000");
+  fillSched3Row(s, 2, "A2", "3000");
+  await s.idle();
+  let called = 0;
+  s.registerBlur("txtIncomePayment31", () => void called++);
+  s.focus("txtIncomePayment31");
+  s.edit("txtIncomePayment31", "500");
+  s.registerBlur("txtIncomePayment31", null);
+  deleteRow(s, 1);
+  // Cleared in the same turn: nothing waited.
+  expect(sched3Rows(s, 3)).toEqual([["A0", "1,000.00"], ["A2", "3,000.00"], ["", ""]]);
+  await s.idle();
+  expect(called).toBe(0);
+  expect(s.focusedPart()).toBe(null);
+  expect(h.said.toasts.some((t) => t.message.startsWith("Finish the amount"))).toBe(false);
+  expect(sched3Rows(s, 3)).toEqual([["A0", "1,000.00"], ["A2", "3,000.00"], ["", ""]]);
+  s.dispose();
+});
+
+test("[B1] no box focused: Delete row clears the row and moves the rows below up in the same turn, as before", async () => {
+  const s = await opened(at("2550Q", 2022, 3));
+  fillSched3Row(s, 0, "A0", "1000");
+  fillSched3Row(s, 1, "A1", "2000");
+  await s.idle();
+  s.edit("txtIncomePayment30", "1500");
+  deleteRow(s, 1);
+  expect(sched3Rows(s, 2)).toEqual([["A0", "1,500.00"], ["", ""]]);
+  await s.idle();
+  expect(sched3Rows(s, 2)).toEqual([["A0", "1,500.00"], ["", ""]]);
+  s.dispose();
+});
+
+/** 2551Q Schedule 1's slots, as rows.tsx's scheduleProps reads them (item keys, columns). */
+function sched2551(s: FormSession) {
+  const it = s.schema!.parts.flatMap((p) => p.items).find((x) => (x.keys || []).some((row) => row.includes("txtATCAmt1")))!;
+  const keys = it.keys!;
+  const cols = it.cols || [];
+  return {
+    keys,
+    /** The drawer's Delete row (rows.tsx onClearRow): "" for every visible, open cell of slot r. */
+    deleteRow: (r: number) => s.choose(Object.fromEntries(keys[r].filter((k, c) => cols[c]?.t !== "hidden" && !s.box(k).locked()).map((k) => [k, ""]))),
+    /** Slot r's draft values, key by key. */
+    slot: (r: number) => Object.fromEntries(keys[r].map((k) => [k, s.valueOf(k)])),
+  };
+}
+
+/** An empty slot's value: blank, a zero amount or rate, the cleared ATC's "0", an unticked box. */
+const zeroOrBlank = (v: string) => v.trim() === "" || v === "false" || /^0(\.0+)?$/.test(v.replace(/,/g, ""));
+
+test("[B1] 2551Q Schedule 1: after a Delete row with a focused cell holding typed text, no cleared slot carries an amount", async () => {
+  for (const [period, r, blurOn] of [[1, 1, "later"], [2, 1, "now"], [3, 2, "later"]] as const) {
+    const s = await opened(at("2551Q", 2019, period));
+    const t = sched2551(s);
+    const atc = s.box("drpATC1").options().map((o) => o.value).filter((v) => v && !v.startsWith("catalog:"));
+    for (const [n, amount] of [[0, "1000"], [1, "2000"], [2, "3000"]] as const) {
+      s.choose({ [t.keys[n][0]]: atc[n] });
+      s.edit("txtATCAmt" + (n + 1), amount);
+      s.flush();
+      await s.idle();
+    }
+    // Typed into the open row's amount (the keys go in front of the stored 2,000 or 3,000), not left before Delete row.
+    const amt = "txtATCAmt" + (r + 1);
+    const box = heldBox(s, amt, "500" + (r + 1) + "000", blurOn);
+    t.deleteRow(r);
+    box.unmount();
+    await s.idle();
+    // Schedule 1 keeps its slots (no row moves up): the deleted row's slot is cleared whole, its amount with it (the cleared ATC
+    // reads "0"); the other rows keep theirs.
+    expect(Object.entries(t.slot(r)).filter(([, v]) => !zeroOrBlank(v))).toEqual([]);
+    for (const n of [0, 1, 2].filter((n) => n !== r)) expect(s.valueOf("txtATCAmt" + (n + 1))).toBe(["1,000.00", "2,000.00", "3,000.00"][n]);
+    s.dispose();
+  }
+});
