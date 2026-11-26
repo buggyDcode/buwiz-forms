@@ -5,7 +5,8 @@ import { bir } from "../../bir";
 import { DEMO, createDemoTaxpayer, warmForms } from "../../bir/testing";
 import { radioProps } from "./rows";
 import { emptyCell } from "./schema";
-import { FormSession, UNDO_WINDOW, type FormTarget, type SessionHooks, type ToastAction } from "./session";
+import { app } from "../../shell/app";
+import { flushNow, FormSession, UNDO_WINDOW, type FormTarget, type SessionHooks, type ToastAction } from "./session";
 
 // The first form call of a process builds every form's schema (the host does it lazily, once per process); a test's JS call has 2 s on the
 // headless runner, a file's load 10 s.
@@ -394,6 +395,552 @@ test("money safety net: a host-stored amount different from the shown amount is 
     expect(s.saveState().state).toBe("unsaved");
   } finally {
     mutableBir.screen_form_fill = original;
+    s?.dispose();
+  }
+});
+
+// The money safety net's review findings (F1, F9, F10), through the door's seams: `hostFault` is the host fault the net exists for
+// (wherever the draft holds `typed` for `key`, the host answers `stored`, in a fill's and a validation's values alike), and `countSaves`
+// counts the host's saves.
+
+const NOT_SAVED = "An amount was not saved. Correct the highlighted box.";
+
+function hostFault(key: string, typed: string, stored: string): () => void {
+  const fill = bir.screen_form_fill;
+  const validate = bir.screen_form_validate;
+  const door = bir as { screen_form_fill: typeof fill; screen_form_validate: typeof validate };
+  const fault = (values: Record<string, unknown> | undefined) => {
+    const v = String(values?.[key] ?? "").replace(/,/g, "");
+    if (values && v !== "" && Number(v) === Number(typed)) values[key] = stored;
+  };
+  door.screen_form_fill = ((...args: Parameters<typeof fill>): ReturnType<typeof fill> => {
+    const r = fill(...args);
+    fault(r.values as Record<string, unknown>);
+    return r;
+  }) as typeof fill;
+  door.screen_form_validate = ((...args: Parameters<typeof validate>): ReturnType<typeof validate> =>
+    validate(...args).then((r) => {
+      fault(r.values as Record<string, unknown> | undefined);
+      return r;
+    })) as typeof validate;
+  return () => {
+    door.screen_form_fill = fill;
+    door.screen_form_validate = validate;
+  };
+}
+
+function countSaves(): { count: number; restore: () => void } {
+  const save = bir.screen_form_save;
+  const door = bir as { screen_form_save: typeof save };
+  const out = { count: 0, restore: () => void (door.screen_form_save = save) };
+  door.screen_form_save = ((...args: Parameters<typeof save>): ReturnType<typeof save> => {
+    out.count++;
+    return save(...args);
+  }) as typeof save;
+  return out;
+}
+
+/** A sample's Save, its period answered (year, quarter) when the dialog asks. */
+async function saveSampleAs(session: FormSession, year: number, quarter: number) {
+  session.saveNow();
+  const o = session.overlay();
+  if (o?.kind === "sample-period") {
+    const answer: Record<string, string> = {};
+    for (const p of o.parts) answer[p.key] = p.part === "year" ? String(year) : p.part === "year_end_month" ? "12" : p.part === "quarter" ? String(p.quarter === quarter) : p.value;
+    session.takeSamplePeriod(answer);
+  }
+  await session.idle();
+  await session.idle();
+}
+
+/** The session's private save paths, for the tests that name them. */
+const inner = (s: FormSession) => s as unknown as { saveReturn(announce: boolean): boolean; finish(): string | null };
+
+test("F1: no save is made while a shown amount differs from the stored one; leaving is refused with the box's sentence; corrected, it saves", async () => {
+  const key = "frm2551Qv2018:txt15";
+  const sentence = "Item 15: the box shows 100.00, but the draft stored 99.00. Correct this amount; it was not saved.";
+  const restore = hostFault(key, "100", "99.00");
+  const saves = countSaves();
+  const h = hooks();
+  let reported = 0;
+  let s: FormSession | undefined;
+  try {
+    s = await opened(at("2551Q", 2023, 1), { ...h, onSaved: () => reported++ });
+    s.edit(key, "100");
+    // The fill, then autosave's turn: held.
+    await s.idle();
+    expect(s.boxMessageOf(key)).toBe(sentence);
+    expect(saves.count).toBe(0);
+    // The explicit save: held, and said.
+    s.saveNow();
+    await s.idle();
+    expect(saves.count).toBe(0);
+    expect(h.said.toasts.map((t) => t.message)).toContain(NOT_SAVED);
+    expect(inner(s).saveReturn(false)).toBe(false);
+    // Leaving: refused with the sentence the box shows, as a failed save is.
+    expect(inner(s).finish()).toBe(sentence);
+    expect(await s.flushNow()).toBe(false);
+    expect(h.said.toasts.map((t) => t.message)).toContain(sentence);
+    expect(saves.count).toBe(0);
+    expect(reported).toBe(0);
+    expect(s.saveState().state).toBe("unsaved");
+    // Corrected (a new edit the host stores as shown): every path goes ahead.
+    s.edit(key, "250");
+    await s.idle();
+    expect(s.boxMessageOf(key) ?? "").toBe("");
+    expect(saves.count).toBeGreaterThan(0);
+    expect(inner(s).saveReturn(false)).toBe(true);
+    expect(inner(s).finish()).toBe(null);
+    expect(await s.flushNow()).toBe(true);
+    expect(s.saveState().state).toBe("saved");
+    expect(reported).toBeGreaterThan(0);
+  } finally {
+    restore();
+    saves.restore();
+    s?.dispose();
+  }
+});
+
+test("F1: a Form library sample is not saved as a return while a shown amount differs from the stored one", async () => {
+  const key = "frm2551Qv2018:txt15";
+  const restore = hostFault(key, "100", "99.00");
+  const saves = countSaves();
+  const h = hooks();
+  let s: FormSession | undefined;
+  const save = (session: FormSession) => saveSampleAs(session, 2022, 2);
+  try {
+    s = await opened(at("2551Q", 0, 0, "sample"), h);
+    s.edit(key, "100");
+    await s.idle();
+    expect(s.boxMessageOf(key)).toContain("Correct this amount");
+    await save(s);
+    expect(saves.count).toBe(0);
+    expect(s.target().mode).toBe("sample");
+    expect(h.said.toasts.map((t) => t.message)).toContain(NOT_SAVED);
+    // Corrected, the sample saves and becomes the return.
+    s.edit(key, "250");
+    await s.idle();
+    await save(s);
+    expect(saves.count).toBeGreaterThan(0);
+    expect(s.target().mode).toBe("return");
+  } finally {
+    restore();
+    saves.restore();
+    s?.dispose();
+  }
+});
+
+/** 2550Q Schedule 3's row n (a compacting schedule: a deleted row's rows below move up). */
+const sched3 = (n: number) => ["txtDateCovered3" + n, "txtDateCovered3To" + n, "txtNameWithHoldingAgent3" + n, "txtIncomePayment3" + n, "txtTotalTaxWithHeld3" + n];
+
+function fillSched3Row(s: FormSession, n: number, agent: string, payment: string) {
+  s.edit("txtDateCovered3" + n, "01/01/2025");
+  s.edit("txtDateCovered3To" + n, "03/31/2025");
+  s.edit("txtNameWithHoldingAgent3" + n, agent);
+  s.edit("txtIncomePayment3" + n, payment);
+}
+
+/** The drawer's Delete row (rows.tsx onClearRow): "" for every open cell of the row. */
+const deleteRow = (s: FormSession, n: number) => s.choose(Object.fromEntries(sched3(n).filter((k) => !s.box(k).locked()).map((k) => [k, ""])));
+
+test("F9: a mismatch on a schedule row's amount goes when deleting the row above moves its row up; Save then goes ahead", async () => {
+  const pay1 = "txtIncomePayment31";
+  const restore = hostFault(pay1, "2000", "1,999.00");
+  const saves = countSaves();
+  let s: FormSession | undefined;
+  try {
+    s = await opened(at("2550Q", 2025, 1));
+    fillSched3Row(s, 0, "Agent One", "1000");
+    fillSched3Row(s, 1, "Agent Two", "2000");
+    await s.idle();
+    expect(s.boxMessageOf(pay1)).toContain("Correct this amount");
+    deleteRow(s, 0);
+    await s.idle();
+    // Row 1 moved up into row 0: the draft holds its 2,000.00 there, and row 1 is the blank row now.
+    expect(s.shownOf("txtIncomePayment30")).toBe("2,000.00");
+    expect(s.boxMessageOf(pay1) ?? "").not.toContain("Correct this amount");
+    expect(s.shownOf(pay1)).toBe("");
+    const before = saves.count;
+    s.saveNow();
+    await s.idle();
+    expect(saves.count).toBeGreaterThan(before);
+    expect(s.saveState().state).toBe("saved");
+  } finally {
+    restore();
+    saves.restore();
+    s?.dispose();
+  }
+});
+
+test("F9: a mismatch stays while its box can be corrected, and goes when a gate hides the box or the host locks it", async () => {
+  // A gate hides it: 0619E Item 14 is used only when Item 4 is Yes.
+  const tax = "frm0619E:txtTax14";
+  const restoreGate = hostFault(tax, "100", "99.00");
+  let gated: FormSession | undefined;
+  try {
+    gated = await opened(at("0619E", 2025, 1));
+    gated.pickRadio("frm0619E:optWithheld:Y");
+    await gated.idle();
+    gated.edit(tax, "100");
+    await gated.idle();
+    expect(gated.boxMessageOf(tax)).toContain("Correct this amount");
+    gated.pickRadio("frm0619E:optWithheld:N");
+    await gated.idle();
+    expect(gated.boxMessageOf(tax) ?? "").not.toContain("Correct this amount");
+  } finally {
+    restoreGate();
+    gated?.dispose();
+  }
+
+  // The host locks it: a later fill's answer relocks the box (computed now).
+  const key = "frm2551Qv2018:txt15";
+  const other = "txtATCAmt1";
+  const restore = hostFault(key, "100", "99.00");
+  const saves = countSaves();
+  let s: FormSession | undefined;
+  const fill = bir.screen_form_fill;
+  const door = bir as { screen_form_fill: typeof fill };
+  try {
+    s = await opened(at("2551Q", 2023, 2));
+    s.edit(key, "100");
+    await s.idle();
+    expect(s.boxMessageOf(key)).toContain("Correct this amount");
+    // Another box edited: this one is still the filer's to correct, so the save stays held.
+    s.edit(other, "500");
+    await s.idle();
+    expect(s.box(key).locked()).toBe(false);
+    expect(s.boxMessageOf(key)).toContain("Correct this amount");
+    expect(saves.count).toBe(0);
+    door.screen_form_fill = ((...args: Parameters<typeof fill>): ReturnType<typeof fill> => {
+      const r = fill(...args);
+      if (args[2][other] === "600") r.relocks = { ...(r.relocks || {}), [key]: "computed by the form" };
+      return r;
+    }) as typeof fill;
+    s.edit(other, "600");
+    await s.idle();
+    expect(s.box(key).locked()).toBe(true);
+    expect(s.boxMessageOf(key) ?? "").not.toContain("Correct this amount");
+    expect(saves.count).toBeGreaterThan(0);
+    expect(s.saveState().state).toBe("saved");
+  } finally {
+    door.screen_form_fill = fill;
+    restore();
+    saves.restore();
+    s?.dispose();
+  }
+});
+
+test("F10: an amount typed in a row that a Delete row in the same batch clears or moves is no mismatch; a real one in that batch still is", async () => {
+  const other = "frm2550qv2024:vatRefund";
+  const restore = hostFault(other, "100", "99.00");
+  const mismatch = (s: FormSession, k: string) => (s.boxMessageOf(k) ?? "").includes("Correct this amount");
+  const cells = [0, 1, 2].flatMap((n) => sched3(n));
+  let s: FormSession | undefined;
+  try {
+    s = await opened(at("2550Q", 2025, 3));
+    fillSched3Row(s, 0, "Agent One", "1000");
+    fillSched3Row(s, 1, "Agent Two", "2000");
+    await s.idle();
+    // Typed, still pending, then its own row deleted: one batch, with a real mismatch in another box.
+    s.edit("txtIncomePayment31", "2500");
+    s.edit(other, "100");
+    deleteRow(s, 1);
+    await s.idle();
+    expect(cells.filter((k) => mismatch(s!, k))).toEqual([]);
+    expect(mismatch(s, other)).toBe(true);
+    // Typed in row 1, still pending, then row 0 deleted (row 1's rows move up): one batch, with a real mismatch again.
+    fillSched3Row(s, 1, "Agent Two", "2000");
+    await s.idle();
+    s.edit("txtIncomePayment31", "2600");
+    s.edit(other, "100");
+    deleteRow(s, 0);
+    await s.idle();
+    expect(cells.filter((k) => mismatch(s!, k))).toEqual([]);
+    expect(mismatch(s, other)).toBe(true);
+  } finally {
+    restore();
+    s?.dispose();
+  }
+});
+
+// Text a money box holds that does not read as an amount ("1500,50"): the box calls onInvalid (rows.tsx -> setAmountInvalid). The box
+// side is the money box's own; these tests call the session's door directly.
+
+test("invalid text blocks save: no save, leaving and Queue refused with the box's sentence; a stored edit does not lift it, null does", async () => {
+  const key = "frm2551Qv2018:txt15";
+  const sentence = "Item 15: 1500,50 is not a valid amount. Correct it or clear the box; it was not saved.";
+  const saves = countSaves();
+  const h = hooks();
+  let s: FormSession | undefined;
+  try {
+    s = await opened(at("2551Q", 2023, 3), h);
+    // The last prefix that read as an amount went to the draft; then the text stopped reading as one.
+    s.edit(key, "1500");
+    s.setAmountInvalid(key, "1500,50");
+    await s.idle();
+    expect(s.valueOf(key)).toBe("1,500.00");
+    expect(s.boxMessageOf(key)).toBe(sentence);
+    expect(saves.count).toBe(0);
+    s.saveNow();
+    await s.idle();
+    expect(saves.count).toBe(0);
+    expect(h.said.toasts.map((t) => t.message)).toContain(NOT_SAVED);
+    expect(inner(s).saveReturn(false)).toBe(false);
+    expect(inner(s).finish()).toBe(sentence);
+    expect(await s.flushNow()).toBe(false);
+    expect(h.said.toasts.map((t) => t.message)).toContain(sentence);
+    s.queue();
+    await s.idle();
+    expect(s.overlay()?.kind ?? "").not.toBe("queue-confirm");
+    expect(s.status()).toBe("Draft");
+    expect(saves.count).toBe(0);
+    // An edit of the box the host stores does not lift it by itself.
+    s.edit(key, "1600");
+    await s.idle();
+    expect(s.boxMessageOf(key)).toBe(sentence);
+    expect(saves.count).toBe(0);
+    // The text reads again: everything goes ahead, and the sentence is gone.
+    s.setAmountInvalid(key, null);
+    await s.idle();
+    expect(s.boxMessageOf(key) ?? "").toBe("");
+    expect(saves.count).toBeGreaterThan(0);
+    expect(inner(s).finish()).toBe(null);
+    expect(await s.flushNow()).toBe(true);
+    expect(s.saveState().state).toBe("saved");
+  } finally {
+    saves.restore();
+    s?.dispose();
+  }
+});
+
+test("invalid text blocks save: a Form library sample is not saved as a return while a box holds text that is not an amount", async () => {
+  const key = "frm2551Qv2018:txt15";
+  const saves = countSaves();
+  const h = hooks();
+  let s: FormSession | undefined;
+  try {
+    s = await opened(at("2551Q", 0, 0, "sample"), h);
+    s.edit(key, "15");
+    s.setAmountInvalid(key, "15..0");
+    await s.idle();
+    await saveSampleAs(s, 2022, 3);
+    expect(saves.count).toBe(0);
+    expect(s.target().mode).toBe("sample");
+    expect(h.said.toasts.map((t) => t.message)).toContain(NOT_SAVED);
+    s.setAmountInvalid(key, null);
+    await s.idle();
+    await saveSampleAs(s, 2022, 3);
+    expect(saves.count).toBeGreaterThan(0);
+    expect(s.target().mode).toBe("return");
+  } finally {
+    saves.restore();
+    s?.dispose();
+  }
+});
+
+test("invalid text blocks save: the entry goes when its row is deleted or moved, a gate hides its box, or the host locks it", async () => {
+  const invalidOn = (s: FormSession, k: string) => (s.boxMessageOf(k) ?? "").includes("is not a valid amount");
+  // Its own row deleted, then the row above deleted (its row moves up): gone both times, and Save goes ahead.
+  const pay1 = "txtIncomePayment31";
+  const saves = countSaves();
+  let rows: FormSession | undefined;
+  try {
+    rows = await opened(at("2550Q", 2025, 4));
+    fillSched3Row(rows, 0, "Agent One", "1000");
+    fillSched3Row(rows, 1, "Agent Two", "2000");
+    await rows.idle();
+    rows.setAmountInvalid(pay1, "2000,5");
+    expect(invalidOn(rows, pay1)).toBe(true);
+    deleteRow(rows, 1);
+    await rows.idle();
+    expect(invalidOn(rows, pay1)).toBe(false);
+    fillSched3Row(rows, 1, "Agent Two", "2000");
+    await rows.idle();
+    rows.setAmountInvalid(pay1, "2000,5");
+    expect(invalidOn(rows, pay1)).toBe(true);
+    deleteRow(rows, 0);
+    await rows.idle();
+    expect(invalidOn(rows, pay1)).toBe(false);
+    const before = saves.count;
+    rows.saveNow();
+    await rows.idle();
+    expect(saves.count).toBeGreaterThan(before);
+    expect(rows.saveState().state).toBe("saved");
+  } finally {
+    saves.restore();
+    rows?.dispose();
+  }
+
+  // A gate hides it: 0619E Item 14 is used only when Item 4 is Yes.
+  const tax = "frm0619E:txtTax14";
+  const gated = await opened(at("0619E", 2025, 4));
+  gated.pickRadio("frm0619E:optWithheld:Y");
+  await gated.idle();
+  gated.setAmountInvalid(tax, "1,00,0");
+  expect(invalidOn(gated, tax)).toBe(true);
+  gated.pickRadio("frm0619E:optWithheld:N");
+  await gated.idle();
+  expect(invalidOn(gated, tax)).toBe(false);
+  gated.dispose();
+
+  // The host locks it: a later fill's answer relocks the box.
+  const key = "frm2551Qv2018:txt15";
+  const other = "txtATCAmt1";
+  const fill = bir.screen_form_fill;
+  const door = bir as { screen_form_fill: typeof fill };
+  let s: FormSession | undefined;
+  try {
+    s = await opened(at("2551Q", 2024, 4));
+    s.setAmountInvalid(key, "12a3");
+    s.edit(other, "500");
+    await s.idle();
+    expect(invalidOn(s, key)).toBe(true);
+    door.screen_form_fill = ((...args: Parameters<typeof fill>): ReturnType<typeof fill> => {
+      const r = fill(...args);
+      if (args[2][other] === "600") r.relocks = { ...(r.relocks || {}), [key]: "computed by the form" };
+      return r;
+    }) as typeof fill;
+    s.edit(other, "600");
+    await s.idle();
+    expect(s.box(key).locked()).toBe(true);
+    expect(invalidOn(s, key)).toBe(false);
+    expect(s.saveState().state).toBe("saved");
+  } finally {
+    door.screen_form_fill = fill;
+    s?.dispose();
+  }
+});
+
+test("invalid text blocks save: with a mismatch on another box both hold, each sentence on its own box; on one box the text's sentence covers the mismatch until it reads again", async () => {
+  const mismatchKey = "frm2551Qv2018:txt15";
+  const invalidKey = "frm2551Qv2018:txt16";
+  const mismatch = "Item 15: the box shows 100.00, but the draft stored 99.00. Correct this amount; it was not saved.";
+  const invalid = "Item 16: 5..0 is not a valid amount. Correct it or clear the box; it was not saved.";
+  const restore = hostFault(mismatchKey, "100", "99.00");
+  const saves = countSaves();
+  let s: FormSession | undefined;
+  try {
+    s = await opened(at("2551Q", 2022, 1));
+    s.edit(mismatchKey, "100");
+    s.setAmountInvalid(invalidKey, "5..0");
+    await s.idle();
+    expect(s.boxMessageOf(mismatchKey)).toBe(mismatch);
+    expect(s.boxMessageOf(invalidKey)).toBe(invalid);
+    const both = inner(s).finish() ?? "";
+    expect(both).toContain(mismatch);
+    expect(both).toContain(invalid);
+    expect(saves.count).toBe(0);
+    // The text box reads again: its sentence never shows again; the mismatch still holds the return.
+    s.setAmountInvalid(invalidKey, null);
+    await s.idle();
+    expect(s.boxMessageOf(invalidKey) ?? "").toBe("");
+    expect(inner(s).finish()).toBe(mismatch);
+    expect(saves.count).toBe(0);
+    // One box: text that is not an amount covers its mismatch, which comes back when the text reads again.
+    s.setAmountInvalid(mismatchKey, "100,");
+    expect(s.boxMessageOf(mismatchKey)).toBe("Item 15: 100, is not a valid amount. Correct it or clear the box; it was not saved.");
+    s.setAmountInvalid(mismatchKey, null);
+    expect(s.boxMessageOf(mismatchKey)).toBe(mismatch);
+    expect(saves.count).toBe(0);
+    // Corrected, it saves.
+    s.edit(mismatchKey, "250");
+    await s.idle();
+    expect(saves.count).toBeGreaterThan(0);
+    expect(inner(s).finish()).toBe(null);
+  } finally {
+    restore();
+    saves.restore();
+    s?.dispose();
+  }
+});
+
+test("invalid text blocks save: text still being typed holds save, the sample save, Queue and leaving, with no sentence under the box until it is left", async () => {
+  const key = "frm2551Qv2018:txt15";
+  const sentence = "Item 15: 1,5 is not a valid amount. Correct it or clear the box; it was not saved.";
+  const saves = countSaves();
+  const h = hooks();
+  let s: FormSession | undefined;
+  let sample: FormSession | undefined;
+  try {
+    s = await opened(at("2551Q", 2022, 4), h);
+    s.edit(key, "1");
+    s.setAmountInvalid(key, "1,5", true);
+    await s.idle();
+    // Held, and silent under the box while typing.
+    expect(saves.count).toBe(0);
+    expect(s.boxMessageOf(key) ?? "").toBe("");
+    expect(inner(s).saveReturn(false)).toBe(false);
+    expect(saves.count).toBe(0);
+    // The box is left: the same text, typing false, shows the sentence.
+    s.setAmountInvalid(key, "1,5", false);
+    expect(s.boxMessageOf(key)).toBe(sentence);
+    // Typing again: silent again; Queue is refused and, the filer having tried to go, the sentence shows.
+    s.setAmountInvalid(key, "1,5", true);
+    expect(s.boxMessageOf(key) ?? "").toBe("");
+    s.queue();
+    await s.idle();
+    expect(s.status()).toBe("Draft");
+    expect(saves.count).toBe(0);
+    expect(s.boxMessageOf(key)).toBe(sentence);
+    // Leaving while typing: finish() names the sentence.
+    s.setAmountInvalid(key, "1,5", true);
+    expect(inner(s).finish()).toBe(sentence);
+    expect(saves.count).toBe(0);
+    // Null clears either form.
+    s.setAmountInvalid(key, "1,5", true);
+    s.setAmountInvalid(key, null);
+    expect(s.boxMessageOf(key) ?? "").toBe("");
+    s.setAmountInvalid(key, "1,5", false);
+    s.setAmountInvalid(key, null);
+    expect(s.boxMessageOf(key) ?? "").toBe("");
+    expect(inner(s).finish()).toBe(null);
+    expect(saves.count).toBeGreaterThan(0);
+
+    // The sample save is refused by a typing entry too.
+    const before = saves.count;
+    sample = await opened(at("2551Q", 0, 0, "sample"), h);
+    sample.edit(key, "1");
+    sample.setAmountInvalid(key, "1,5", true);
+    await sample.idle();
+    expect(sample.boxMessageOf(key) ?? "").toBe("");
+    await saveSampleAs(sample, 2021, 1);
+    expect(saves.count).toBe(before);
+    expect(sample.target().mode).toBe("sample");
+    expect(sample.boxMessageOf(key)).toBe(sentence);
+  } finally {
+    saves.restore();
+    s?.dispose();
+    sample?.dispose();
+  }
+});
+
+test("invalid text blocks save: a move or a quit with a held box toasts the box's sentence and saves nothing; the frame then goes (no Stay is offered)", async () => {
+  const key = "frm2551Qv2018:txt15";
+  const sentence = "Item 15: 9x is not a valid amount. Correct it or clear the box; it was not saved.";
+  const saves = countSaves();
+  const h = hooks();
+  // The form view's hook (shell/views.tsx FormView).
+  const off = app.beforeLeave(async () => {
+    await flushNow();
+  });
+  let s: FormSession | undefined;
+  try {
+    s = await opened(at("2551Q", 2021, 2), h);
+    s.edit(key, "9");
+    s.setAmountInvalid(key, "9x", true);
+    await s.idle();
+    app.go("settings");
+    await app.settled();
+    expect(h.said.toasts.map((t) => t.message)).toContain(sentence);
+    expect(saves.count).toBe(0);
+    expect(app.view()).toBe("settings");
+    let ended = false;
+    await app.quit(() => void (ended = true));
+    expect(ended).toBe(true);
+    expect(saves.count).toBe(0);
+  } finally {
+    off();
+    saves.restore();
     s?.dispose();
   }
 });

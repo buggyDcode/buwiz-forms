@@ -97,6 +97,10 @@ export function refusalSentence(ctx: RefusalContext): string {
   if (raw === "calendar year ends in December") return "A calendar year ends in December. Choose Fiscal to pick another month.";
   const mismatch = /^shown amount mismatch\|([^|]*)\|([^|]*)$/.exec(raw);
   if (mismatch) return `${at} the box shows ${mismatch[1]}, but the draft stored ${mismatch[2]}. Correct this amount; it was not saved.`;
+  // Text a money box holds that does not read as an amount; while the filer is still typing it ("|typing") the box's own short
+  // error is enough, so no sentence shows under it.
+  const invalid = /^amount not valid\|([\s\S]*?)(\|typing)?$/.exec(raw);
+  if (invalid) return invalid[2] ? "" : `${at} ${invalid[1]} is not a valid amount. Correct it or clear the box; it was not saved.`;
 
 
   // A gate: the box is shut by another answer ("Needs item 4 = Yes", the off tag).
