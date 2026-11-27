@@ -285,7 +285,7 @@ async fn run_queue_tick_until(db: Arc<Mutex<Database>>, stop: &CronStop) {
                 crate::db::AlertAction::None,
             );
         }
-        crate::notification::notify(crate::notification::NotificationKind::Attention);
+        crate::notification::notify(crate::notification::NotificationKind::Heartbeat);
     }
 
     if global_cron_enabled {
@@ -3306,6 +3306,53 @@ mod tests {
         assert_eq!(monthly_period_label(2026, 9), "09/26");
         assert_eq!(monthly_period_label(2026, 12), "12/26");
         assert_eq!(quarterly_period_label(2026, 3), "Q3/26");
+    }
+
+    #[test]
+    fn submission_alert_text_keeps_taxpayer_tin_form_period_and_time() {
+        let profile = crate::filing_queue::mandatory_lab_1601c_profile();
+        let sent_at = chrono::Local
+            .with_ymd_and_hms(2026, 9, 12, 15, 17, 25)
+            .unwrap();
+        let (title, body) = submission_alert_text(&profile, "1601C", "09/26", &sent_at, false);
+        assert_eq!(title, "1601C 09/26 submitted \u{2014} Juan Dela Cruz");
+        assert_eq!(
+            body,
+            "TIN 000-000-000-00000\nSent 03:17 PM, 12 Sep 2026\nFiled under codeitlikemiley@gmail.com"
+        );
+    }
+
+    #[test]
+    fn submission_alert_text_marks_dry_run_without_claiming_filing() {
+        let profile = crate::filing_queue::mandatory_lab_1601c_profile();
+        let sent_at = chrono::Local
+            .with_ymd_and_hms(2026, 9, 12, 15, 17, 25)
+            .unwrap();
+        let (title, body) = submission_alert_text(&profile, "1601C", "09/26", &sent_at, true);
+        assert_eq!(title, "Test send: 1601C 09/26 \u{2014} Juan Dela Cruz");
+        assert_eq!(
+            body,
+            "Test send. Nothing reached the BIR.\nTIN 000-000-000-00000\nTested 03:17 PM, 12 Sep 2026"
+        );
+        assert_never_filed_alert(&title, &body);
+    }
+
+    #[test]
+    fn confirmation_alert_text_keeps_the_detailed_in_app_text() {
+        let (title, body) = confirmation_alert_text(
+            "Juan Dela Cruz",
+            "000-000-000-00000",
+            "1601C",
+            "10/26",
+            "00000000000000-1601Cv2018-102026.xml",
+            "12 September 2026, 11:43 AM",
+            "codeitlikemiley@gmail.com",
+        );
+        assert_eq!(title, "BIR received 1601C 10/26 \u{2014} Juan Dela Cruz");
+        assert_eq!(
+            body,
+            "TIN 000-000-000-00000\nFile 00000000000000-1601Cv2018-102026.xml\nReceived by BIR 12 September 2026, 11:43 AM\nConfirmation in codeitlikemiley@gmail.com"
+        );
     }
 
     #[test]

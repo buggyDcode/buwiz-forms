@@ -54,6 +54,10 @@ fn native(registry: &mut Registry) {
     // One copy per database: a second launch asks the first to come forward and ends here (`desktop.rs`).
     #[cfg(not(target_os = "android"))]
     desktop::prepare_process();
+    // Only after the one-copy guard: a second launch exits above and must not
+    // sweep a preview the first copy is writing.
+    #[cfg(not(target_os = "android"))]
+    bir_core::platform::prepare_print_previews();
     registry.module::<Bridge>().module::<Door>().module::<agent::Agent>().module::<desktop::Desktop>().module::<print::Print>();
 }
 

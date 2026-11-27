@@ -220,14 +220,13 @@ fn panic_payload(info: &std::panic::PanicHookInfo<'_>) -> String {
 
 /// Replace credential material and taxpayer identifiers in a log line.
 ///
-/// A TIN is a standalone run of 9, 12 or 14 digits, dashed in the usual
-/// three-digit groups or undashed. The first six root digits are always
-/// masked; the last three root digits and a written 3- or 5-digit branch stay,
-/// so a line can still be correlated with the return it describes. Numbers
-/// with decimals are not TINs, nor are dates/times in their usual punctuated
-/// forms. One shape is genuinely ambiguous: an undelimited 14-digit run that
-/// is a valid `yyyyMMddHHmmss` timestamp is left as a timestamp, because no
-/// redactor can tell it apart from a TIN with the same digits.
+/// A TIN is nine root digits plus an optional 3-, 4- or 5-digit branch,
+/// written solid, dashed or spaced in the usual three-digit root groups. The
+/// first six root digits are always masked; the last three root digits and a
+/// written branch stay, so a line can still be correlated with the return it
+/// describes. Numbers with decimals are not TINs, nor are punctuated ISO
+/// dates/times. The app does not write compact `yyyyMMddHHmmss` timestamps, so
+/// no 14-digit run is exempted on that account.
 pub fn redact_secrets(input: &str) -> String {
     let mut text = input.to_string();
     // Bearer and token shapes first. A labeled `Authorization: Bearer …`
@@ -253,6 +252,7 @@ pub fn redact_secrets(input: &str) -> String {
     text = labeled_hex_key()
         .replace_all(&text, "$1[redacted]")
         .into_owned();
+    let text = mask_emails(&text);
     mask_tins(&text)
 }
 
@@ -279,13 +279,32 @@ fn mask_tins(text: &str) -> String {
     out
 }
 
+/// Mask the local part of an email address, keeping the domain for
+/// operational diagnosis. The regex is compiled once and the regex crate's
+/// search is linear in the input size.
+fn mask_emails(text: &str) -> String {
+    email_candidate()
+        .replace_all(text, |captures: &regex::Captures<'_>| {
+            let local = &captures[1];
+            let visible: String = local.chars().take(2).collect();
+            format!("{visible}•••@{}", &captures[2])
+        })
+        .into_owned()
+}
+
+fn email_candidate() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(r"\b([A-Za-z0-9._%+-]+)@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b")
+            .expect("static email regex")
+    })
+}
+
 fn tin_candidate() -> &'static Regex {
     static PATTERN: OnceLock<Regex> = OnceLock::new();
     PATTERN.get_or_init(|| {
-        Regex::new(
-            r"[0-9]{3}-[0-9]{3}-[0-9]{3}(?:-[0-9]{5}|-[0-9]{3})?|[0-9]{14}|[0-9]{12}|[0-9]{9}",
-        )
-        .expect("static TIN candidate regex")
+        Regex::new(r"[0-9]{3}[- ]?[0-9]{3}[- ]?[0-9]{3}(?:[- ]?[0-9]{3,5})?")
+            .expect("static TIN candidate regex")
     })
 }
 
@@ -294,9 +313,20 @@ fn tin_candidate() -> &'static Regex {
 /// number.
 fn tin_boundaries(bytes: &[u8], start: usize, end: usize) -> bool {
     fn word(byte: u8) -> bool {
-        byte.is_ascii_alphanumeric() || byte == b'_'
+        byte.is_ascii_alphanumeric()
     }
-    if start > 0 && word(bytes[start - 1]) {
+    fn hex(byte: u8) -> bool {
+        byte.is_ascii_hexdigit()
+    }
+    // URL percent-escapes end in a hex letter (`%3D123…`), and escaped text in
+    // Debug/JSON ends in the escape letter (`\\n123…`). Those letters are
+    // encoding syntax, not part of a larger identifier.
+    let escaped_before = (start >= 3
+        && bytes[start - 3] == b'%'
+        && hex(bytes[start - 2])
+        && hex(bytes[start - 1]))
+        || (start >= 2 && bytes[start - 2] == b'\\' && bytes[start - 1].is_ascii_alphanumeric());
+    if start > 0 && word(bytes[start - 1]) && !escaped_before {
         return false;
     }
     if end < bytes.len() && word(bytes[end]) {
@@ -313,36 +343,30 @@ fn tin_boundaries(bytes: &[u8], start: usize, end: usize) -> bool {
 
 /// The masked spelling of one token, or `None` when it is not a TIN. Dashes
 /// are either absent everywhere or in the official grouping (`3-3-3`, plus a
-/// 3- or 5-digit branch); partial or differently placed dashes are not TINs.
+/// 3-, 4- or 5-digit branch); partial or differently placed separators are not TINs.
 fn masked_tin(token: &str) -> Option<String> {
     if token.starts_with('-') || token.ends_with('-') || token.contains("--") {
         return None;
     }
     let digits: String = token.chars().filter(|c| c.is_ascii_digit()).collect();
-    if ![9, 12, 14].contains(&digits.len())
-        || digits.len() != token.len() - token.matches('-').count()
-    {
+    let separator_count = token.matches(['-', ' ']).count();
+    let valid_length = digits.len() == 9 || (12..=14).contains(&digits.len());
+    if !valid_length || digits.len() != token.len() - separator_count {
         return None;
     }
-    if token.contains('-') {
-        let parts: Vec<&str> = token.split('-').collect();
-        let expected = match digits.len() {
-            9 => vec![3, 3, 3],
-            12 => vec![3, 3, 3, 3],
-            14 => vec![3, 3, 3, 5],
-            _ => return None,
-        };
-        if parts.len() != expected.len()
-            || !parts
+    if token.contains('-') || token.contains(' ') {
+        let parts: Vec<&str> = token.split(['-', ' ']).collect();
+        let expected_root = [3, 3, 3];
+        if parts.len() < 3
+            || parts.len() > 4
+            || !parts[..3]
                 .iter()
-                .zip(&expected)
-                .all(|(part, len)| part.len() == *len)
+                .zip(expected_root)
+                .all(|(part, len)| part.len() == len)
+            || parts[3..].iter().any(|part| !(3..=5).contains(&part.len()))
         {
             return None;
         }
-    }
-    if digits.len() == 14 && is_compact_timestamp(&digits) {
-        return None;
     }
     let root_end = &digits[6..9];
     let branch = &digits[9..];
@@ -351,19 +375,6 @@ fn masked_tin(token: &str) -> Option<String> {
     } else {
         Some(format!("***-***-{root_end}-{branch}"))
     }
-}
-
-/// Whether a 14-digit run is a valid compact timestamp (`yyyyMMddHHmmss`).
-fn is_compact_timestamp(digits: &str) -> bool {
-    let parse = |range: std::ops::Range<usize>| digits[range].parse::<u32>().unwrap_or(u32::MAX);
-    let year = parse(0..4) as i32;
-    let month = parse(4..6);
-    let day = parse(6..8);
-    let hour = parse(8..10);
-    let minute = parse(10..12);
-    let second = parse(12..14);
-    chrono::NaiveDate::from_ymd_opt(year, month, day).is_some()
-        && chrono::NaiveTime::from_hms_opt(hour, minute, second).is_some()
 }
 
 /// The `EBIR_TEST_ENV` SQLCipher key. It is not a taxpayer secret, but it is
@@ -596,9 +607,41 @@ mod tests {
             "amount 1,234,567,890.00",
             "timestamp 2026-11-28T06:07:01Z",
             "timestamp 1764346821",
-            "compact timestamp 20261128060701",
         ] {
             assert_eq!(redact_secrets(ordinary), ordinary);
+        }
+    }
+
+    #[test]
+    fn redaction_masks_branch_lengths_and_escaped_or_spaced_tins() {
+        for (plain, masked) in [
+            ("1234567890000", "***-***-789-0000"),
+            ("123-456-789-0000", "***-***-789-0000"),
+            ("123 456 789 000", "***-***-789-000"),
+            ("tin%3D123456789", "tin%3D***-***-789"),
+            ("%2F123456789000-2551Q", "%2F***-***-789-000-2551Q"),
+            ("\\n123456789000", "\\n***-***-789-000"),
+            ("receipt_123456789000", "receipt_***-***-789-000"),
+            ("123-112-150-00000", "***-***-150-00000"),
+        ] {
+            assert_eq!(redact_secrets(plain), masked, "{plain}");
+        }
+    }
+
+    #[test]
+    fn redaction_masks_email_local_parts_and_keeps_domains() {
+        for (plain, masked) in [
+            (
+                "poll failed for payroll.team@example.com",
+                "poll failed for pa•••@example.com",
+            ),
+            (
+                "file 123456789000-1601Cv2018-092026#payroll.team@example.com#.xml",
+                "file ***-***-789-000-1601Cv2018-092026#pa•••@example.com#.xml",
+            ),
+            ("mail a@example.com", "mail a•••@example.com"),
+        ] {
+            assert_eq!(redact_secrets(plain), masked, "{plain}");
         }
     }
 

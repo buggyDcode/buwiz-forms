@@ -53,6 +53,8 @@ pub enum NotificationKind {
     ConfirmationArrived,
     /// Anything else that needs the user in the app.
     Attention,
+    /// The user asked for the background worker's test notification.
+    Heartbeat,
 }
 
 /// The fixed `(title, body)` of an OS banner. The body is one of the plan's
@@ -69,6 +71,7 @@ pub(crate) fn banner_text(kind: NotificationKind) -> (&'static str, &'static str
             "BIR's confirmation arrived. Open eBIRForms to see it."
         }
         NotificationKind::Attention => "Something needs your attention in eBIRForms.",
+        NotificationKind::Heartbeat => "This is a test notification from eBIRForms.",
     };
     ("eBIRForms", body)
 }
@@ -256,6 +259,10 @@ mod tests {
             assert_eq!(banner_text(kind), ("eBIRForms", body));
         }
         assert_eq!(
+            banner_text(NotificationKind::Heartbeat),
+            ("eBIRForms", "This is a test notification from eBIRForms.")
+        );
+        assert_eq!(
             banner_text(NotificationKind::ReturnSent { dry_run: true }),
             (
                 "eBIRForms",
@@ -267,6 +274,7 @@ mod tests {
             NotificationKind::ReturnSent { dry_run: true },
             NotificationKind::ConfirmationArrived,
             NotificationKind::Attention,
+            NotificationKind::Heartbeat,
         ] {
             let (title, body) = banner_text(kind);
             for text in [title, body] {

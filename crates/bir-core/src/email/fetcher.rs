@@ -349,10 +349,13 @@ fn fetch_with_auth(
                     Err(e) => {
                         // If it's truly an email from BIR but we failed to parse it, log it.
                         if text_content.contains("This confirms receipt of your submission") {
+                            let (body_len, body_sha256) =
+                                receipt_body_log_fingerprint(&text_content);
                             tracing::error!(
-                                "Failed to parse BIR receipt email. Error: {:?}\nRaw Body snippet: {:.200}",
-                                e,
-                                text_content
+                                body_len,
+                                body_sha256 = %body_sha256,
+                                "Failed to parse BIR receipt email. Error: {:?}",
+                                e
                             );
                         }
                     }
@@ -458,6 +461,13 @@ pub fn fetch_and_process_emails_for_address_until(
     }
 }
 
+/// What a parse failure may say about a BIR email body without quoting any of
+/// it: its byte length and SHA-256, so two reports can be compared.
+fn receipt_body_log_fingerprint(body: &str) -> (usize, String) {
+    use sha2::{Digest, Sha256};
+    (body.len(), hex::encode(Sha256::digest(body.as_bytes())))
+}
+
 const POLL_FAILURE_TITLE: &str = "Email confirmation checking has stopped";
 
 /// Record that polling `profile`'s confirmation inbox failed. Returns what
@@ -521,6 +531,17 @@ mod tests {
         assert_eq!(alerts[0].title, POLL_FAILURE_TITLE);
         assert_eq!(alerts[0].detail, "invalid_grant");
         assert_eq!(alerts[0].occurrences, 2);
+    }
+
+    #[test]
+    fn a_receipt_body_log_fingerprint_is_length_and_hash_only() {
+        let body = "This confirms receipt of your submission for TIN 00012345300000, taxpayer Juana Santos";
+        let (len, hash) = receipt_body_log_fingerprint(body);
+        assert_eq!(len, body.len());
+        assert_eq!(hash.len(), 64);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()), "{hash}");
+        assert!(!hash.contains("00012345300000"));
+        assert!(!hash.contains("Juana"));
     }
 
     /// The IMAP connection waits at most 30 seconds on a read or a write (a loopback listener stands in for the server;

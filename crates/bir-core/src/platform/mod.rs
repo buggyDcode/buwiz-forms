@@ -243,22 +243,25 @@ pub fn backup_excluded_dir() -> std::path::PathBuf {
     data_dir()
 }
 
-/// Run once at launch, before the database is opened. Every platform sweeps
-/// `data_dir()/previews/`: a print preview is a filled return, so a crash
-/// before the preview host deleted it must not leave it in the app's folder.
-/// iOS additionally excludes the data folder from backups, gives it file
-/// protection "complete until first user authentication" (files made in it
-/// take it too), and deletes the three Keychain items one earlier build stored
-/// once (`bir_submit::ios_storage::remove_old_items`; no Keychain call with
-/// `BUWIZ_NO_KEYCHAIN=1`).
+/// The print-preview hand-off folder: exactly the room layout's `previews/`.
+/// In a single-room test or development run the room layout is beside the
+/// scratch database that run named, so this can never be the installed app's
+/// real data folder; in the ordinary layout it is the device folder's
+/// `previews/`.
+pub fn print_previews_dir() -> std::path::PathBuf {
+    crate::rooms::Layout::here().previews_dir()
+}
+
+/// Run once at launch, before the database is opened. iOS excludes the data
+/// folder from backups, gives it file protection "complete until first user
+/// authentication" (files made in it take it too), and deletes the three
+/// Keychain items one earlier build stored once (`bir_submit::ios_storage::
+/// remove_old_items`; no Keychain call with `BUWIZ_NO_KEYCHAIN=1`).
 ///
-/// It runs at module registration, before logging is installed, so its
-/// outcome is recorded here and logged by [`log_app_storage`] once logging
-/// exists.
+/// Print previews are swept by [`prepare_print_previews`], separately: the
+/// desktop host calls that only after its single-instance guard, so a second
+/// launch cannot delete a file the first copy is writing.
 pub fn prepare_app_storage() {
-    if let Err(error) = sweep_preview_html() {
-        LAUNCH_STORAGE.record(true, format!("Print previews not swept at launch: {error}"));
-    }
     #[cfg(target_os = "ios")]
     {
         let (warn, line) = ios::prepare_ios_storage();
@@ -266,24 +269,84 @@ pub fn prepare_app_storage() {
     }
 }
 
-/// Empty the print-preview folder without following a link out of it. The
-/// folder itself stays when it is a real folder; a link or ordinary file at
-/// its name is removed as that object, never traversed. Real folders inside
-/// it are removed recursively after their own contents have been checked.
-fn sweep_preview_html() -> std::io::Result<()> {
-    let folder = data_dir().join(crate::rooms::PREVIEWS_DIR);
-    let Ok(meta) = std::fs::symlink_metadata(&folder) else {
+/// Sweep every print-preview hand-off location once at launch. The current
+/// private folder is emptied; the retired `$TMPDIR/bir-*-preview.html` and
+/// Android `data_dir()/tmp/bir-*-preview.html` files are removed by exact
+/// filename pattern. Nothing is traversed through a link and a failure is
+/// recorded for the launch log, never fatal.
+pub fn prepare_print_previews() {
+    let mut errors = Vec::new();
+    if let Err(error) = sweep_preview_html_in(print_previews_dir()) {
+        errors.push(format!("print previews not swept at launch: {error}"));
+    }
+    if let Err(error) = sweep_retired_preview_files_in(std::env::temp_dir(), data_dir()) {
+        errors.push(format!(
+            "retired print previews not swept at launch: {error}"
+        ));
+    }
+    if !errors.is_empty() {
+        LAUNCH_STORAGE.record(true, errors.join("; "));
+    }
+}
+
+/// Empty `folder` without following a link out of it. The folder itself stays
+/// when it is a real folder; a link or ordinary file at its name is removed as
+/// that object, never traversed. Real folders inside it are removed
+/// recursively after their own contents have been checked.
+fn sweep_preview_html_in(folder: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+    let folder = folder.as_ref();
+    let Ok(meta) = std::fs::symlink_metadata(folder) else {
         return Ok(());
     };
     if meta.file_type().is_symlink() || is_reparse_point(&meta) || !meta.is_dir() {
-        return remove_preview_object(&folder, &meta);
+        return remove_preview_object(folder, &meta);
     }
-    for entry in std::fs::read_dir(&folder)? {
+    for entry in std::fs::read_dir(folder)? {
         let entry = entry?;
         let child_meta = std::fs::symlink_metadata(entry.path())?;
         remove_preview_object(&entry.path(), &child_meta)?;
     }
     Ok(())
+}
+
+/// Remove exact `bir-*-preview.html` matches in the retired OS temp folder
+/// and Android's `data_dir()/tmp`. A matching symlink is removed as a symlink;
+/// a matching directory is left alone because these locations only ever held
+/// files.
+fn sweep_retired_preview_files_in(
+    temp_folder: impl AsRef<std::path::Path>,
+    app_data: impl AsRef<std::path::Path>,
+) -> std::io::Result<()> {
+    for folder in [
+        temp_folder.as_ref().to_path_buf(),
+        app_data.as_ref().join("tmp"),
+    ] {
+        let Ok(entries) = std::fs::read_dir(&folder) else {
+            continue;
+        };
+        for entry in entries {
+            let entry = entry?;
+            let retired = entry
+                .file_name()
+                .to_str()
+                .is_some_and(is_retired_preview_file_name);
+            if !retired {
+                continue;
+            }
+            let meta = std::fs::symlink_metadata(entry.path())?;
+            if meta.is_dir() && !meta.file_type().is_symlink() && !is_reparse_point(&meta) {
+                continue;
+            }
+            std::fs::remove_file(entry.path()).or_else(|_| std::fs::remove_dir(entry.path()))?;
+        }
+    }
+    Ok(())
+}
+
+fn is_retired_preview_file_name(name: &str) -> bool {
+    name.strip_prefix("bir-")
+        .and_then(|rest| rest.strip_suffix("-preview.html"))
+        .is_some_and(|middle| !middle.is_empty())
 }
 
 fn remove_preview_object(path: &std::path::Path, meta: &std::fs::Metadata) -> std::io::Result<()> {
@@ -317,35 +380,36 @@ pub fn log_app_storage() {
     });
 }
 
-/// A log line made before logging exists, logged once when it does.
+/// Launch lines made before logging exists, logged once when it does.
 struct Pending {
-    line: std::sync::Mutex<Option<(bool, String)>>,
+    lines: std::sync::Mutex<Vec<(bool, String)>>,
 }
 
 impl Pending {
     const fn new() -> Self {
         Self {
-            line: std::sync::Mutex::new(None),
+            lines: std::sync::Mutex::new(Vec::new()),
         }
     }
 
-    /// Keep `line` (`warn`: at warning level) until [`Pending::flush`].
-    #[cfg_attr(not(any(target_os = "ios", test)), allow(dead_code))]
+    /// Keep `line` (`warn`: at warning level) until [`Pending::flush`]. Lines
+    /// accumulate: a sweep warning must not be overwritten by the storage line.
     fn record(&self, warn: bool, line: String) {
-        *self
-            .line
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((warn, line));
-    }
-
-    /// Hand the kept line to `emit` and forget it: at most once per record.
-    fn flush(&self, emit: impl FnOnce(bool, &str)) {
-        let taken = self
-            .line
+        self.lines
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .take();
-        if let Some((warn, line)) = taken {
+            .push((warn, line));
+    }
+
+    /// Hand the kept lines to `emit` and forget them: at most once each.
+    fn flush(&self, mut emit: impl FnMut(bool, &str)) {
+        let taken = std::mem::take(
+            &mut *self
+                .lines
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        );
+        for (warn, line) in taken {
             emit(warn, &line);
         }
     }
@@ -422,26 +486,82 @@ mod tests {
         );
     }
 
-    /// Every launch empties the previews folder on every platform: a preview
-    /// is a filled return, so a crash before the reader deleted it cannot
-    /// leave it behind. The test home is a temp folder, so `data_dir()` is
-    /// this test's own folder.
+    /// The one preview folder is the room layout's folder. In a single-room
+    /// test it is beside that test's scratch database, never the installed
+    /// app's data folder; in the ordinary multi-room layout it is the device
+    /// folder's `previews/`.
     #[test]
-    fn the_launch_sweep_clears_a_leftover_preview() {
-        let home = tempfile::tempdir().unwrap();
-        temp_env::with_vars(
+    fn the_print_preview_folder_is_the_layouts_and_test_scratch_folder() {
+        let scratch = tempfile::tempdir().unwrap();
+        let database = scratch.path().join("room").join("bir_data.db");
+        temp_env::with_var("BIR_DATABASE_PATH", None::<&str>, || {
+            crate::db::capture_database_path_override().run(|| {
+                crate::db::set_database_path_override(Some(database.clone()));
+                assert_eq!(
+                    print_previews_dir(),
+                    scratch.path().join("room").join("previews")
+                );
+                crate::db::set_database_path_override(None);
+            });
+        });
+    }
+
+    /// Every test gets its own folder: the sweep itself is exercised against
+    /// a folder named by the test, not the process-wide scratch data folder.
+    #[test]
+    fn the_preview_sweep_uses_only_the_folder_it_is_given() {
+        let scratch = tempfile::tempdir().unwrap();
+        let previews = scratch.path().join("previews");
+        std::fs::create_dir_all(&previews).unwrap();
+        let leftover = previews.join("leftover-preview.html");
+        std::fs::write(&leftover, "<html>filled return</html>").unwrap();
+        sweep_preview_html_in(&previews).unwrap();
+        assert!(!leftover.exists(), "the launch sweep removes it");
+    }
+
+    /// The retired temp-folder locations are swept once by their exact
+    /// filename pattern. Other temp files stay, and a match is removed as the
+    /// object it is, never traversed.
+    #[test]
+    fn the_retired_temp_preview_locations_are_swept_by_exact_pattern() {
+        let scratch = tempfile::tempdir().unwrap();
+        let old_temp = scratch.path().join("tmp");
+        let data = scratch.path().join("data");
+        std::fs::create_dir_all(&old_temp).unwrap();
+        std::fs::create_dir_all(data.join("tmp")).unwrap();
+        let retired = old_temp.join("bir-old-preview.html");
+        let android_retired = data.join("tmp").join("bir-android-preview.html");
+        let keep = old_temp.join("bir-other.txt");
+        let keep_prefix = old_temp.join("xbir-old-preview.html");
+        std::fs::write(&retired, "filled").unwrap();
+        std::fs::write(&android_retired, "filled").unwrap();
+        std::fs::write(&keep, "keep").unwrap();
+        std::fs::write(&keep_prefix, "keep").unwrap();
+        sweep_retired_preview_files_in(&old_temp, &data).unwrap();
+        assert!(!retired.exists());
+        assert!(!android_retired.exists());
+        assert!(keep.exists());
+        assert!(keep_prefix.exists());
+    }
+
+    /// A sweep failure and the iOS storage line are both kept, in the order
+    /// they happened, instead of one overwriting the other.
+    #[test]
+    fn pending_launch_storage_lines_do_not_overwrite_each_other() {
+        let pending = Pending::new();
+        let mut logged = Vec::new();
+        pending.record(true, "Print previews not swept at launch: denied".into());
+        pending.record(false, "App storage at launch: protected".into());
+        pending.flush(|warn, line| logged.push((warn, line.to_owned())));
+        assert_eq!(
+            logged,
             [
-                ("HOME", Some(home.path().as_os_str())),
-                ("XDG_DATA_HOME", None),
-            ],
-            || {
-                let previews = data_dir().join(crate::rooms::PREVIEWS_DIR);
-                std::fs::create_dir_all(&previews).unwrap();
-                let leftover = previews.join("leftover-preview.html");
-                std::fs::write(&leftover, "<html>filled return</html>").unwrap();
-                prepare_app_storage();
-                assert!(!leftover.exists(), "the launch sweep removes it");
-            },
+                (
+                    true,
+                    "Print previews not swept at launch: denied".to_owned()
+                ),
+                (false, "App storage at launch: protected".to_owned())
+            ]
         );
     }
 

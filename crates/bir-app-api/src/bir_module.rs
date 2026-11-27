@@ -2832,7 +2832,7 @@ pub(crate) fn open_print_preview(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs())
         .unwrap_or(0);
-    let root = bir_core::platform::data_dir().join(bir_core::rooms::PREVIEWS_DIR);
+    let root = bir_core::platform::print_previews_dir();
     std::fs::create_dir_all(&root).map_err(|error| HostError::new(error.to_string()))?;
     let path = root.join(format!("bir-{form_code}-{year}-{timestamp}-preview.html"));
     std::fs::write(&path, html).map_err(|error| HostError::new(error.to_string()))?;
@@ -3777,11 +3777,7 @@ mod tests {
         );
         assert_eq!(
             path.parent(),
-            Some(
-                bir_core::platform::data_dir()
-                    .join(bir_core::rooms::PREVIEWS_DIR)
-                    .as_path()
-            ),
+            Some(bir_core::platform::print_previews_dir().as_path()),
             "{path:?}"
         );
         assert!(!path.exists(), "the preview is deleted once read: {path:?}");
