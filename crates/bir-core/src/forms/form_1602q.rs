@@ -429,9 +429,6 @@ impl Form1602QDraft {
 
     /// The official compute chain over values held at cents.
     pub fn recompute(&mut self) {
-        if self.is_amended != Some(true) {
-            self.tax_remitted_previous = 0.0;
-        }
         let fcd_rate = self.foreign_currency_rate();
         let mut total = 0.0;
         for (index, item) in FORM_1602Q_SCHEDULE1_ITEMS.iter().enumerate() {
@@ -945,13 +942,6 @@ impl Form1602QDraft {
                 break;
             }
         }
-        if self.is_amended != Some(true) && self.tax_remitted_previous != 0.0 {
-            err(
-                "tax_remitted_previous",
-                "Item 20 applies only to an amended return.",
-            );
-        }
-
         let mut expected = self.clone();
         expected.recompute();
         if expected.item28 != self.item28
@@ -1392,6 +1382,38 @@ mod tests {
             &|d| d.schedule3[0].ipa_code = "XYZ".into(),
             "Invalid IPA Code! Please refer to IPA Codes in Schedule 6.",
         );
+    }
+
+    /// Item 20 is enabled by the official form in every amended state: a typed
+    /// amount survives recompute, joins Items 18/19/21 in Item 22, and serializes.
+    #[test]
+    fn item_twenty_is_kept_and_computed_when_not_amended() {
+        for amended in [None, Some(false)] {
+            let mut draft = sample();
+            draft.is_amended = amended;
+            draft.tax_remitted_previous = 500.0;
+            draft.recompute();
+            assert_eq!(draft.tax_remitted_previous, 500.0, "amended={amended:?}");
+            assert_eq!(draft.item22, 4_000.51, "amended={amended:?}");
+            assert_eq!(draft.item23, 192_977.64, "amended={amended:?}");
+            assert_eq!(draft.item28, 193_013.14, "amended={amended:?}");
+            assert!(
+                messages(&draft)
+                    .iter()
+                    .all(|m| !m.contains("Item 20 applies only")),
+                "amended={amended:?}: {:?}",
+                messages(&draft)
+            );
+            if amended.is_some() {
+                let payload = draft
+                    .to_bir_xml_payload()
+                    .unwrap_or_else(|errors| panic!("1602Q must serialize: {errors:?}"));
+                assert!(
+                    payload.contains("frm1602Q:txt20=500.00"),
+                    "amended={amended:?}: upload plaintext carries Item 20"
+                );
+            }
+        }
     }
 
     #[test]

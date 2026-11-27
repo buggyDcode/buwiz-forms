@@ -7406,6 +7406,8 @@ mod tests {
     mod dst_pt_vat;
     // PR 5: 1701Q and 1702Q against their printed sheets.
     mod income_q;
+    // 1602Q Item 20: the official form leaves it enabled in every amended state.
+    mod item20_1602q;
     // PR 6: 1604C, 1604F and 1604E against their printed sheets.
     mod annual_1604;
     // PR 8: 1702RT, 1702MX, 1702EX and 1707A against their printed sheets.
