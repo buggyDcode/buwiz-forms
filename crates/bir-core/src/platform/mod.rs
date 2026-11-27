@@ -243,22 +243,62 @@ pub fn backup_excluded_dir() -> std::path::PathBuf {
     data_dir()
 }
 
-/// Run once at launch, before the database is opened. iOS: the data
-/// folder is excluded from backups and given the file protection "complete
-/// until first user authentication" (files made in it take it too), and the
-/// three Keychain items one earlier build stored are deleted once
-/// (`bir_submit::ios_storage::remove_old_items`; no Keychain call with
-/// `BUWIZ_NO_KEYCHAIN=1`). Every other system: nothing.
+/// Run once at launch, before the database is opened. Every platform sweeps
+/// `data_dir()/previews/`: a print preview is a filled return, so a crash
+/// before the preview host deleted it must not leave it in the app's folder.
+/// iOS additionally excludes the data folder from backups, gives it file
+/// protection "complete until first user authentication" (files made in it
+/// take it too), and deletes the three Keychain items one earlier build stored
+/// once (`bir_submit::ios_storage::remove_old_items`; no Keychain call with
+/// `BUWIZ_NO_KEYCHAIN=1`).
 ///
 /// It runs at module registration, before logging is installed, so its
 /// outcome is recorded here and logged by [`log_app_storage`] once logging
 /// exists.
 pub fn prepare_app_storage() {
+    if let Err(error) = sweep_preview_html() {
+        LAUNCH_STORAGE.record(true, format!("Print previews not swept at launch: {error}"));
+    }
     #[cfg(target_os = "ios")]
     {
         let (warn, line) = ios::prepare_ios_storage();
         LAUNCH_STORAGE.record(warn, line);
     }
+}
+
+/// Empty the print-preview folder without following a link out of it. The
+/// folder itself stays when it is a real folder; a link or ordinary file at
+/// its name is removed as that object, never traversed. Real folders inside
+/// it are removed recursively after their own contents have been checked.
+fn sweep_preview_html() -> std::io::Result<()> {
+    let folder = data_dir().join(crate::rooms::PREVIEWS_DIR);
+    let Ok(meta) = std::fs::symlink_metadata(&folder) else {
+        return Ok(());
+    };
+    if meta.file_type().is_symlink() || is_reparse_point(&meta) || !meta.is_dir() {
+        return remove_preview_object(&folder, &meta);
+    }
+    for entry in std::fs::read_dir(&folder)? {
+        let entry = entry?;
+        let child_meta = std::fs::symlink_metadata(entry.path())?;
+        remove_preview_object(&entry.path(), &child_meta)?;
+    }
+    Ok(())
+}
+
+fn remove_preview_object(path: &std::path::Path, meta: &std::fs::Metadata) -> std::io::Result<()> {
+    if meta.file_type().is_symlink() || is_reparse_point(meta) {
+        return std::fs::remove_file(path).or_else(|_| std::fs::remove_dir(path));
+    }
+    if !meta.is_dir() {
+        return std::fs::remove_file(path);
+    }
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let child_meta = std::fs::symlink_metadata(entry.path())?;
+        remove_preview_object(&entry.path(), &child_meta)?;
+    }
+    std::fs::remove_dir(path)
 }
 
 /// The outcome of [`prepare_app_storage`], until it is logged.
@@ -364,14 +404,45 @@ mod tests {
         assert!(!keychain_switch_is_on(Some("Off")));
     }
 
-    /// Off iOS the launch step does nothing: no folder made, no marker
-    /// written, under a home where the data folder would be.
+    /// Off iOS the launch step makes no previews folder when there was
+    /// nothing to sweep.
     #[cfg(not(target_os = "ios"))]
     #[test]
-    fn the_launch_storage_step_does_nothing_off_ios() {
+    fn the_launch_storage_step_makes_no_previews_folder_off_ios() {
         let home = tempfile::tempdir().unwrap();
-        temp_env::with_var("HOME", Some(home.path()), prepare_app_storage);
-        assert_eq!(std::fs::read_dir(home.path()).unwrap().count(), 0);
+        temp_env::with_vars(
+            [
+                ("HOME", Some(home.path().as_os_str())),
+                ("XDG_DATA_HOME", None),
+            ],
+            || {
+                prepare_app_storage();
+                assert!(!data_dir().join(crate::rooms::PREVIEWS_DIR).exists());
+            },
+        );
+    }
+
+    /// Every launch empties the previews folder on every platform: a preview
+    /// is a filled return, so a crash before the reader deleted it cannot
+    /// leave it behind. The test home is a temp folder, so `data_dir()` is
+    /// this test's own folder.
+    #[test]
+    fn the_launch_sweep_clears_a_leftover_preview() {
+        let home = tempfile::tempdir().unwrap();
+        temp_env::with_vars(
+            [
+                ("HOME", Some(home.path().as_os_str())),
+                ("XDG_DATA_HOME", None),
+            ],
+            || {
+                let previews = data_dir().join(crate::rooms::PREVIEWS_DIR);
+                std::fs::create_dir_all(&previews).unwrap();
+                let leftover = previews.join("leftover-preview.html");
+                std::fs::write(&leftover, "<html>filled return</html>").unwrap();
+                prepare_app_storage();
+                assert!(!leftover.exists(), "the launch sweep removes it");
+            },
+        );
     }
 
     /// The launch outcome is kept until logging exists and logged exactly

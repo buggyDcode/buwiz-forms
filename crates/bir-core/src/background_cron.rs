@@ -285,7 +285,7 @@ async fn run_queue_tick_until(db: Arc<Mutex<Database>>, stop: &CronStop) {
                 crate::db::AlertAction::None,
             );
         }
-        crate::notification::send_notification(TITLE, BODY);
+        crate::notification::notify(crate::notification::NotificationKind::Attention);
     }
 
     if global_cron_enabled {
@@ -1470,14 +1470,16 @@ fn finish_sent_queueable<F: QueueableForm>(
         );
     }
     let period_label = queueable_period_label(&draft);
-    let (notice_title, notice_body) = submission_notice(
+    let (notice_title, notice_body) = submission_alert_text(
         profile,
         F::FORM_CODE,
         &period_label,
         &chrono::Local::now(),
         skip_email_poll,
     );
-    crate::notification::send_notification(&notice_title, &notice_body);
+    crate::notification::notify(crate::notification::NotificationKind::ReturnSent {
+        dry_run: skip_email_poll,
+    });
     let submitted_file = filename.clone();
     // Keep the exact bytes that were encrypted for PUT, so an
     // amendment can later snapshot what BIR received.
@@ -1980,14 +1982,16 @@ fn finish_sent_2551q(
         info!("Cron: Successfully submitted queued form {}", filename);
     }
     let period_label = quarterly_period_label(draft.taxable_year, draft.quarter);
-    let (notice_title, notice_body) = submission_notice(
+    let (notice_title, notice_body) = submission_alert_text(
         current_profile,
         "2551Q",
         &period_label,
         &chrono::Local::now(),
         skip_email_poll,
     );
-    crate::notification::send_notification(&notice_title, &notice_body);
+    crate::notification::notify(crate::notification::NotificationKind::ReturnSent {
+        dry_run: skip_email_poll,
+    });
     // Keep the exact bytes that were encrypted for PUT.
     if let Some(xml_payload) = xml_payload {
         draft.submitted_payload = Some(xml_payload);
@@ -2291,13 +2295,36 @@ pub const TEST_SENT_LINE: &str = "Test send. Nothing reached the BIR.";
 /// The first words of a test send's notice title.
 const TEST_SEND_TITLE: &str = "Test send";
 
-/// Desktop banner for a successful PUT: who, which return, when — not the
-/// IAF filename, which says none of that at a glance. Returns `(title, body)`.
-/// A `dry_run` send reached nobody: its title leads with "Test send", so a
-/// phone banner that cuts a long registered name off still shows it, and its
-/// body's first line is [`TEST_SENT_LINE`]. It never says the return was
-/// submitted, sent or filed.
+/// The generic desktop banner for a successful PUT. It deliberately knows
+/// nothing about the taxpayer, TIN, form, period or mailbox: those details are
+/// only in the in-app Notifications page. The arguments stay in the signature
+/// of this long-standing helper so every caller is forced to reconsider which
+/// text it needs; production callers use [`submission_alert_text`] for the
+/// detailed page and `notification::notify` for the OS banner.
 pub fn submission_notice<Tz: chrono::TimeZone>(
+    profile: &TaxpayerProfile,
+    form_code: &str,
+    period_label: &str,
+    sent_at: &chrono::DateTime<Tz>,
+    dry_run: bool,
+) -> (String, String)
+where
+    Tz::Offset: std::fmt::Display,
+{
+    let _ = (profile, form_code, period_label, sent_at);
+    let (title, body) =
+        crate::notification::banner_text(crate::notification::NotificationKind::ReturnSent {
+            dry_run,
+        });
+    (title.to_string(), body.to_string())
+}
+
+/// The detailed submission text kept on the in-app Notifications page: who,
+/// which return, when — not the IAF filename, which says none of that at a
+/// glance. Returns `(title, body)`. A `dry_run` send reached nobody: its title
+/// leads with "Test send" and its body's first line is [`TEST_SENT_LINE`]. It
+/// never says the return was submitted, sent or filed.
+pub(crate) fn submission_alert_text<Tz: chrono::TimeZone>(
     profile: &TaxpayerProfile,
     form_code: &str,
     period_label: &str,
@@ -2330,11 +2357,38 @@ where
     )
 }
 
-/// Banner for a BIR receipt confirmation. The date and time are **BIR's**
-/// (from the confirmation email), not when the poll found the mail.
-/// `received_at` is that date and time as one string, e.g.
-/// `12 September 2026, 11:43 AM`.
+/// The generic desktop banner for a BIR receipt confirmation. It carries no
+/// taxpayer detail; [`confirmation_alert_text`] is the detailed text kept on
+/// the in-app Notifications page.
 pub fn confirmation_notice(
+    taxpayer_name: &str,
+    tin_formatted: &str,
+    form_code: &str,
+    period_label: &str,
+    bir_filename: &str,
+    received_at: &str,
+    mailbox: &str,
+) -> (String, String) {
+    let _ = (
+        taxpayer_name,
+        tin_formatted,
+        form_code,
+        period_label,
+        bir_filename,
+        received_at,
+        mailbox,
+    );
+    let (title, body) = crate::notification::banner_text(
+        crate::notification::NotificationKind::ConfirmationArrived,
+    );
+    (title.to_string(), body.to_string())
+}
+
+/// The detailed confirmation text kept on the in-app Notifications page. The
+/// date and time are **BIR's** (from the confirmation email), not when the
+/// poll found the mail. `received_at` is that date and time as one string,
+/// e.g. `12 September 2026, 11:43 AM`.
+pub(crate) fn confirmation_alert_text(
     taxpayer_name: &str,
     tin_formatted: &str,
     form_code: &str,
@@ -2491,14 +2545,16 @@ fn finish_sent_1601c(
         info!("Cron: Successfully submitted queued 1601C {}", filename);
     }
     let period_label = monthly_period_label(draft.taxable_year, draft.month);
-    let (notice_title, notice_body) = submission_notice(
+    let (notice_title, notice_body) = submission_alert_text(
         profile,
         "1601C",
         &period_label,
         &chrono::Local::now(),
         skip_email_poll,
     );
-    crate::notification::send_notification(&notice_title, &notice_body);
+    crate::notification::notify(crate::notification::NotificationKind::ReturnSent {
+        dry_run: skip_email_poll,
+    });
     let submitted_file = filename.clone();
     // Keep the exact bytes that were encrypted for PUT, so an
     // amendment can later snapshot what BIR received.
@@ -3260,12 +3316,12 @@ mod tests {
             .with_ymd_and_hms(2026, 9, 12, 15, 17, 25)
             .unwrap();
         let (title, body) = submission_notice(&profile, "1601C", "09/26", &sent_at, true);
-        assert_eq!(title, "Test send: 1601C 09/26 \u{2014} Juan Dela Cruz");
+        assert_eq!(title, "eBIRForms");
         assert_eq!(
             body,
-            "Test send. Nothing reached the BIR.\nTIN 000-000-000-00000\nTested 03:17 PM, 12 Sep 2026"
+            "Test send. Nothing reached the BIR. Open eBIRForms to see it."
         );
-        assert_never_filed_notice(&title, &body);
+        assert_no_identity_in_notice(&title, &body);
     }
 
     /// A phone banner shows the title's first few words and cuts the rest: a test send's title leads with "Test
@@ -3280,16 +3336,30 @@ mod tests {
             .with_ymd_and_hms(2026, 9, 12, 15, 17, 25)
             .unwrap();
         let (title, body) = submission_notice(&profile, "1601C", "09/26", &sent_at, true);
-        let banner: String = title.chars().take(20).collect();
-        assert_eq!(banner, "Test send: 1601C 09/");
-        assert_eq!(body.lines().next(), Some(TEST_SENT_LINE));
-        assert_never_filed_notice(&title, &body);
+        assert_eq!(title, "eBIRForms");
+        assert_eq!(
+            body,
+            "Test send. Nothing reached the BIR. Open eBIRForms to see it."
+        );
+        assert!(!body.contains(&profile.full_name), "{body}");
+        assert_no_identity_in_notice(&title, &body);
     }
 
-    /// A test send's notice leads with "Test send" in the title, carries the app's one sentence for it as a line of
-    /// its own (the OS notice's first; the stored alert names the taxpayer above it), and never says the return was
-    /// submitted, sent or filed.
-    fn assert_never_filed_notice(title: &str, body: &str) {
+    /// The OS banner is a fixed sentence: neither the taxpayer's name nor any
+    /// spelling of the TIN can be in it. The Notifications page keeps the
+    /// detailed alert; the banner only says where to look.
+    fn assert_no_identity_in_notice(title: &str, body: &str) {
+        for text in [title, body] {
+            assert!(!text.contains("Juan Dela Cruz"), "{text}");
+            for tin in ["00000000000000", "000-000-000-00000", "000-000-000"] {
+                assert!(!text.contains(tin), "{tin} in {text}");
+            }
+        }
+    }
+
+    /// The stored test-send alert still leads with its mark and never says
+    /// the return was submitted, sent or filed; only the OS banner is generic.
+    fn assert_never_filed_alert(title: &str, body: &str) {
         assert!(title.starts_with("Test send: "), "{title}");
         assert!(body.lines().any(|line| line == TEST_SENT_LINE), "{body}");
         for text in [title, body] {
@@ -3308,11 +3378,9 @@ mod tests {
             .with_ymd_and_hms(2026, 9, 12, 15, 17, 25)
             .unwrap();
         let (title, body) = submission_notice(&profile, "1601C", "09/26", &sent_at, false);
-        assert_eq!(title, "1601C 09/26 submitted \u{2014} Juan Dela Cruz");
-        assert_eq!(
-            body,
-            "TIN 000-000-000-00000\nSent 03:17 PM, 12 Sep 2026\nFiled under codeitlikemiley@gmail.com"
-        );
+        assert_eq!(title, "eBIRForms");
+        assert_eq!(body, "A return was sent. Open eBIRForms to see it.");
+        assert_no_identity_in_notice(&title, &body);
     }
 
     #[test]
@@ -3326,11 +3394,12 @@ mod tests {
             "12 September 2026, 11:43 AM",
             "codeitlikemiley@gmail.com",
         );
-        assert_eq!(title, "BIR received 1601C 10/26 \u{2014} Juan Dela Cruz");
+        assert_eq!(title, "eBIRForms");
         assert_eq!(
             body,
-            "TIN 000-000-000-00000\nFile 00000000000000-1601Cv2018-102026.xml\nReceived by BIR 12 September 2026, 11:43 AM\nConfirmation in codeitlikemiley@gmail.com"
+            "BIR's confirmation arrived. Open eBIRForms to see it."
         );
+        assert_no_identity_in_notice(&title, &body);
         assert_eq!(
             display_received_at("2026-09-12", "12:11:00"),
             "12 September 2026, 12:11 PM"
@@ -4764,7 +4833,7 @@ mod tests {
             .iter()
             .find(|alert| alert.kind.starts_with("form_submitted:"))
             .unwrap();
-        assert_never_filed_notice(&notice.title, &notice.detail);
+        assert_never_filed_alert(&notice.title, &notice.detail);
     }
 
     /// A 503 from the relay after the claim: it kept nothing, so the claim goes, the return stays Queued with a
@@ -5211,7 +5280,7 @@ mod tests {
             assert_eq!(state.poll_jobs, 0, "{path}: no BIR email is coming");
             assert_eq!(state.sent_again, 0, "{path}");
             let (title, detail) = state.notice.expect("the submission notice");
-            assert_never_filed_notice(&title, &detail);
+            assert_never_filed_alert(&title, &detail);
         }
     }
 

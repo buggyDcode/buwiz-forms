@@ -82,8 +82,9 @@ pub(crate) fn install_logging() {
 fn set_up(send_guard: impl FnOnce() -> SendMode) -> Process {
     #[cfg(not(target_os = "android"))]
     switch_off_keychain(cfg!(debug_assertions));
-    // iOS: the data folder out of backups and protected, and the old build's Keychain items removed once, after the
-    // keychain switch and before the database is opened. Nothing elsewhere. Its outcome is logged once logging starts.
+    // Every platform sweeps leftover print previews before the database opens. iOS also takes the data folder
+    // out of backups, protects it, and removes the old build's Keychain items once. The outcome is logged once
+    // logging starts.
     bir_core::platform::prepare_app_storage();
     let _ = bir_app_api::install_hooks(NshHooks);
     // Phones: the browser for the sign-in, and the phone kept awake while a send is in flight. Desktops register

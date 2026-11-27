@@ -7,9 +7,9 @@
 //! and a shipped build (no console) kept nothing.
 //!
 //! Lines are scrubbed before they hit the file or the terminal: OAuth tokens,
-//! passwords, and the database key. Taxpayer TINs are left as written.
-//! Painted `bir` already logs them in full (`tin = …` on draft creation) and
-//! does not mask them in the Logs tab.
+//! passwords, the database key and taxpayer TINs. A TIN keeps only its last
+//! three root digits (and a written branch), enough to correlate one return
+//! without exposing the identifier in the Logs tab or a copied log.
 
 use std::io::{self, Write};
 use std::path::Path;
@@ -218,8 +218,16 @@ fn panic_payload(info: &std::panic::PanicHookInfo<'_>) -> String {
     }
 }
 
-/// Replace credential material in a log line. TINs are not touched: painted
-/// `bir` logs them and the Logs tab shows those lines.
+/// Replace credential material and taxpayer identifiers in a log line.
+///
+/// A TIN is a standalone run of 9, 12 or 14 digits, dashed in the usual
+/// three-digit groups or undashed. The first six root digits are always
+/// masked; the last three root digits and a written 3- or 5-digit branch stay,
+/// so a line can still be correlated with the return it describes. Numbers
+/// with decimals are not TINs, nor are dates/times in their usual punctuated
+/// forms. One shape is genuinely ambiguous: an undelimited 14-digit run that
+/// is a valid `yyyyMMddHHmmss` timestamp is left as a timestamp, because no
+/// redactor can tell it apart from a TIN with the same digits.
 pub fn redact_secrets(input: &str) -> String {
     let mut text = input.to_string();
     // Bearer and token shapes first. A labeled `Authorization: Bearer …`
@@ -245,7 +253,117 @@ pub fn redact_secrets(input: &str) -> String {
     text = labeled_hex_key()
         .replace_all(&text, "$1[redacted]")
         .into_owned();
-    text
+    mask_tins(&text)
+}
+
+/// Mask every TIN candidate in `text`. The regex names the official shapes;
+/// the boundary check supplies what Rust's regex crate has no look-around for:
+/// decimal adjacency and larger identifiers. Candidates are exact matches, so
+/// a TIN at the start of a receipt filename is still masked before its `-form`
+/// suffix.
+fn mask_tins(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut copied = 0;
+    for candidate in tin_candidate().find_iter(text) {
+        if !tin_boundaries(text.as_bytes(), candidate.start(), candidate.end()) {
+            continue;
+        }
+        let Some(masked) = masked_tin(candidate.as_str()) else {
+            continue;
+        };
+        out.push_str(&text[copied..candidate.start()]);
+        out.push_str(&masked);
+        copied = candidate.end();
+    }
+    out.push_str(&text[copied..]);
+    out
+}
+
+fn tin_candidate() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| {
+        Regex::new(
+            r"[0-9]{3}-[0-9]{3}-[0-9]{3}(?:-[0-9]{5}|-[0-9]{3})?|[0-9]{14}|[0-9]{12}|[0-9]{9}",
+        )
+        .expect("static TIN candidate regex")
+    })
+}
+
+/// A TIN candidate does not touch a word character or a decimal point; what
+/// remains adjacent decides whether it was part of a larger identifier or
+/// number.
+fn tin_boundaries(bytes: &[u8], start: usize, end: usize) -> bool {
+    fn word(byte: u8) -> bool {
+        byte.is_ascii_alphanumeric() || byte == b'_'
+    }
+    if start > 0 && word(bytes[start - 1]) {
+        return false;
+    }
+    if end < bytes.len() && word(bytes[end]) {
+        return false;
+    }
+    if end + 1 < bytes.len() && bytes[end] == b'.' && bytes[end + 1].is_ascii_digit() {
+        return false;
+    }
+    if start >= 2 && bytes[start - 1] == b'.' && bytes[start - 2].is_ascii_digit() {
+        return false;
+    }
+    true
+}
+
+/// The masked spelling of one token, or `None` when it is not a TIN. Dashes
+/// are either absent everywhere or in the official grouping (`3-3-3`, plus a
+/// 3- or 5-digit branch); partial or differently placed dashes are not TINs.
+fn masked_tin(token: &str) -> Option<String> {
+    if token.starts_with('-') || token.ends_with('-') || token.contains("--") {
+        return None;
+    }
+    let digits: String = token.chars().filter(|c| c.is_ascii_digit()).collect();
+    if ![9, 12, 14].contains(&digits.len())
+        || digits.len() != token.len() - token.matches('-').count()
+    {
+        return None;
+    }
+    if token.contains('-') {
+        let parts: Vec<&str> = token.split('-').collect();
+        let expected = match digits.len() {
+            9 => vec![3, 3, 3],
+            12 => vec![3, 3, 3, 3],
+            14 => vec![3, 3, 3, 5],
+            _ => return None,
+        };
+        if parts.len() != expected.len()
+            || !parts
+                .iter()
+                .zip(&expected)
+                .all(|(part, len)| part.len() == *len)
+        {
+            return None;
+        }
+    }
+    if digits.len() == 14 && is_compact_timestamp(&digits) {
+        return None;
+    }
+    let root_end = &digits[6..9];
+    let branch = &digits[9..];
+    if branch.is_empty() {
+        Some(format!("***-***-{root_end}"))
+    } else {
+        Some(format!("***-***-{root_end}-{branch}"))
+    }
+}
+
+/// Whether a 14-digit run is a valid compact timestamp (`yyyyMMddHHmmss`).
+fn is_compact_timestamp(digits: &str) -> bool {
+    let parse = |range: std::ops::Range<usize>| digits[range].parse::<u32>().unwrap_or(u32::MAX);
+    let year = parse(0..4) as i32;
+    let month = parse(4..6);
+    let day = parse(6..8);
+    let hour = parse(8..10);
+    let minute = parse(10..12);
+    let second = parse(12..14);
+    chrono::NaiveDate::from_ymd_opt(year, month, day).is_some()
+        && chrono::NaiveTime::from_hms_opt(hour, minute, second).is_some()
 }
 
 /// The `EBIR_TEST_ENV` SQLCipher key. It is not a taxpayer secret, but it is
@@ -419,13 +537,14 @@ mod tests {
     }
 
     #[test]
-    fn redaction_strips_credentials_and_keeps_tins_and_ordinary_text() {
+    fn redaction_strips_credentials_masks_tins_and_keeps_ordinary_text() {
         let tin = "12345678800000";
         let line = format!(
             "draft tin={tin} password=s3cret-token access_token=\"ya29.SUPERSECRET\" Authorization: Bearer abc.def master_key={TEST_MASTER_KEY} refresh 1//0refreshTOKEN recovery key ABCD-EFGH-IJKL-MNOP Failed to access OS keyring"
         );
         let redacted = redact_secrets(&line);
-        assert!(redacted.contains(tin), "{redacted}");
+        assert!(!redacted.contains(tin), "{redacted}");
+        assert!(redacted.contains("***-***-788-00000"), "{redacted}");
         assert!(
             redacted.contains("Failed to access OS keyring"),
             "{redacted}"
@@ -440,6 +559,47 @@ mod tests {
         let digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         assert_eq!(redact_secrets(digest), digest);
         assert_eq!(redact_secrets(&line), redact_secrets(&redacted));
+    }
+
+    #[test]
+    fn redaction_masks_every_tin_shape_but_not_amounts_or_timestamps() {
+        let cases = [
+            ("123456789", "***-***-789"),
+            ("123-456-789", "***-***-789"),
+            ("123456789000", "***-***-789-000"),
+            ("123-456-789-000", "***-***-789-000"),
+            ("12345678900000", "***-***-789-00000"),
+            ("123-456-789-00000", "***-***-789-00000"),
+        ];
+        for (tin, masked) in cases {
+            let line = format!("tin={tin} and {tin} end");
+            let redacted = redact_secrets(&line);
+            assert!(!redacted.contains(tin), "{tin} in {redacted}");
+            assert!(redacted.contains(masked), "{tin}: {redacted}");
+        }
+
+        for (plain, masked) in [
+            (
+                "receipt 12345678900000-2551Qv2018-102026.xml",
+                "receipt ***-***-789-00000-2551Qv2018-102026.xml",
+            ),
+            (
+                "receipt 123-456-789-00000-2551Qv2018-102026.xml",
+                "receipt ***-***-789-00000-2551Qv2018-102026.xml",
+            ),
+        ] {
+            assert_eq!(redact_secrets(plain), masked, "{plain}");
+        }
+
+        for ordinary in [
+            "amount 123456789.00",
+            "amount 1,234,567,890.00",
+            "timestamp 2026-11-28T06:07:01Z",
+            "timestamp 1764346821",
+            "compact timestamp 20261128060701",
+        ] {
+            assert_eq!(redact_secrets(ordinary), ordinary);
+        }
     }
 
     #[test]
@@ -495,7 +655,8 @@ mod tests {
                     .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
                 assert!(text.contains("IMAP login failed"), "{text}");
                 assert!(text.contains("screen: render failed"), "{text}");
-                assert!(text.contains("12345678800000"), "{text}");
+                assert!(!text.contains("12345678800000"), "{text}");
+                assert!(text.contains("***-***-788-00000"), "{text}");
                 assert!(text.contains("probe-panic-9f3a"), "{text}");
                 assert!(!text.contains("s3cret-token"), "{text}");
                 assert!(!text.contains("ya29.SUPERSECRET"), "{text}");
