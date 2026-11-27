@@ -755,8 +755,8 @@ fn pr4_form_2000_schedule_dates_take_typed_dates_once_item_13_opens_them() {
 /// Lesson 8: an answer that removes what the filer typed asks first
 /// (`removes`), and nothing typed asks nothing: 2000 item 13 and its
 /// schedule rows, item 10 and items 11-12, a cleared Schedule 1 ATC with its
-/// tax base; Amended Return No clearing 2000's 15A, 2553's 20A and 2550M's
-/// 23D; 2553 row 18's cleared ATC.
+/// tax base; Amended Return No clearing 2000's 15A and 2553's 20A;
+/// 2553 row 18's cleared ATC.
 #[test]
 fn pr4_answers_that_remove_typed_entries_ask_first() {
     setup();
@@ -853,15 +853,6 @@ fn pr4_answers_that_remove_typed_entries_ask_first() {
             "frm2553:txt20A",
             "tax_paid_previous",
             "20A",
-        ),
-        (
-            "2550M",
-            3,
-            "frm2550m:OptAmendedYN1",
-            "frm2550m:OptAmendedYN2",
-            "frm2550m:txtTax23D",
-            "vat_paid_previous",
-            "23D",
         ),
     ] {
         let opened = open(code, period);

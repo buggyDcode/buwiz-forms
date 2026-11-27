@@ -490,6 +490,31 @@ mod tests {
     }
 
     #[test]
+    fn item_16_is_kept_unamended_computed_and_serialized() {
+        let mut draft = valid_draft();
+        assert!(!draft.is_amended);
+        draft.item_16_remitted_previously = 500.0;
+        draft.recompute();
+        assert_eq!(draft.item_16_remitted_previously, 500.0);
+        assert_eq!(draft.item_17_net_amount_of_remittance, 500.0);
+        assert_eq!(draft.item_18d_total_penalties, 230.0);
+        assert_eq!(draft.item_19_total_amount_of_remittance, 730.0);
+        let payload = draft.to_official_xml_payload().unwrap();
+        assert!(payload.contains("frm0619F:txtTax16=500.00"));
+    }
+
+    #[test]
+    fn item_16_survives_amended_yes_then_no() {
+        let mut draft = valid_draft();
+        draft.is_amended = true;
+        draft.item_16_remitted_previously = 500.0;
+        draft.recompute();
+        draft.is_amended = false;
+        draft.recompute();
+        assert_eq!(draft.item_16_remitted_previously, 500.0);
+    }
+
+    #[test]
     fn item_17_is_not_clamped_when_item_16_exceeds_item_15() {
         let mut draft = valid_draft();
         draft.is_amended = true;

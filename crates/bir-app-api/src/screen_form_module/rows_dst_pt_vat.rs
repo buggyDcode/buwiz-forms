@@ -662,11 +662,10 @@ pub(super) fn removes(
             }));
         }
     }
-    // Amended Return Yes -> No clears the previous return's payment.
+    // Amended Return Yes -> No clears the previous return's payment on the forms whose official page applies that rule.
     let amended = match code {
         "2000" => Some(("frm2000:AmendedRtn_", "balance_carried_over", "15A")),
         "2553" => Some(("frm2553:optAmended_", "tax_paid_previous", "20A")),
-        "2550M" => Some(("frm2550m:OptAmendedYN", "vat_paid_previous", "23D")),
         _ => None,
     };
     if let Some((prefix, field, item)) = amended

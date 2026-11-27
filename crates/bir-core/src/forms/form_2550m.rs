@@ -695,11 +695,6 @@ impl Form2550MDraft {
     /// The official compute chain; every amount is the formatted value of
     /// the items it reads.
     pub fn recompute(&mut self) {
-        // optAmendFunc clears 23D on an original return.
-        if !self.is_amended {
-            self.vat_paid_previous = 0.0;
-        }
-
         // Schedule 1 (getRequiredWithheld, totalAmountandOutputTax) in popup order.
         self.sales_schedule
             .sort_by_key(|row| form_2550m_atc_index(&row.atc_code).unwrap_or(usize::MAX));
@@ -1787,13 +1782,6 @@ impl Form2550MDraft {
                 );
             }
         }
-        if !self.is_amended && self.vat_paid_previous != 0.0 {
-            err(
-                "vat_paid_previous",
-                "Item 23D applies only to an amended return.",
-            );
-        }
-
         // Derived items must be what the official compute chain produces.
         let mut expected = self.clone();
         expected.recompute();
@@ -2373,15 +2361,33 @@ mod tests {
     }
 
     #[test]
-    fn amended_flag_controls_item_23d() {
+    fn item_23d_is_kept_unamended_computed_and_serialized() {
+        let mut baseline = sample();
+        baseline.recompute();
+        let mut d = baseline.clone();
+        assert!(!d.is_amended);
+        d.vat_paid_previous = 500.0;
+        d.recompute();
+        assert_eq!(d.vat_paid_previous, 500.0);
+        assert_eq!(d.total_credits, baseline.total_credits + 500.0);
+        assert_eq!(d.tax_still_payable, baseline.tax_still_payable - 500.0);
+        assert_eq!(
+            d.total_amount_payable,
+            cents(d.tax_still_payable + d.total_penalties)
+        );
+        let payload = d.to_bir_xml_payload().unwrap();
+        assert!(payload.contains("frm2550m:txtTax23D=500.00"));
+    }
+
+    #[test]
+    fn item_23d_survives_amended_yes_then_no() {
         let mut d = sample();
-        d.vat_paid_previous = 100.0;
-        d.recompute();
-        assert_eq!(d.vat_paid_previous, 0.0);
         d.is_amended = true;
-        d.vat_paid_previous = 100.0;
+        d.vat_paid_previous = 500.0;
         d.recompute();
-        assert_eq!(d.total_credits, 100.0);
+        d.is_amended = false;
+        d.recompute();
+        assert_eq!(d.vat_paid_previous, 500.0);
     }
 
     #[test]

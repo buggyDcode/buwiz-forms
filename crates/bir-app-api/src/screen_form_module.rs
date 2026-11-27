@@ -21655,6 +21655,8 @@ mod tests {
     mod annual_individual;
     /// PR 3: the monthly withholding forms.
     mod monthly;
+    // Previous-payment boxes on 0619E, 0619F and 2550M stay open.
+    mod previous_payment;
 }
 
 #[cfg(test)]
