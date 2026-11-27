@@ -1164,8 +1164,14 @@ _nsh-db-guard db:
 _nsh-db-guard $db:
     #!pwsh -NoProfile
     $ErrorActionPreference = 'Stop'
+    function Trace-Step($step) {
+        if ($env:NSH_RUN_AGENT_TRACE) {
+            Add-Content -LiteralPath $env:NSH_RUN_AGENT_TRACE -Value ("{0:0.000}`trecipe`t{1}`t{2}" -f ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000), $step, $PID) -ErrorAction SilentlyContinue
+        }
+    }
+    Trace-Step 'guard-start'
     $db = $env:db
-    if (-not $db) { exit 0 }
+    if (-not $db) { Trace-Step 'guard-empty-exit'; exit 0 }
     $script = @'
     import ctypes
     import os
@@ -1239,7 +1245,9 @@ _nsh-db-guard $db:
                     if identity(os.path.join(folder, name)) == (info.st_dev, info.st_ino):
                         refuse("it is a hard link to a file in " + folder)
     '@
+    Trace-Step 'guard-python-start'
     $script | & "{{PYTHON}}" -I - $db "dev.goldcoders.bir"
+    Trace-Step "guard-python-done-$LASTEXITCODE"
     exit $LASTEXITCODE
 
 # The database comes from the caller: just nsh-run ~/BuwizNsh/agents/<track>.db, or BIR_DATABASE_PATH in the environment.
@@ -1359,6 +1367,12 @@ nsh-run-agent target db=env_var_or_default("BIR_DATABASE_PATH", "") *args="": (_
 nsh-run-agent target $db=env_var_or_default("BIR_DATABASE_PATH", "") *args="": (_nsh-db-guard db)
     #!pwsh -NoProfile
     $ErrorActionPreference = 'Stop'
+    function Trace-Step($step) {
+        if ($env:NSH_RUN_AGENT_TRACE) {
+            Add-Content -LiteralPath $env:NSH_RUN_AGENT_TRACE -Value ("{0:0.000}`trecipe`t{1}`t{2}" -f ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() / 1000), $step, $PID) -ErrorAction SilentlyContinue
+        }
+    }
+    Trace-Step 'main-start'
     $tools = if ($env:NSH_TOOLS) { $env:NSH_TOOLS } else { "$HOME\BuwizNsh\tools" }
     $env:PATH = "$tools\bin;$env:PATH"
     if (-not $env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR = "$HOME\BuwizNsh\target-nsh" }
@@ -1367,7 +1381,11 @@ nsh-run-agent target $db=env_var_or_default("BIR_DATABASE_PATH", "") *args="": (
     $git = Get-Command git -ErrorAction SilentlyContinue
     $app = if ($git) { (git rev-parse --short=8 HEAD) 2>$null } else { 'unknown (git not found)' }
     $kit = if ($git) { (git -C ..\nsh rev-parse --short=8 HEAD) 2>$null } else { 'unknown (git not found)' }
-    $tool = (nsh --version) 2>$null; $cargoVersion = (cargo --version) 2>$null
+    Trace-Step 'before-version-probes'
+    $tool = (nsh --version) 2>$null
+    Trace-Step 'after-nsh-version'
+    $cargoVersion = (cargo --version) 2>$null
+    Trace-Step 'after-cargo-version'
     [Console]::Error.WriteLine("build: app $app, nsh $kit beside it, tool $tool, $cargoVersion, folder $env:CARGO_TARGET_DIR")
     if (-not $env:GPUI_AGENT_TOKEN) { "nsh-run-agent: set GPUI_AGENT_TOKEN first"; exit 1 }
     $root = (Get-Location).ProviderPath
@@ -1385,6 +1403,36 @@ nsh-run-agent target $db=env_var_or_default("BIR_DATABASE_PATH", "") *args="": (
     if (-not $env:GPUI_AGENT_ADDR) { $env:GPUI_AGENT_ADDR = '127.0.0.1:17421' }
     $writer = $null
     $plugger = $null
+    function Stop-AgentJob($job, $name) {
+        # Stop-Job returns before the job's runspace has finished closing; receiving it in that state can either
+        # throw or wait while the still-open runspace keeps this shell (and therefore the job's liveness check) alive.
+        Stop-Job $job -ErrorAction SilentlyContinue
+        $stopped = Wait-Job $job -Timeout 10 -ErrorAction SilentlyContinue
+        if ($env:NSH_RUN_AGENT_TEST_JOB_NO_STOP) { $stopped = $null }
+        if ($stopped) {
+            $jobErrors = @()
+            Receive-Job $job -ErrorVariable jobErrors -ErrorAction SilentlyContinue | ForEach-Object {
+                [Console]::Error.WriteLine(([string]$_) -replace [regex]::Escape($env:GPUI_AGENT_TOKEN), '<GPUI_AGENT_TOKEN>')
+            }
+            foreach ($jobError in $jobErrors) {
+                $message = ([string]$jobError) -replace [regex]::Escape($env:GPUI_AGENT_TOKEN), '<GPUI_AGENT_TOKEN>'
+                if ($jobError.Exception -isnot [System.Management.Automation.PipelineStoppedException] -and
+                        $message -notmatch 'The remote pipeline has been stopped') {
+                    [Console]::Error.WriteLine($message)
+                }
+            }
+        }
+        $removeErrors = @()
+        Remove-Job $job -Force -ErrorVariable removeErrors -ErrorAction SilentlyContinue
+        if (-not $stopped) {
+            if ($removeErrors.Count -eq 0) {
+                [Console]::Error.WriteLine("nsh-run-agent: the $name job did not stop within 10 seconds and was removed")
+            } else {
+                $message = ([string]$removeErrors[0]) -replace [regex]::Escape($env:GPUI_AGENT_TOKEN), '<GPUI_AGENT_TOKEN>'
+                [Console]::Error.WriteLine("nsh-run-agent: the $name job did not stop within 10 seconds and could not be removed: $message")
+            }
+        }
+    }
     # The parameter arrives as an environment variable (PowerShell cannot read just's quoting of an apostrophe); a relative
     # path is the one the guard checked, from here, not from nsh/.
     $db = $env:db
@@ -1412,7 +1460,9 @@ nsh-run-agent target $db=env_var_or_default("BIR_DATABASE_PATH", "") *args="": (
         # nsh launches the first device `adb devices` lists as online and names it to every adb command (`-s`); it does not
         # read ANDROID_SERIAL. The token goes to that same device, by name: with two devices online an unnamed
         # `adb shell` is refused as ambiguous, and one named by ANDROID_SERIAL could be another than the one launched.
+        Trace-Step 'adb-devices-start'
         $listed = & $adb devices
+        Trace-Step "adb-devices-done-$LASTEXITCODE"
         if ($LASTEXITCODE -ne 0) { [Console]::Error.WriteLine("nsh-run-agent: ``$adb devices`` failed"); exit 1 }
         $serial = $listed | Select-Object -Skip 1 | ForEach-Object {
             $serialAndState = $_ -split "`t", 2
@@ -1428,8 +1478,10 @@ nsh-run-agent target $db=env_var_or_default("BIR_DATABASE_PATH", "") *args="": (
         # writes it to adb's standard input itself, so no file on this machine holds it.
         $agentHost = 'com.longbridge.nsh.host'
         $tokenDir = 'files/nsh/dev.goldcoders.bir'
+        Trace-Step 'writer-job-start'
         $writer = Start-Job -ScriptBlock {
             param($adb, $serial, $token, $pkg, $dir, $launcher, $launcherStarted)
+            if ($env:NSH_RUN_AGENT_TEST_WRITER_ERROR) { Write-Error 'injected adb failure in token writer'; return }
             for ($i = 0; $i -lt 1800; $i++) {
                 $alive = Get-Process -Id $launcher -ErrorAction SilentlyContinue
                 if (-not $alive -or $alive.StartTime.Ticks -ne $launcherStarted) { return }
@@ -1452,6 +1504,7 @@ nsh-run-agent target $db=env_var_or_default("BIR_DATABASE_PATH", "") *args="": (
             }
             "nsh-run-agent: the data plane's token was not stored (is the host installed?)"
         } -ArgumentList $adb, $serial, $env:GPUI_AGENT_TOKEN, $agentHost, $tokenDir, $PID, (Get-Process -Id $PID).StartTime.Ticks
+        Trace-Step 'writer-job-created'
         # The window plane reads its switch and address from the launch intent's extras, which only a hook in
         # `nsh run` could add — there is none for a plain run. This job stores files/gpui-agent-token, forwards
         # both plane ports, then relaunches the activity on the same dev-server url once `nsh run`'s own launch
@@ -1462,6 +1515,7 @@ nsh-run-agent target $db=env_var_or_default("BIR_DATABASE_PATH", "") *args="": (
         $devport = if (' {{args}} ' -match ' --port[= ](\d+) ') { [int]$Matches[1] }
             elseif ($env:NSH_DEV_PORT) { [int]$env:NSH_DEV_PORT }
             else { 8347 }
+        Trace-Step 'plugger-job-start'
         $plugger = Start-Job -ScriptBlock {
             param($adb, $serial, $token, $pkg, $dir, $port, $devport, $launcher, $launcherStarted)
             $seenPid = $null
@@ -1512,8 +1566,10 @@ nsh-run-agent target $db=env_var_or_default("BIR_DATABASE_PATH", "") *args="": (
                 Start-Sleep -Milliseconds 500
             }
         } -ArgumentList $adb, $serial, $env:GPUI_AGENT_TOKEN, $agentHost, $tokenDir, $port, $devport, $PID, (Get-Process -Id $PID).StartTime.Ticks
+        Trace-Step 'plugger-job-created'
         "nsh-run-agent: window plane on 127.0.0.1:$port, data plane on 127.0.0.1:$($port + 1) on $serial; run: adb -s $serial forward tcp:$port tcp:$port && adb -s $serial forward tcp:$($port + 1) tcp:$($port + 1)"
     }
+    Trace-Step 'before-nsh-run'
     $env:CARGO = "$root\nsh\agent\cargo-with-agent.cmd"
     Set-Location nsh
     $code = 1
@@ -1521,21 +1577,26 @@ nsh-run-agent target $db=env_var_or_default("BIR_DATABASE_PATH", "") *args="": (
         if ('{{target}}' -eq 'android' -and ' {{args}} ' -notmatch ' --port[= ]') { nsh run --target {{target}} --port $devport {{args}} }
         else { nsh run --target {{target}} {{args}} }
         $code = $LASTEXITCODE
+        Trace-Step "after-nsh-run-$code"
     } finally {
+        Trace-Step 'finally-start'
         if ($writer) {
             # The launch is over, however it ended (a failed build, a failed install, Ctrl+C): the writers must not go
             # on polling the device, and a token the app never read must not stay in the host's files.
-            Stop-Job $writer
-            Receive-Job $writer | ForEach-Object { [Console]::Error.WriteLine($_) }
-            Remove-Job $writer -Force
+            Trace-Step 'writer-cleanup-start'
+            Stop-AgentJob $writer 'token writer'
+            Trace-Step 'writer-cleanup-done'
             if ($plugger) {
-                Stop-Job $plugger
-                Receive-Job $plugger | ForEach-Object { [Console]::Error.WriteLine($_) }
-                Remove-Job $plugger -Force
+                Trace-Step 'plugger-cleanup-start'
+                Stop-AgentJob $plugger 'window-plane plugger'
+                Trace-Step 'plugger-cleanup-done'
             }
+            Trace-Step 'adb-cleanup-start'
             & $adb -s $serial shell "run-as $agentHost rm -f $tokenDir/agent-token $tokenDir/agent-token.new files/gpui-agent-token files/gpui-agent-token.new" 2>$null | Out-Null
+            Trace-Step 'adb-cleanup-done'
         }
     }
+    Trace-Step 'before-exit'
     exit $code
 
 # Starts the app with nsh-run-agent on a new scratch database (a debug build, dry run), waits for gpui-agent, runs a
