@@ -150,7 +150,10 @@ A pull request is ready to merge when both of these hold:
    or from a Devin machine at the pull request's head. Or the pull request is in a green batch, merged as the batch
    says (next section).
 
-Only the owner merges.
+Whoever GitHub lets merge does: the maintainers, or a crew conductor its maintainer has told to merge, running with
+that person's GitHub rights, once the pull request is ready as `crew/RULES.md` defines it (these two checks plus a
+reviewer's MERGE at that head). GitHub's permissions and branch protection are the gate; nobody merges with a red or
+unread check.
 
 ## Proving several pull requests together
 
@@ -202,7 +205,7 @@ just ci-batch-verify test/linux-windows/batch-412-415-418   # after the merges
 - `just ci-batch-merge <branch>` refuses unless the batch is green. It reads `main`'s sha and each pull request again
   from GitHub, refuses if any of them moved (or is no longer open, ready and based on `main`), and then prints the
   `gh pr merge <n> --repo hexuria/buwiz-forms --squash --match-head-commit <recorded sha>` commands in order. It runs
-  none of them: only the owner merges (adding `--admin` if needed).
+  none of them: whoever merges (the maintainer, or the crew's conductor) runs them in that order.
 - `just ci-batch-verify <branch>`, after the merges, compares `main`'s tree hash with the batch's `Batch-Tree`: equal
   or not equal. Not equal means the batch's proof does not cover `main`; prove `main` itself (`just ci-main`).
 
