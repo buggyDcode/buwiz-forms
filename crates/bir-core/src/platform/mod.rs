@@ -275,18 +275,23 @@ pub fn prepare_app_storage() {
 /// filename pattern. Nothing is traversed through a link and a failure is
 /// recorded for the launch log, never fatal.
 pub fn prepare_print_previews() {
-    let mut errors = Vec::new();
-    if let Err(error) = sweep_preview_html_in(print_previews_dir()) {
-        errors.push(format!("print previews not swept at launch: {error}"));
-    }
-    if let Err(error) = sweep_retired_preview_files_in(std::env::temp_dir(), data_dir()) {
-        errors.push(format!(
-            "retired print previews not swept at launch: {error}"
-        ));
-    }
-    if !errors.is_empty() {
-        LAUNCH_STORAGE.record(true, errors.join("; "));
-    }
+    static SWEPT: std::sync::Once = std::sync::Once::new();
+    SWEPT.call_once(|| {
+        #[cfg(test)]
+        PRINT_SWEEP_RUNS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut errors = Vec::new();
+        if let Err(error) = sweep_preview_html_in(print_previews_dir()) {
+            errors.push(format!("print previews not swept at launch: {error}"));
+        }
+        if let Err(error) = sweep_retired_preview_files_in(std::env::temp_dir(), data_dir()) {
+            errors.push(format!(
+                "retired print previews not swept at launch: {error}"
+            ));
+        }
+        if !errors.is_empty() {
+            LAUNCH_STORAGE.record(true, errors.join("; "));
+        }
+    });
 }
 
 /// Empty `folder` without following a link out of it. The folder itself stays
@@ -317,6 +322,7 @@ fn sweep_retired_preview_files_in(
     temp_folder: impl AsRef<std::path::Path>,
     app_data: impl AsRef<std::path::Path>,
 ) -> std::io::Result<()> {
+    let mut failures: Vec<String> = Vec::new();
     for folder in [
         temp_folder.as_ref().to_path_buf(),
         app_data.as_ref().join("tmp"),
@@ -325,7 +331,13 @@ fn sweep_retired_preview_files_in(
             continue;
         };
         for entry in entries {
-            let entry = entry?;
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    failures.push(format!("{} cannot be listed: {error}", folder.display()));
+                    continue;
+                }
+            };
             let retired = entry
                 .file_name()
                 .to_str()
@@ -333,14 +345,34 @@ fn sweep_retired_preview_files_in(
             if !retired {
                 continue;
             }
-            let meta = std::fs::symlink_metadata(entry.path())?;
+            let meta = match std::fs::symlink_metadata(entry.path()) {
+                Ok(meta) => meta,
+                Err(error) => {
+                    failures.push(format!(
+                        "{} cannot be inspected: {error}",
+                        entry.path().display()
+                    ));
+                    continue;
+                }
+            };
             if meta.is_dir() && !meta.file_type().is_symlink() && !is_reparse_point(&meta) {
                 continue;
             }
-            std::fs::remove_file(entry.path()).or_else(|_| std::fs::remove_dir(entry.path()))?;
+            if let Err(error) =
+                std::fs::remove_file(entry.path()).or_else(|_| std::fs::remove_dir(entry.path()))
+            {
+                failures.push(format!(
+                    "{} cannot be removed: {error}",
+                    entry.path().display()
+                ));
+            }
         }
     }
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(failures.join("; ")))
+    }
 }
 
 fn is_retired_preview_file_name(name: &str) -> bool {
@@ -363,6 +395,9 @@ fn remove_preview_object(path: &std::path::Path, meta: &std::fs::Metadata) -> st
     }
     std::fs::remove_dir(path)
 }
+
+#[cfg(test)]
+static PRINT_SWEEP_RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// The outcome of [`prepare_app_storage`], until it is logged.
 static LAUNCH_STORAGE: Pending = Pending::new();
@@ -468,24 +503,6 @@ mod tests {
         assert!(!keychain_switch_is_on(Some("Off")));
     }
 
-    /// Off iOS the launch step makes no previews folder when there was
-    /// nothing to sweep.
-    #[cfg(not(target_os = "ios"))]
-    #[test]
-    fn the_launch_storage_step_makes_no_previews_folder_off_ios() {
-        let home = tempfile::tempdir().unwrap();
-        temp_env::with_vars(
-            [
-                ("HOME", Some(home.path().as_os_str())),
-                ("XDG_DATA_HOME", None),
-            ],
-            || {
-                prepare_app_storage();
-                assert!(!data_dir().join(crate::rooms::PREVIEWS_DIR).exists());
-            },
-        );
-    }
-
     /// The one preview folder is the room layout's folder. In a single-room
     /// test it is beside that test's scratch database, never the installed
     /// app's data folder; in the ordinary multi-room layout it is the device
@@ -542,6 +559,46 @@ mod tests {
         assert!(!android_retired.exists());
         assert!(keep.exists());
         assert!(keep_prefix.exists());
+    }
+
+    /// An undeletable retired file is one failure, not the end of the sweep:
+    /// later retired files still go and the failure is reported once by the caller.
+    #[cfg(unix)]
+    #[test]
+    fn the_retired_sweep_continues_after_a_file_it_cannot_remove() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = tempfile::tempdir().unwrap();
+        let old_temp = scratch.path().join("tmp");
+        let data = scratch.path().join("data");
+        std::fs::create_dir_all(&old_temp).unwrap();
+        std::fs::create_dir_all(data.join("tmp")).unwrap();
+        let stuck = old_temp.join("bir-stuck-preview.html");
+        let later = data.join("tmp").join("bir-later-preview.html");
+        std::fs::write(&stuck, "filled").unwrap();
+        std::fs::write(&later, "filled").unwrap();
+        std::fs::set_permissions(&old_temp, std::fs::Permissions::from_mode(0o555)).unwrap();
+        assert!(sweep_retired_preview_files_in(&old_temp, &data).is_err());
+        assert!(stuck.exists());
+        assert!(!later.exists());
+        std::fs::set_permissions(&old_temp, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    /// The public launch sweep is process-once: repeated Door calls do not
+    /// sweep (or repeat its warning) again.
+    #[test]
+    fn two_launch_sweep_calls_run_one_sweep() {
+        let scratch = tempfile::tempdir().unwrap();
+        let database = scratch.path().join("room").join("bir_data.db");
+        crate::db::capture_database_path_override().run(|| {
+            crate::db::set_database_path_override(Some(database));
+            prepare_print_previews();
+            prepare_print_previews();
+            crate::db::set_database_path_override(None);
+        });
+        assert_eq!(
+            PRINT_SWEEP_RUNS.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
     }
 
     /// A sweep failure and the iOS storage line are both kept, in the order

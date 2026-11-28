@@ -220,13 +220,13 @@ fn panic_payload(info: &std::panic::PanicHookInfo<'_>) -> String {
 
 /// Replace credential material and taxpayer identifiers in a log line.
 ///
-/// A TIN is nine root digits plus an optional 3-, 4- or 5-digit branch,
-/// written solid, dashed or spaced in the usual three-digit root groups. The
-/// first six root digits are always masked; the last three root digits and a
-/// written branch stay, so a line can still be correlated with the return it
-/// describes. Numbers with decimals are not TINs, nor are punctuated ISO
-/// dates/times. The app does not write compact `yyyyMMddHHmmss` timestamps, so
-/// no 14-digit run is exempted on that account.
+/// A TIN is nine root digits plus an optional branch, written solid or in
+/// the usual separated three-digit root groups. Solid runs are masked at 9,
+/// 12 (9+3) and 14 (9+5) digits only: a solid 13-digit run can be a
+/// millisecond timestamp, so a four-digit branch must be separated. Three
+/// space-separated root groups are masked only with a branch or an adjacent
+/// word "TIN"; dashed root groups are specific enough on their own. Numbers
+/// with decimals are not TINs, nor are punctuated ISO dates/times.
 pub fn redact_secrets(input: &str) -> String {
     let mut text = input.to_string();
     // Bearer and token shapes first. A labeled `Authorization: Bearer …`
@@ -265,15 +265,30 @@ fn mask_tins(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut copied = 0;
     for candidate in tin_candidate().find_iter(text) {
-        if !tin_boundaries(text.as_bytes(), candidate.start(), candidate.end()) {
+        let start = candidate.start();
+        let mut end = candidate.end();
+        if !tin_boundaries(text.as_bytes(), start, end) || masked_tin(&text[start..end]).is_none() {
+            // A greedy branch-shaped tail can make the real nine-digit TIN look
+            // like part of a longer number (`123456789 2551Q`). Retry the root.
+            let root_end = start + 9;
+            if end <= root_end
+                || !text[start..root_end].chars().all(|c| c.is_ascii_digit())
+                || !tin_boundaries(text.as_bytes(), start, root_end)
+                || masked_tin(&text[start..root_end]).is_none()
+            {
+                continue;
+            }
+            end = root_end;
+        }
+        if space_root_needs_context(&text[start..end]) && !tin_word_near(text, start, end) {
             continue;
         }
-        let Some(masked) = masked_tin(candidate.as_str()) else {
+        let Some(masked) = masked_tin(&text[start..end]) else {
             continue;
         };
-        out.push_str(&text[copied..candidate.start()]);
+        out.push_str(&text[copied..start]);
         out.push_str(&masked);
-        copied = candidate.end();
+        copied = end;
     }
     out.push_str(&text[copied..]);
     out
@@ -286,6 +301,13 @@ fn mask_emails(text: &str) -> String {
     email_candidate()
         .replace_all(text, |captures: &regex::Captures<'_>| {
             let local = &captures[1];
+            let tld = captures[3].to_ascii_lowercase();
+            if matches!(
+                tld.as_str(),
+                "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp"
+            ) {
+                return captures[0].to_owned();
+            }
             let visible: String = local.chars().take(2).collect();
             format!("{visible}•••@{}", &captures[2])
         })
@@ -295,7 +317,7 @@ fn mask_emails(text: &str) -> String {
 fn email_candidate() -> &'static Regex {
     static PATTERN: OnceLock<Regex> = OnceLock::new();
     PATTERN.get_or_init(|| {
-        Regex::new(r"\b([A-Za-z0-9._%+-]+)@([A-Za-z0-9.-]+\.[A-Za-z]{2,})\b")
+        Regex::new(r"(?-u:\b)([A-Za-z0-9._%+-]+)@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.([A-Za-z]{2,}))(?-u:\b)")
             .expect("static email regex")
     })
 }
@@ -341,6 +363,26 @@ fn tin_boundaries(bytes: &[u8], start: usize, end: usize) -> bool {
     true
 }
 
+/// Whether this token is exactly the ambiguous space-separated root shape.
+fn space_root_needs_context(token: &str) -> bool {
+    token.matches(' ').count() == 2 && !token.contains('-') && token.len() == 11
+}
+
+/// Whether the word TIN is adjacent enough to disambiguate spaced root groups.
+fn tin_word_near(text: &str, start: usize, end: usize) -> bool {
+    fn ascii_word(bytes: &[u8], at: usize, word: &[u8]) -> bool {
+        at + word.len() <= bytes.len()
+            && bytes[at..at + word.len()].eq_ignore_ascii_case(word)
+            && (at == 0 || !bytes[at - 1].is_ascii_alphanumeric())
+            && (at + word.len() == bytes.len() || !bytes[at + word.len()].is_ascii_alphanumeric())
+    }
+    let bytes = text.as_bytes();
+    let before = start.saturating_sub(8);
+    let after = (end + 8).min(bytes.len());
+    (before..start).any(|at| ascii_word(bytes, at, b"tin"))
+        || (end..after).any(|at| ascii_word(bytes, at, b"tin"))
+}
+
 /// The masked spelling of one token, or `None` when it is not a TIN. Dashes
 /// are either absent everywhere or in the official grouping (`3-3-3`, plus a
 /// 3-, 4- or 5-digit branch); partial or differently placed separators are not TINs.
@@ -350,19 +392,20 @@ fn masked_tin(token: &str) -> Option<String> {
     }
     let digits: String = token.chars().filter(|c| c.is_ascii_digit()).collect();
     let separator_count = token.matches(['-', ' ']).count();
-    let valid_length = digits.len() == 9 || (12..=14).contains(&digits.len());
-    if !valid_length || digits.len() != token.len() - separator_count {
+    if digits.len() != token.len() - separator_count {
         return None;
     }
-    if token.contains('-') || token.contains(' ') {
+    if separator_count == 0 {
+        // A solid 13-digit run is likelier a millisecond timestamp or count
+        // than a TIN; a four-digit branch must be written with a separator.
+        if !matches!(digits.len(), 9 | 12 | 14) {
+            return None;
+        }
+    } else {
         let parts: Vec<&str> = token.split(['-', ' ']).collect();
-        let expected_root = [3, 3, 3];
         if parts.len() < 3
             || parts.len() > 4
-            || !parts[..3]
-                .iter()
-                .zip(expected_root)
-                .all(|(part, len)| part.len() == len)
+            || !parts[..3].iter().all(|part| part.len() == 3)
             || parts[3..].iter().any(|part| !(3..=5).contains(&part.len()))
         {
             return None;
@@ -607,6 +650,10 @@ mod tests {
             "amount 1,234,567,890.00",
             "timestamp 2026-11-28T06:07:01Z",
             "timestamp 1764346821",
+            "timestamp 1764346821000",
+            "duration 1764346821000123456",
+            "id 1234567890000",
+            "123 456 789 without context",
         ] {
             assert_eq!(redact_secrets(ordinary), ordinary);
         }
@@ -615,13 +662,15 @@ mod tests {
     #[test]
     fn redaction_masks_branch_lengths_and_escaped_or_spaced_tins() {
         for (plain, masked) in [
-            ("1234567890000", "***-***-789-0000"),
             ("123-456-789-0000", "***-***-789-0000"),
+            ("123 456 789 0000", "***-***-789-0000"),
             ("123 456 789 000", "***-***-789-000"),
             ("tin%3D123456789", "tin%3D***-***-789"),
             ("%2F123456789000-2551Q", "%2F***-***-789-000-2551Q"),
             ("\\n123456789000", "\\n***-***-789-000"),
             ("receipt_123456789000", "receipt_***-***-789-000"),
+            ("123456789 2551Q", "***-***-789 2551Q"),
+            ("TIN 123 456 789", "TIN ***-***-789"),
             ("123-112-150-00000", "***-***-150-00000"),
         ] {
             assert_eq!(redact_secrets(plain), masked, "{plain}");
@@ -642,6 +691,9 @@ mod tests {
             ("mail a@example.com", "mail a•••@example.com"),
         ] {
             assert_eq!(redact_secrets(plain), masked, "{plain}");
+        }
+        for ordinary in ["asset icon@2x.png", "asset icon@2x.jpg"] {
+            assert_eq!(redact_secrets(ordinary), ordinary);
         }
     }
 
