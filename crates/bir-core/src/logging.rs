@@ -256,6 +256,53 @@ pub fn redact_secrets(input: &str) -> String {
     mask_tins(&text)
 }
 
+/// Mask a value the caller has already typed as a TIN. Unlike the generic
+/// text scanner, this does not have to distinguish the value from a timestamp
+/// or count: a compact nine- or twelve-to-fourteen-digit TIN, a compact
+/// thirteen-digit TIN, and dashed or spaced groupings all mask the same way.
+/// Malformed short values are hidden entirely rather than echoed.
+pub fn tin_for_log(tin: &str) -> String {
+    let digits: String = tin.chars().filter(|ch| ch.is_ascii_digit()).collect();
+    if digits.len() < 9 {
+        return "***".to_string();
+    }
+    let root_end = &digits[6..9];
+    let branch = &digits[9..];
+    if branch.is_empty() {
+        format!("***-***-{root_end}")
+    } else {
+        format!("***-***-{root_end}-{branch}")
+    }
+}
+
+/// Mask the leading TIN in a submission filename (`TIN-form-period[#email#].xml`).
+/// Filenames are typed artifacts, so a compact thirteen-digit TIN is a TIN here
+/// even though the generic log scanner leaves that shape alone as a timestamp.
+pub fn submission_filename_for_log(filename: &str) -> String {
+    static LEADING_TIN: OnceLock<Regex> = OnceLock::new();
+    let pattern = LEADING_TIN.get_or_init(|| {
+        Regex::new(r"^([0-9]{9}(?:[0-9]{3,5})?)-").expect("static filename TIN regex")
+    });
+    let Some(captures) = pattern.captures(filename) else {
+        return filename.to_string();
+    };
+    let tin = captures
+        .get(1)
+        .expect("the leading TIN capture exists")
+        .as_str();
+    format!("{}{}", tin_for_log(tin), &filename[tin.len()..])
+}
+
+/// Mask the submission filename at the end of a local or remote path.
+pub fn submission_path_for_log(path: &str) -> String {
+    let filename_start = path.rfind(['/', '\\']).map(|index| index + 1).unwrap_or(0);
+    format!(
+        "{}{}",
+        &path[..filename_start],
+        submission_filename_for_log(&path[filename_start..])
+    )
+}
+
 /// Mask every TIN candidate in `text`. The regex names the official shapes;
 /// the boundary check supplies what Rust's regex crate has no look-around for:
 /// decimal adjacency and larger identifiers. Candidates are exact matches, so
@@ -541,6 +588,236 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct RawTinHit {
+        line: usize,
+        excerpt: String,
+    }
+
+    fn strip_string_literals(source: &str) -> String {
+        let mut out = source.as_bytes().to_vec();
+        let mut in_string = false;
+        let mut escaped = false;
+        for byte in &mut out {
+            let ch = *byte;
+            if in_string {
+                if escaped {
+                    escaped = false;
+                } else if ch == 92 {
+                    escaped = true;
+                } else if ch == b'"' {
+                    in_string = false;
+                }
+                *byte = b' ';
+            } else if ch == b'"' {
+                in_string = true;
+                *byte = b' ';
+            }
+        }
+        String::from_utf8(out).expect("masking whole string literals keeps UTF-8 boundaries")
+    }
+
+    fn macro_end(source: &str, mut index: usize) -> usize {
+        let bytes = source.as_bytes();
+        let mut depth = 1usize;
+        let mut in_string = false;
+        let mut escaped = false;
+        let mut in_line_comment = false;
+        let mut block_comments = 0usize;
+        while index < bytes.len() && depth > 0 {
+            let ch = bytes[index];
+            let next = bytes.get(index + 1).copied().unwrap_or_default();
+            if in_line_comment {
+                if ch == b'\n' {
+                    in_line_comment = false;
+                }
+            } else if block_comments > 0 {
+                if ch == b'/' && next == b'*' {
+                    block_comments += 1;
+                    index += 1;
+                } else if ch == b'*' && next == b'/' {
+                    block_comments -= 1;
+                    index += 1;
+                }
+            } else if in_string {
+                if escaped {
+                    escaped = false;
+                } else if ch == 92 {
+                    escaped = true;
+                } else if ch == b'"' {
+                    in_string = false;
+                }
+            } else if ch == b'/' && next == b'/' {
+                in_line_comment = true;
+                index += 1;
+            } else if ch == b'/' && next == b'*' {
+                block_comments = 1;
+                index += 1;
+            } else if ch == b'"' {
+                in_string = true;
+            } else if ch == b'(' {
+                depth += 1;
+            } else if ch == b')' {
+                depth -= 1;
+            }
+            index += 1;
+        }
+        index
+    }
+
+    fn remove_masked_tin_calls(mut text: String) -> String {
+        while let Some(start) = text.find("tin_for_log") {
+            let Some(open_relative) = text[start..].find('(') else {
+                break;
+            };
+            let open = start + open_relative;
+            let bytes = text.as_bytes();
+            let mut depth = 1usize;
+            let mut end = open + 1;
+            while end < bytes.len() && depth > 0 {
+                if bytes[end] == b'(' {
+                    depth += 1;
+                } else if bytes[end] == b')' {
+                    depth -= 1;
+                }
+                end += 1;
+            }
+            text.replace_range(start..end, &" ".repeat(end - start));
+        }
+        text
+    }
+
+    fn raw_tin_interpolations(source: &str) -> Vec<RawTinHit> {
+        let stripped_source = strip_string_literals(source);
+        let macro_start = Regex::new(r"\b(?:info|warn|error|debug|trace)!\s*\(")
+            .expect("static tracing macro regex");
+        let dot_tin = Regex::new(r"\.tin\b|\btin\s*\(").expect("static dot-TIN regex");
+        let tin_word = Regex::new(r"\b[A-Za-z0-9_]*tin\b").expect("static TIN word regex");
+        let mut hits = Vec::new();
+        for macro_match in macro_start.find_iter(&stripped_source) {
+            let end = macro_end(&stripped_source, macro_match.end());
+            let body = &stripped_source[macro_match.end()..end.saturating_sub(1)];
+            let body = remove_masked_tin_calls(body.to_string());
+            let mut found = dot_tin.find(&body).is_some();
+            if !found {
+                for word in tin_word.find_iter(&body) {
+                    let mut after = word.end();
+                    while after < body.len() && body.as_bytes()[after].is_ascii_whitespace() {
+                        after += 1;
+                    }
+                    if word.as_str() == "tin"
+                        && (after < body.len() && body.as_bytes()[after] == b'=')
+                    {
+                        continue;
+                    }
+                    if word.as_str() == "tin_for_log" {
+                        continue;
+                    }
+                    found = true;
+                    break;
+                }
+            }
+            if found {
+                let line = source[..macro_match.start()].matches('\n').count() + 1;
+                hits.push(RawTinHit {
+                    line,
+                    excerpt: source[macro_match.start()..end.min(source.len())]
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                });
+            }
+        }
+        hits
+    }
+
+    #[test]
+    fn tracing_macros_never_interpolate_a_raw_tin() {
+        let planted = concat!(
+            "fn demo(draft: Draft, stored_tin: String) {
+",
+            " in",
+            "fo!(\"{}\", draft.tin);
+",
+            " war",
+            "n!(tin = %stored_tin, \"bad\");
+",
+            " er",
+            "ror!(\"{}\", draft.tin());
+",
+            "}
+"
+        );
+        let positive = raw_tin_interpolations(planted);
+        assert_eq!(
+            positive.iter().map(|hit| hit.line).collect::<Vec<_>>(),
+            vec![2, 3, 4],
+            "the planted raw call sites must be found: {positive:?}"
+        );
+
+        let crates_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("crates/bir-core has the crates directory as its parent");
+        let mut files = Vec::new();
+        let mut stack = vec![crates_dir.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).expect("read crates directory") {
+                let path = entry.expect("read crates entry").path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|extension| extension == "rs") {
+                    files.push(path);
+                }
+            }
+        }
+        files.sort();
+        let mut failures = Vec::new();
+        for path in files {
+            let source = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+            for hit in raw_tin_interpolations(&source) {
+                failures.push(format!("{}:{}: {}", path.display(), hit.line, hit.excerpt));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "raw TIN interpolation in tracing macros:\n{}",
+            failures.join("\n")
+        );
+    }
+
+    #[test]
+    fn typed_tins_mask_compact_and_grouped_spellings() {
+        for (plain, masked) in [
+            ("123456789", "***-***-789"),
+            ("123456789000", "***-***-789-000"),
+            ("1234567890000", "***-***-789-0000"),
+            ("12345678900000", "***-***-789-00000"),
+            ("123-456-789", "***-***-789"),
+            ("123-456-789-0000", "***-***-789-0000"),
+            ("123 456 789 00000", "***-***-789-00000"),
+            ("1234", "***"),
+        ] {
+            assert_eq!(tin_for_log(plain), masked, "{plain}");
+        }
+    }
+
+    #[test]
+    fn submission_filenames_and_paths_mask_their_leading_tin() {
+        assert_eq!(
+            submission_filename_for_log("1234567890000-1601Cv2018-052024#a@example.com#.xml"),
+            "***-***-789-0000-1601Cv2018-052024#a@example.com#.xml"
+        );
+        assert_eq!(
+            submission_path_for_log("/IAF/12345678900000-2551Qv2018-122026Q1#a@example.com#.xml"),
+            "/IAF/***-***-789-00000-2551Qv2018-122026Q1#a@example.com#.xml"
+        );
+        assert_eq!(
+            submission_filename_for_log("not-a-return.xml"),
+            "not-a-return.xml"
+        );
+    }
 
     #[test]
     fn desktop_filter_strings_are_the_painted_directives() {

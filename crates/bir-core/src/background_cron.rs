@@ -387,9 +387,16 @@ async fn process_google_calendar_sync(db: Arc<Mutex<Database>>, stop: &CronStop)
         match result {
             Ok(report) => info!(
                 "Google Calendar sync for {}: {} inserted, {} updated, {} deleted",
-                tin, report.inserted, report.updated, report.deleted
+                crate::logging::tin_for_log(tin),
+                report.inserted,
+                report.updated,
+                report.deleted
             ),
-            Err(error) => warn!("Google Calendar sync failed for {}: {}", tin, error),
+            Err(error) => warn!(
+                "Google Calendar sync failed for {}: {}",
+                crate::logging::tin_for_log(tin),
+                error
+            ),
         }
     }
     let all_succeeded = results.iter().all(|(_, result)| result.is_ok());
@@ -890,7 +897,7 @@ async fn process_queued_1601c_with_transport<T: SubmissionTransport>(
     info!(
         "Cron: Attempting to submit queued 1601C {} for {}",
         draft.period_code(),
-        draft.tin
+        crate::logging::tin_for_log(&draft.tin)
     );
     let filename = draft.default_submission_filename();
     let xml_payload = match draft.try_to_bir_xml_payload() {
@@ -1265,7 +1272,7 @@ async fn process_queued_queueable<F: QueueableForm, T: SubmissionTransport>(
         "Cron: Attempting to submit queued {} {} for {}",
         F::FORM_CODE,
         draft.period_code(),
-        draft.tin()
+        crate::logging::tin_for_log(draft.tin())
     );
     let filename = draft.submission_filename();
     let payload = match draft.official_payload() {
@@ -1460,13 +1467,13 @@ fn finish_sent_queueable<F: QueueableForm>(
         info!(
             "Cron: dry run: simulated submission of queued {} {} (nothing sent to BIR)",
             F::FORM_CODE,
-            filename
+            crate::logging::submission_filename_for_log(filename.as_str())
         );
     } else {
         info!(
             "Cron: Successfully submitted queued {} {}",
             F::FORM_CODE,
-            filename
+            crate::logging::submission_filename_for_log(filename.as_str())
         );
     }
     let period_label = queueable_period_label(&draft);
@@ -1765,7 +1772,7 @@ async fn process_queued_2551q_with_transport<T: SubmissionTransport>(
     info!(
         "Cron: Attempting to submit queued form {} for {}",
         draft.period_code(),
-        current_profile.tin.full()
+        crate::logging::tin_for_log(&current_profile.tin.full())
     );
 
     let filename = draft.default_submission_filename();
@@ -1976,10 +1983,13 @@ fn finish_sent_2551q(
     if skip_email_poll {
         info!(
             "Cron: dry run: simulated submission of queued form {} (nothing sent to BIR)",
-            filename
+            crate::logging::submission_filename_for_log(filename.as_str())
         );
     } else {
-        info!("Cron: Successfully submitted queued form {}", filename);
+        info!(
+            "Cron: Successfully submitted queued form {}",
+            crate::logging::submission_filename_for_log(filename.as_str())
+        );
     }
     let period_label = quarterly_period_label(draft.taxable_year, draft.quarter);
     let (notice_title, notice_body) = submission_alert_text(
@@ -2539,10 +2549,13 @@ fn finish_sent_1601c(
     if skip_email_poll {
         info!(
             "Cron: dry run: simulated submission of queued 1601C {} (nothing sent to BIR)",
-            filename
+            crate::logging::submission_filename_for_log(filename.as_str())
         );
     } else {
-        info!("Cron: Successfully submitted queued 1601C {}", filename);
+        info!(
+            "Cron: Successfully submitted queued 1601C {}",
+            crate::logging::submission_filename_for_log(filename.as_str())
+        );
     }
     let period_label = monthly_period_label(draft.taxable_year, draft.month);
     let (notice_title, notice_body) = submission_alert_text(
@@ -4183,6 +4196,61 @@ mod tests {
             !stored.contains("submitted_dry_run"),
             "a real send stores no dry-run key: {stored}"
         );
+    }
+
+    #[test]
+    fn queued_1601c_attempt_masks_a_compact_13_digit_tin_in_the_log_file() {
+        let profile = test_profile();
+        let mut queued = Form1601CDraft::new_from_profile(&profile, 2024, 5);
+        queued.tin = "1234567890000".to_string();
+        queued.any_taxes_withheld = false;
+        queued
+            .transition_to_queued()
+            .expect("a compact 13-digit submission TIN is accepted today");
+        let db = Arc::new(Mutex::new(
+            Database::open_in_memory_for_tests()
+                .expect("the in-memory cron database should initialize"),
+        ));
+        let id = db
+            .lock()
+            .expect("the cron database should not be poisoned")
+            .save_queued_1601c_draft(&queued)
+            .expect("the reviewed 1601C queue snapshot should persist");
+        let summary = queued_1601c_summary(id, &queued);
+        let transport = RecordingSubmissionTransport::new(TestTransportOutcome::Success);
+        let dir = tempfile::tempdir().unwrap();
+        let options = crate::logging::InstallOptions {
+            developer_mode: false,
+            default_filter: crate::logging::shell_filter(false),
+        };
+
+        temp_env::with_vars(
+            [
+                ("BIR_LOG_DIR", Some(dir.path().as_os_str())),
+                ("RUST_LOG", None),
+            ],
+            || {
+                crate::logging::with_thread_subscriber(options, || {
+                    tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .expect("the cron test runtime should build")
+                        .block_on(process_queued_1601c_with_transport(
+                            &summary, &profile, db, &transport,
+                        ));
+                });
+            },
+        );
+
+        let path = crate::log_files::today_log_path(dir.path());
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        assert!(
+            text.contains("Cron: Attempting to submit queued 1601C"),
+            "{text}"
+        );
+        assert!(!text.contains("1234567890000"), "{text}");
+        assert!(text.contains("***-***-789-0000"), "{text}");
     }
 
     #[tokio::test]

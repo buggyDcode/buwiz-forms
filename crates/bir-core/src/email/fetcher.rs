@@ -271,7 +271,9 @@ fn fetch_with_auth(
                                 Err(error) => {
                                     tracing::warn!(
                                         "Receipt {} was saved but could not confirm a submission: {}",
-                                        submission_receipt.filename,
+                                        crate::logging::submission_filename_for_log(
+                                            &submission_receipt.filename
+                                        ),
                                         error
                                     );
                                     false
